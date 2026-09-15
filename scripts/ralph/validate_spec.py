@@ -44,7 +44,11 @@ def native(root, cwd, command, timeout=600):
     """Use an installed runtime, or the dedicated local test image, without a shell."""
     if not shutil.which(command[0]):
         image = 'oven/bun:1-alpine' if command[0] == 'bun' else 'paca-recovery-test:local'
-        command = ['docker', 'run', '--rm', '-v', f'{root}:/src', '-v', 'paca-dev_go_build_cache:/root/.cache/go-build', '-w', '/src/' + str(cwd.relative_to(root)), image, *command]
+        options = []
+        if command[0] == 'go' and os.environ.get('PACA_E2E') == '1':
+            options = ['-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'PACA_E2E=1',
+                       '-e', 'TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal', '-e', 'TESTCONTAINERS_RYUK_DISABLED=true']
+        command = ['docker', 'run', '--rm', '-v', f'{root}:/src', '-v', 'paca-dev_go_build_cache:/root/.cache/go-build', '-w', '/src/' + str(cwd.relative_to(root)), *options, image, *command]
     result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         # Tests use synthetic fixtures. Never execute this gate against private runtime files.
