@@ -61,7 +61,7 @@ func buildAgentKeyRouterWithBotID(taskRepo *fakeTaskRepo, apiKeyRepo *fakeAPIKey
 	userService := usersvc.New(userRepo, userRepo)
 	projectRepo := newFakeProjectRepo()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
-	taskService := tasksvc.New(taskRepo)
+	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
 	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil)
 	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil)
 	var activityRepo *fakeTaskActivityRepo
@@ -148,7 +148,7 @@ func agentKeyAuthReq(ctx context.Context, method, url string, agentID uuid.UUID,
 // Agent Task Creation Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_CreateTask_Success(t *testing.T) {
+func TestAgentAPIKey_CreateTask_UnboundAgentDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -186,25 +186,15 @@ func TestAgentAPIKey_CreateTask_Success(t *testing.T) {
 		},
 	}))
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unbound agent: want 404, got %d: %s", w.Code, w.Body.String())
 	}
-
-	// Verify response contains task data
-	var env struct {
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	title, _ := env.Data["title"].(string)
-	if title != "Agent created task" {
-		t.Errorf("expected title 'Agent created task', got %q", title)
+	if len(taskRepo.tasks) != 0 {
+		t.Fatal("denied create inserted a task")
 	}
 }
 
-func TestAgentAPIKey_CreateTask_MissingAgentID_Returns401(t *testing.T) {
+func TestAgentAPIKey_CreateTask_MissingAgentID_Denied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -213,7 +203,7 @@ func TestAgentAPIKey_CreateTask_MissingAgentID_Returns401(t *testing.T) {
 	store := &projectPermStore{
 		userPerms: map[uuid.UUID]map[uuid.UUID][]authz.Permission{
 			botUserID: {
-				projectID: {authz.PermissionTasksWrite},
+				projectID: {authz.PermissionTasksAll},
 			},
 		},
 	}
@@ -226,8 +216,8 @@ func TestAgentAPIKey_CreateTask_MissingAgentID_Returns401(t *testing.T) {
 		"title": "Task without agent ID",
 	}))
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201 without agent ID, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unbound shared credential, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -494,7 +484,7 @@ func TestAgentAPIKey_UpdateComment_Success(t *testing.T) {
 // Agent Task Update Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_UpdateTask_Success(t *testing.T) {
+func TestAgentAPIKey_UpdateTask_UnboundAgentDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -538,21 +528,11 @@ func TestAgentAPIKey_UpdateTask_Success(t *testing.T) {
 		"status_id": statusID.String(),
 	}))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unbound agent: want 404, got %d: %s", w.Code, w.Body.String())
 	}
-
-	// Verify response
-	var env struct {
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	title, _ := env.Data["title"].(string)
-	if title != "Updated by Agent" {
-		t.Errorf("expected title 'Updated by Agent', got %q", title)
+	if taskRepo.tasks[taskID].Title != "Original Title" || taskRepo.tasks[taskID].StatusID != nil {
+		t.Fatal("denied update mutated task")
 	}
 }
 
@@ -560,7 +540,7 @@ func TestAgentAPIKey_UpdateTask_Success(t *testing.T) {
 // Agent Task Listing Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_ListTasks_Success(t *testing.T) {
+func TestAgentAPIKey_ListTasks_UnboundAgentDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -601,22 +581,8 @@ func TestAgentAPIKey_ListTasks_Success(t *testing.T) {
 
 	w := serve(r, agentKeyAuthReq(t.Context(), http.MethodGet, taskURL, agentID, nil))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// Verify response
-	var env struct {
-		Data struct {
-			Items []map[string]any `json:"items"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	if len(env.Data.Items) != 3 {
-		t.Errorf("expected 3 tasks, got %d", len(env.Data.Items))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unbound agent: want 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -624,7 +590,7 @@ func TestAgentAPIKey_ListTasks_Success(t *testing.T) {
 // Agent Task Get Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_GetTask_Success(t *testing.T) {
+func TestAgentAPIKey_GetTask_UnboundAgentDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -664,26 +630,8 @@ func TestAgentAPIKey_GetTask_Success(t *testing.T) {
 
 	w := serve(r, agentKeyAuthReq(t.Context(), http.MethodGet, taskURL, agentID, nil))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// Verify response
-	var env struct {
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	title, _ := env.Data["title"].(string)
-	if title != "Agent Task" {
-		t.Errorf("expected title 'Agent Task', got %q", title)
-	}
-
-	id, _ := env.Data["id"].(string)
-	if id != taskID.String() {
-		t.Errorf("expected task ID %s, got %s", taskID, id)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unbound agent: want 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -731,7 +679,7 @@ func TestAgentAPIKey_GetTask_NotFound(t *testing.T) {
 // Agent Task Delete Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_DeleteTask_Success(t *testing.T) {
+func TestAgentAPIKey_DeleteTask_UnboundAgentDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -771,14 +719,11 @@ func TestAgentAPIKey_DeleteTask_Success(t *testing.T) {
 
 	w := serve(r, agentKeyAuthReq(t.Context(), http.MethodDelete, taskURL, agentID, nil))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unbound agent: want 404, got %d: %s", w.Code, w.Body.String())
 	}
-
-	// Verify task was deleted (soft delete)
-	task, err := taskRepo.FindTaskByID(context.Background(), taskID)
-	if err == nil || task != nil {
-		t.Error("expected task to be deleted (not found)")
+	if taskRepo.tasks[taskID] == nil || taskRepo.tasks[taskID].DeletedAt != nil {
+		t.Fatal("denied delete removed task")
 	}
 }
 
@@ -812,25 +757,12 @@ func TestAgentAPIKey_CommentWorkflow(t *testing.T) {
 	}
 
 	r := buildAgentKeyRouter(taskRepo, apiKeyRepo, store)
-	base := fmt.Sprintf("/api/v1/projects/%s/tasks", projectID)
 
-	// Step 1: Agent creates a task
-	createW := serve(r, agentKeyAuthReq(t.Context(), http.MethodPost, base, agentID, map[string]any{
-		"title": "Agent workflow task",
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create task: expected 201, got %d: %s", createW.Code, createW.Body.String())
+	// Existing activity workflow; the task itself is trusted fixture setup.
+	taskID := uuid.New()
+	if err := taskRepo.CreateTask(t.Context(), &taskdom.Task{ID: taskID, ProjectID: projectID, Title: "Agent workflow task"}); err != nil {
+		t.Fatal(err)
 	}
-
-	var createEnv struct {
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(createW.Body.Bytes(), &createEnv); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-
-	taskIDStr, _ := createEnv.Data["id"].(string)
-	taskID := uuid.MustParse(taskIDStr)
 
 	// Step 2: Agent comments on the task
 	commentURL := fmt.Sprintf("/api/v1/projects/%s/tasks/%s/activities/comments", projectID, taskID)
@@ -906,7 +838,7 @@ func TestAgentAPIKey_CommentWorkflow(t *testing.T) {
 // Agent ID Header Validation Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_InvalidAgentIDHeaderIgnored(t *testing.T) {
+func TestAgentAPIKey_InvalidAgentIDCannotGrantTaskAccess(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -931,9 +863,9 @@ func TestAgentAPIKey_InvalidAgentIDHeaderIgnored(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	w := serve(r, req)
-	// Should succeed but agent ID should be ignored (set to uuid.Nil)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201 with invalid agent ID (header ignored), got %d: %s", w.Code, w.Body.String())
+	// Unbound shared credentials do not acquire a human identity.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for invalid/unbound agent identity, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -989,7 +921,7 @@ func TestAgentAPIKey_UserAPIKeyCannotUseAgentID(t *testing.T) {
 // Agent Bulk Operations Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_BulkTaskOperations(t *testing.T) {
+func TestAgentAPIKey_BulkUnboundTaskCreationDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -1017,77 +949,14 @@ func TestAgentAPIKey_BulkTaskOperations(t *testing.T) {
 	r := buildAgentKeyRouter(taskRepo, apiKeyRepo, store)
 	base := fmt.Sprintf("/api/v1/projects/%s/tasks", projectID)
 
-	var taskIDs []string
-
-	// Create multiple tasks
 	for i := 0; i < 5; i++ {
-		w := serve(r, agentKeyAuthReq(t.Context(), http.MethodPost, base, agentID, map[string]any{
-			"title": fmt.Sprintf("Agent Task %d", i+1),
-		}))
-		if w.Code != http.StatusCreated {
-			t.Fatalf("create task %d: expected 201, got %d: %s", i+1, w.Code, w.Body.String())
-		}
-
-		var env struct {
-			Data map[string]any `json:"data"`
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-			t.Fatalf("decode response %d: %v", i+1, err)
-		}
-
-		id, _ := env.Data["id"].(string)
-		taskIDs = append(taskIDs, id)
-	}
-
-	// List tasks and verify all are present
-	listW := serve(r, agentKeyAuthReq(t.Context(), http.MethodGet, base, agentID, nil))
-	if listW.Code != http.StatusOK {
-		t.Fatalf("list tasks: expected 200, got %d: %s", listW.Code, listW.Body.String())
-	}
-
-	var listEnv struct {
-		Data struct {
-			Items []map[string]any `json:"items"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(listW.Body.Bytes(), &listEnv); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-
-	if len(listEnv.Data.Items) != 5 {
-		t.Errorf("expected 5 tasks, got %d", len(listEnv.Data.Items))
-	}
-
-	// Update all tasks with a status
-	statusID := uuid.New()
-	for _, taskID := range taskIDs {
-		taskURL := fmt.Sprintf("%s/%s", base, taskID)
-		w := serve(r, agentKeyAuthReq(t.Context(), http.MethodPatch, taskURL, agentID, map[string]any{
-			"status_id": statusID.String(),
-		}))
-		if w.Code != http.StatusOK {
-			t.Fatalf("update task %s: expected 200, got %d", taskID, w.Code)
+		w := serve(r, agentKeyAuthReq(t.Context(), http.MethodPost, base, agentID, map[string]any{"title": fmt.Sprintf("Agent Task %d", i)}))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("unbound create: want 404, got %d", w.Code)
 		}
 	}
-
-	// Verify updates by getting tasks
-	for _, taskID := range taskIDs {
-		taskURL := fmt.Sprintf("%s/%s", base, taskID)
-		w := serve(r, agentKeyAuthReq(t.Context(), http.MethodGet, taskURL, agentID, nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("get task %s: expected 200, got %d", taskID, w.Code)
-		}
-
-		var env struct {
-			Data map[string]any `json:"data"`
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-			t.Fatalf("decode get response for %s: %v", taskID, err)
-		}
-
-		if env.Data["status_id"] != statusID.String() {
-			t.Errorf("task %s: expected status_id %s, got %v", taskID, statusID, env.Data["status_id"])
-		}
+	if len(taskRepo.tasks) != 0 {
+		t.Fatal("denied batch created tasks")
 	}
 }
 
@@ -1114,7 +983,7 @@ func TestAgentAPIKey_PermissionScenarios(t *testing.T) {
 
 	taskURL := fmt.Sprintf("/api/v1/projects/%s/tasks/%s", projectID, taskID)
 
-	t.Run("read_permission_allows_get", func(t *testing.T) {
+	t.Run("read_permission_without_delegation_denies_get", func(t *testing.T) {
 		store := &projectPermStore{
 			userPerms: map[uuid.UUID]map[uuid.UUID][]authz.Permission{
 				botUserID: {
@@ -1135,12 +1004,12 @@ func TestAgentAPIKey_PermissionScenarios(t *testing.T) {
 		r := buildAgentKeyRouter(taskRepo, apiKeyRepo, store)
 
 		w := serve(r, agentKeyAuthReq(t.Context(), http.MethodGet, taskURL, agentID, nil))
-		if w.Code != http.StatusOK {
-			t.Errorf("read permission: expected 200, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusNotFound {
+			t.Errorf("read permission: expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
-	t.Run("write_permission_allows_update", func(t *testing.T) {
+	t.Run("write_permission_without_delegation_denies_update", func(t *testing.T) {
 		store := &projectPermStore{
 			userPerms: map[uuid.UUID]map[uuid.UUID][]authz.Permission{
 				botUserID: {
@@ -1163,8 +1032,8 @@ func TestAgentAPIKey_PermissionScenarios(t *testing.T) {
 		w := serve(r, agentKeyAuthReq(t.Context(), http.MethodPatch, taskURL, agentID, map[string]any{
 			"title": "Updated",
 		}))
-		if w.Code != http.StatusOK {
-			t.Errorf("write permission: expected 200, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusNotFound {
+			t.Errorf("write permission: expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -1281,7 +1150,7 @@ func buildAgentMCPKeyRouter(taskRepo *fakeTaskRepo, apiKeyRepo *fakeAPIKeyRepo, 
 	userService := usersvc.New(userRepo, userRepo)
 	projectRepo := newFakeProjectRepo()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
-	taskService := tasksvc.New(taskRepo)
+	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
 	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil)
 	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil)
 	activityRepo := newFakeTaskActivityRepo()
@@ -1315,7 +1184,7 @@ func buildAgentMCPKeyRouter(taskRepo *fakeTaskRepo, apiKeyRepo *fakeAPIKeyRepo, 
 	})
 }
 
-func TestAgentMCPKey_CreateTask_Success(t *testing.T) {
+func TestAgentMCPKey_CreateTask_UnboundAgentDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -1355,19 +1224,11 @@ func TestAgentMCPKey_CreateTask_Success(t *testing.T) {
 
 	w := serve(r, req)
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unbound agent: want 404, got %d: %s", w.Code, w.Body.String())
 	}
-
-	var env struct {
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	title, _ := env.Data["title"].(string)
-	if title != "Created via MCP key" {
-		t.Errorf("expected title %q, got %q", "Created via MCP key", title)
+	if len(taskRepo.tasks) != 0 {
+		t.Fatal("denied create inserted a task")
 	}
 }
 
@@ -1415,7 +1276,7 @@ func TestAgentMCPKey_RegeneratedKey_InvalidatesOldKey(t *testing.T) {
 	}
 
 	r := buildAgentMCPKeyRouter(taskRepo, apiKeyRepo, store, identityStore)
-	base := fmt.Sprintf("/api/v1/projects/%s/tasks", projectID)
+	base := fmt.Sprintf("/api/v1/projects/%s/task-types", projectID)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, base, nil)
 	req.Header.Set("X-API-Key", oldKey)
@@ -1481,7 +1342,7 @@ func TestAgentMCPKey_XAgentIDHeaderIgnored(t *testing.T) {
 	}
 
 	r := buildAgentMCPKeyRouter(taskRepo, apiKeyRepo, store, identityStore)
-	taskURL := fmt.Sprintf("/api/v1/projects/%s/tasks/%s", projectID, taskID)
+	taskURL := fmt.Sprintf("/api/v1/projects/%s/task-types", projectID)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, taskURL, nil)
 	req.Header.Set("X-API-Key", ownKey)

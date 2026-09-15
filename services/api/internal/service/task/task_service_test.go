@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	tasksvc "github.com/Paca-AI/api/internal/service/task"
 )
 
@@ -451,11 +452,11 @@ func (r *fakeTaskRepo) BulkMoveSprintTasks(_ context.Context, _, _ uuid.UUID, _ 
 
 // ListAssignedTasks is not exercised by task service tests but must satisfy
 // the taskdom.TaskRepository interface.
-func (r *fakeTaskRepo) ListAssignedTasks(_ context.Context, _ []uuid.UUID, _ int, _ *string) ([]*taskdom.Task, bool, error) {
+func (r *fakeTaskRepo) ListAssignedTasks(_ context.Context, _ []uuid.UUID, _ []taskdom.AccessScope, _ int, _ *string) ([]*taskdom.Task, bool, error) {
 	return nil, false, nil
 }
 
-func (r *fakeTaskRepo) CountOpenTasksByProjects(_ context.Context, _ []uuid.UUID) (int64, error) {
+func (r *fakeTaskRepo) CountOpenTasksByProjects(_ context.Context, _ []taskdom.AccessScope) (int64, error) {
 	return 0, nil
 }
 
@@ -464,9 +465,9 @@ func (r *fakeTaskRepo) CountOpenTasksByProjects(_ context.Context, _ []uuid.UUID
 // ---------------------------------------------------------------------------
 
 func TestCreateTaskType_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	icon := "bug"
@@ -490,9 +491,9 @@ func TestCreateTaskType_OK(t *testing.T) {
 }
 
 func TestCreateTaskType_EmptyName(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.CreateTaskType(ctx, taskdom.CreateTaskTypeInput{
 		ProjectID: uuid.New(),
@@ -504,9 +505,9 @@ func TestCreateTaskType_EmptyName(t *testing.T) {
 }
 
 func TestUpdateTaskType_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	existing, _ := svc.CreateTaskType(ctx, taskdom.CreateTaskTypeInput{
@@ -529,9 +530,9 @@ func TestUpdateTaskType_OK(t *testing.T) {
 // unconditionally overwriting Icon/Color/Description on every PATCH, even
 // when the request omits them (nil outer pointer = absent, not "clear").
 func TestUpdateTaskType_OmittedFieldsUnchanged(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	icon := "rocket"
@@ -574,9 +575,9 @@ func TestUpdateTaskType_OmittedFieldsUnchanged(t *testing.T) {
 // three-state contract: an explicit null (non-nil outer pointer, nil inner
 // pointer) clears the field rather than being ignored.
 func TestUpdateTaskType_ExplicitNullClearsIcon(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	icon := "rocket"
@@ -602,9 +603,9 @@ func TestUpdateTaskType_ExplicitNullClearsIcon(t *testing.T) {
 }
 
 func TestUpdateTaskType_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.UpdateTaskType(ctx, uuid.New(), uuid.New(), taskdom.UpdateTaskTypeInput{Name: "X"})
 	if err != taskdom.ErrTypeNotFound {
@@ -613,9 +614,9 @@ func TestUpdateTaskType_NotFound(t *testing.T) {
 }
 
 func TestDeleteTaskType_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	tt, _ := svc.CreateTaskType(ctx, taskdom.CreateTaskTypeInput{ProjectID: projectID, Name: "Chore"})
@@ -630,9 +631,9 @@ func TestDeleteTaskType_OK(t *testing.T) {
 }
 
 func TestSetDefaultTaskType_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	tt1, _ := svc.CreateTaskType(ctx, taskdom.CreateTaskTypeInput{ProjectID: projectID, Name: "Task"})
@@ -654,9 +655,9 @@ func TestSetDefaultTaskType_OK(t *testing.T) {
 }
 
 func TestSetDefaultTaskType_SwitchDefault(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	tt1, _ := svc.CreateTaskType(ctx, taskdom.CreateTaskTypeInput{ProjectID: projectID, Name: "Task"})
@@ -682,9 +683,9 @@ func TestSetDefaultTaskType_SwitchDefault(t *testing.T) {
 }
 
 func TestSetDefaultTaskType_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.SetDefaultTaskType(ctx, uuid.New(), uuid.New())
 	if err != taskdom.ErrTypeNotFound {
@@ -697,9 +698,9 @@ func TestSetDefaultTaskType_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateTaskStatus_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	color := "#FF0000"
@@ -722,9 +723,9 @@ func TestCreateTaskStatus_OK(t *testing.T) {
 }
 
 func TestCreateTaskStatus_EmptyName(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
 		ProjectID: uuid.New(),
@@ -737,9 +738,9 @@ func TestCreateTaskStatus_EmptyName(t *testing.T) {
 }
 
 func TestCreateTaskStatus_InvalidCategory(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
 		ProjectID: uuid.New(),
@@ -752,9 +753,9 @@ func TestCreateTaskStatus_InvalidCategory(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_PositionUpdate(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
@@ -781,9 +782,9 @@ func TestUpdateTaskStatus_PositionUpdate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateTask_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	desc := json.RawMessage(`[{"id":"1","type":"paragraph","props":{"textColor":"default","backgroundColor":"default","textAlignment":"left"},"content":[{"type":"text","text":"Implement the feature","styles":{}}],"children":[]}]`)
@@ -808,9 +809,9 @@ func TestCreateTask_OK(t *testing.T) {
 }
 
 func TestCreateTask_EmptyTitle(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.CreateTask(ctx, taskdom.CreateTaskInput{
 		ProjectID: uuid.New(),
@@ -822,9 +823,9 @@ func TestCreateTask_EmptyTitle(t *testing.T) {
 }
 
 func TestCreateTask_UsesDefaultTaskTypeAndStatus(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	tt, _ := svc.CreateTaskType(ctx, taskdom.CreateTaskTypeInput{ProjectID: projectID, Name: "Task"})
@@ -850,9 +851,9 @@ func TestCreateTask_UsesDefaultTaskTypeAndStatus(t *testing.T) {
 }
 
 func TestCreateTask_ExplicitIDsBypassDefaultLookup(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	defaultType, _ := svc.CreateTaskType(ctx, taskdom.CreateTaskTypeInput{ProjectID: projectID, Name: "Task"})
@@ -882,9 +883,9 @@ func TestCreateTask_ExplicitIDsBypassDefaultLookup(t *testing.T) {
 }
 
 func TestCreateTask_DefaultTaskTypeErrorPropagates(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	repo.findDefaultTypeErr = errors.New("db unavailable")
 
@@ -898,9 +899,9 @@ func TestCreateTask_DefaultTaskTypeErrorPropagates(t *testing.T) {
 }
 
 func TestCreateTask_DefaultTaskStatusErrorPropagates(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	repo.findDefaultStatusErr = errors.New("db timeout")
 
@@ -914,9 +915,9 @@ func TestCreateTask_DefaultTaskStatusErrorPropagates(t *testing.T) {
 }
 
 func TestUpdateTask_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	task, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{
@@ -942,9 +943,9 @@ func TestUpdateTask_OK(t *testing.T) {
 }
 
 func TestUpdateTask_TitleUnchangedWhenEmpty(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	task, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{
@@ -965,9 +966,9 @@ func TestUpdateTask_TitleUnchangedWhenEmpty(t *testing.T) {
 }
 
 func TestDeleteTask_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	task, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{
@@ -986,9 +987,9 @@ func TestDeleteTask_OK(t *testing.T) {
 }
 
 func TestDeleteTask_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	err := svc.DeleteTask(ctx, uuid.New(), uuid.New())
 	if err != taskdom.ErrTaskNotFound {
@@ -997,9 +998,9 @@ func TestDeleteTask_NotFound(t *testing.T) {
 }
 
 func TestCountTasks_Total(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	for i := 0; i < 7; i++ {
@@ -1016,9 +1017,9 @@ func TestCountTasks_Total(t *testing.T) {
 }
 
 func TestCountTasks_FilterBySprint(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 	sprintID := uuid.New()
 
@@ -1036,9 +1037,9 @@ func TestCountTasks_FilterBySprint(t *testing.T) {
 }
 
 func TestCountTasks_IgnoresCursor(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	for i := 0; i < 5; i++ {
@@ -1061,9 +1062,9 @@ func TestCountTasks_IgnoresCursor(t *testing.T) {
 }
 
 func TestCountTasks_BacklogOnly(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 	sprintID := uuid.New()
 
@@ -1081,9 +1082,9 @@ func TestCountTasks_BacklogOnly(t *testing.T) {
 }
 
 func TestListTasks_FilterBySprint(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 	sprintID := uuid.New()
 
@@ -1108,9 +1109,9 @@ func TestListTasks_FilterBySprint(t *testing.T) {
 }
 
 func TestListTasks_FilterBySearch_MatchesTitleCaseInsensitive(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	_, _ = svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: projectID, Title: "Fix login bug"})
@@ -1127,9 +1128,9 @@ func TestListTasks_FilterBySearch_MatchesTitleCaseInsensitive(t *testing.T) {
 }
 
 func TestListTasks_FilterBySearch_MatchesTaskNumber(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	first, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: projectID, Title: "First task"})
@@ -1146,9 +1147,9 @@ func TestListTasks_FilterBySearch_MatchesTaskNumber(t *testing.T) {
 }
 
 func TestListTasks_FilterBySearch_BlankIsNoOp(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	_, _ = svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: projectID, Title: "Task one"})
@@ -1165,9 +1166,9 @@ func TestListTasks_FilterBySearch_BlankIsNoOp(t *testing.T) {
 }
 
 func TestCountTasks_FilterBySearch(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	_, _ = svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: projectID, Title: "Fix login bug"})
@@ -1185,9 +1186,9 @@ func TestCountTasks_FilterBySearch(t *testing.T) {
 }
 
 func TestListTasks_Pagination(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	for i := 0; i < 5; i++ {
@@ -1210,9 +1211,9 @@ func TestListTasks_Pagination(t *testing.T) {
 }
 
 func TestListTasks_CursorPagination(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	for i := 0; i < 5; i++ {
@@ -1262,9 +1263,9 @@ func TestListTasks_CursorPagination(t *testing.T) {
 }
 
 func TestGetTask_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	created, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{
@@ -1285,9 +1286,9 @@ func TestGetTask_OK(t *testing.T) {
 }
 
 func TestGetTask_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.GetTask(ctx, uuid.New(), uuid.New())
 	if err != taskdom.ErrTaskNotFound {
@@ -1296,9 +1297,9 @@ func TestGetTask_NotFound(t *testing.T) {
 }
 
 func TestUpdateTask_AbsentFieldsPreserveValues(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 	sprintID := uuid.New()
 	desc := json.RawMessage(`[{"type":"paragraph","content":[{"type":"text","text":"original desc","styles":{}}],"children":[]}]`)
@@ -1337,9 +1338,9 @@ func TestUpdateTask_AbsentFieldsPreserveValues(t *testing.T) {
 }
 
 func TestUpdateTask_NullSprintIDClearsField(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 	sprintID := uuid.New()
 
@@ -1363,9 +1364,9 @@ func TestUpdateTask_NullSprintIDClearsField(t *testing.T) {
 }
 
 func TestUpdateTask_StatusChangePreservesSprintID(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 	sprintID := uuid.New()
 	statusID := uuid.New()
@@ -1393,9 +1394,9 @@ func TestUpdateTask_StatusChangePreservesSprintID(t *testing.T) {
 }
 
 func TestCreateTask_StoryPoints(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	sp := 5
@@ -1414,9 +1415,9 @@ func TestCreateTask_StoryPoints(t *testing.T) {
 }
 
 func TestCreateTask_StoryPoints_Nil(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	task, err := svc.CreateTask(ctx, taskdom.CreateTaskInput{
@@ -1432,9 +1433,9 @@ func TestCreateTask_StoryPoints_Nil(t *testing.T) {
 }
 
 func TestUpdateTask_StoryPoints(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	task, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{
@@ -1456,9 +1457,9 @@ func TestUpdateTask_StoryPoints(t *testing.T) {
 }
 
 func TestUpdateTask_StoryPointsClearedToNil(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	sp := 3
@@ -1482,9 +1483,9 @@ func TestUpdateTask_StoryPointsClearedToNil(t *testing.T) {
 }
 
 func TestUpdateTask_AbsentStoryPointsPreservesValue(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	sp := 13
@@ -1508,9 +1509,9 @@ func TestUpdateTask_AbsentStoryPointsPreservesValue(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_NameUpdate(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
@@ -1532,9 +1533,9 @@ func TestUpdateTaskStatus_NameUpdate(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_CategoryUpdate(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
@@ -1557,9 +1558,9 @@ func TestUpdateTaskStatus_CategoryUpdate(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_InvalidCategoryReturnsError(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
@@ -1579,9 +1580,9 @@ func TestUpdateTaskStatus_InvalidCategoryReturnsError(t *testing.T) {
 }
 
 func TestUpdateTaskStatus_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	newPos := 1
 	_, err := svc.UpdateTaskStatus(ctx, uuid.New(), uuid.New(), taskdom.UpdateTaskStatusInput{Position: &newPos})
@@ -1591,9 +1592,9 @@ func TestUpdateTaskStatus_NotFound(t *testing.T) {
 }
 
 func TestDeleteTaskStatus_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
@@ -1614,9 +1615,9 @@ func TestDeleteTaskStatus_OK(t *testing.T) {
 }
 
 func TestDeleteTaskStatus_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	err := svc.DeleteTaskStatus(ctx, uuid.New(), uuid.New())
 	if err != taskdom.ErrStatusNotFound {
@@ -1636,9 +1637,9 @@ func (s *stubAutomationStatusChecker) StatusUsedByAutomation(_ context.Context, 
 }
 
 func TestDeleteTaskStatus_InUseByAutomation_Blocked(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo).WithAutomationStatusChecker(&stubAutomationStatusChecker{used: true})
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{})).WithAutomationStatusChecker(&stubAutomationStatusChecker{used: true})
 	projectID := uuid.New()
 
 	st, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
@@ -1659,9 +1660,9 @@ func TestDeleteTaskStatus_InUseByAutomation_Blocked(t *testing.T) {
 }
 
 func TestDeleteTaskStatus_NotUsedByAutomation_Allowed(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo).WithAutomationStatusChecker(&stubAutomationStatusChecker{used: false})
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{})).WithAutomationStatusChecker(&stubAutomationStatusChecker{used: false})
 	projectID := uuid.New()
 
 	st, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{
@@ -1680,9 +1681,9 @@ func TestDeleteTaskStatus_NotUsedByAutomation_Allowed(t *testing.T) {
 }
 
 func TestListTaskStatuses_MultiProject(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	p1 := uuid.New()
 	p2 := uuid.New()
 
@@ -1705,9 +1706,9 @@ func TestListTaskStatuses_MultiProject(t *testing.T) {
 }
 
 func TestSetDefaultTaskStatus_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st1, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{ProjectID: projectID, Name: "Backlog", Category: taskdom.StatusCategoryTodo})
@@ -1728,9 +1729,9 @@ func TestSetDefaultTaskStatus_OK(t *testing.T) {
 }
 
 func TestSetDefaultTaskStatus_SwitchDefault(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st1, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{ProjectID: projectID, Name: "Backlog", Category: taskdom.StatusCategoryTodo})
@@ -1753,9 +1754,9 @@ func TestSetDefaultTaskStatus_SwitchDefault(t *testing.T) {
 }
 
 func TestSetDefaultTaskStatus_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.SetDefaultTaskStatus(ctx, uuid.New(), uuid.New())
 	if err != taskdom.ErrStatusNotFound {
@@ -1764,9 +1765,9 @@ func TestSetDefaultTaskStatus_NotFound(t *testing.T) {
 }
 
 func TestSetDefaultTaskStatus_RepoErrorPropagates(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	repo.setDefaultStatusErr = errors.New("db unavailable")
 
@@ -1777,9 +1778,9 @@ func TestSetDefaultTaskStatus_RepoErrorPropagates(t *testing.T) {
 }
 
 func TestReorderTaskStatuses_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st1, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{ProjectID: projectID, Name: "A", Category: taskdom.StatusCategoryTodo, Position: 0})
@@ -1799,9 +1800,9 @@ func TestReorderTaskStatuses_OK(t *testing.T) {
 }
 
 func TestReorderTaskStatuses_InvalidSet(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	st1, _ := svc.CreateTaskStatus(ctx, taskdom.CreateTaskStatusInput{ProjectID: projectID, Name: "A", Category: taskdom.StatusCategoryTodo})
@@ -1819,9 +1820,9 @@ func TestReorderTaskStatuses_InvalidSet(t *testing.T) {
 }
 
 func TestReorderTaskStatuses_Empty(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	if err := svc.ReorderTaskStatuses(ctx, uuid.New(), nil); err != taskdom.ErrStatusReorderInvalid {
 		t.Errorf("expected ErrStatusReorderInvalid for empty input, got %v", err)
@@ -1904,9 +1905,9 @@ func (r *fakeTaskRepo) DeleteTaskLink(_ context.Context, _ uuid.UUID) error { re
 // ---------------------------------------------------------------------------
 
 func TestCreateTask_TaskNumberIncrementsPerProject(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	t1, err := svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: projectID, Title: "First"})
@@ -1935,9 +1936,9 @@ func TestCreateTask_TaskNumberIncrementsPerProject(t *testing.T) {
 }
 
 func TestCreateTask_TaskNumberScopedToProject(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projA := uuid.New()
 	projB := uuid.New()
 
@@ -1957,9 +1958,9 @@ func TestCreateTask_TaskNumberScopedToProject(t *testing.T) {
 }
 
 func TestGetTaskByNumber_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	created, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: projectID, Title: "Lookup me"})
@@ -1977,9 +1978,9 @@ func TestGetTaskByNumber_OK(t *testing.T) {
 }
 
 func TestGetTaskByNumber_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.GetTaskByNumber(ctx, uuid.New(), 999)
 	if err != taskdom.ErrTaskNotFound {
@@ -1988,9 +1989,9 @@ func TestGetTaskByNumber_NotFound(t *testing.T) {
 }
 
 func TestGetTaskByNumber_DeletedTask(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	created, _ := svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: projectID, Title: "Gone"})
@@ -2003,9 +2004,9 @@ func TestGetTaskByNumber_DeletedTask(t *testing.T) {
 }
 
 func TestGetTaskByNumber_CrossProjectIsolation(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projA := uuid.New()
 	projB := uuid.New()
 
@@ -2023,9 +2024,9 @@ func TestGetTaskByNumber_CrossProjectIsolation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateCustomFieldDefinition_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	got, err := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
@@ -2056,9 +2057,9 @@ func TestCreateCustomFieldDefinition_OK(t *testing.T) {
 }
 
 func TestCreateCustomFieldDefinition_EmptyKey(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
 		ProjectID:   uuid.New(),
@@ -2072,9 +2073,9 @@ func TestCreateCustomFieldDefinition_EmptyKey(t *testing.T) {
 }
 
 func TestCreateCustomFieldDefinition_EmptyDisplayName(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
 		ProjectID:   uuid.New(),
@@ -2088,9 +2089,9 @@ func TestCreateCustomFieldDefinition_EmptyDisplayName(t *testing.T) {
 }
 
 func TestCreateCustomFieldDefinition_InvalidType(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
 		ProjectID:   uuid.New(),
@@ -2104,9 +2105,9 @@ func TestCreateCustomFieldDefinition_InvalidType(t *testing.T) {
 }
 
 func TestCreateCustomFieldDefinition_DuplicateKey(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	_, err := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
@@ -2131,9 +2132,9 @@ func TestCreateCustomFieldDefinition_DuplicateKey(t *testing.T) {
 }
 
 func TestUpdateCustomFieldDefinition_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	f, _ := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
@@ -2169,9 +2170,9 @@ func TestUpdateCustomFieldDefinition_OK(t *testing.T) {
 }
 
 func TestUpdateCustomFieldDefinition_InvalidType(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	f, _ := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
@@ -2191,9 +2192,9 @@ func TestUpdateCustomFieldDefinition_InvalidType(t *testing.T) {
 }
 
 func TestUpdateCustomFieldDefinition_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	_, err := svc.UpdateCustomFieldDefinition(ctx, uuid.New(), uuid.New(), taskdom.UpdateCustomFieldDefinitionInput{
 		DisplayName: "X",
@@ -2204,9 +2205,9 @@ func TestUpdateCustomFieldDefinition_NotFound(t *testing.T) {
 }
 
 func TestDeleteCustomFieldDefinition_OK(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	f, _ := svc.CreateCustomFieldDefinition(ctx, taskdom.CreateCustomFieldDefinitionInput{
@@ -2226,9 +2227,9 @@ func TestDeleteCustomFieldDefinition_OK(t *testing.T) {
 }
 
 func TestDeleteCustomFieldDefinition_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 
 	err := svc.DeleteCustomFieldDefinition(ctx, uuid.New(), uuid.New())
 	if err != taskdom.ErrCustomFieldNotFound {
@@ -2237,9 +2238,9 @@ func TestDeleteCustomFieldDefinition_NotFound(t *testing.T) {
 }
 
 func TestSumTaskField_StoryPoints(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	sp1, sp2, sp3 := 3, 5, 10
@@ -2257,9 +2258,9 @@ func TestSumTaskField_StoryPoints(t *testing.T) {
 }
 
 func TestSumTaskField_FilterBySprint(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 	sprintID := uuid.New()
 
@@ -2277,9 +2278,9 @@ func TestSumTaskField_FilterBySprint(t *testing.T) {
 }
 
 func TestSumTaskField_NilStoryPoints(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projectID := uuid.New()
 
 	sp := 4
@@ -2296,9 +2297,9 @@ func TestSumTaskField_NilStoryPoints(t *testing.T) {
 }
 
 func TestListCustomFieldDefinitions_MultiProject(t *testing.T) {
-	ctx := context.Background()
+	ctx := authz.WithActorID(context.Background(), unitAdminID)
 	repo := newFakeTaskRepo()
-	svc := tasksvc.New(repo)
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
 	projA := uuid.New()
 	projB := uuid.New()
 
@@ -2319,4 +2320,202 @@ func TestListCustomFieldDefinitions_MultiProject(t *testing.T) {
 	if len(fields) != 2 {
 		t.Errorf("expected 2 fields for projA, got %d", len(fields))
 	}
+}
+
+// Missing authenticated identity must never become an implicit service/admin identity.
+func TestUS002MissingIdentityFailsClosed(t *testing.T) {
+	repo := newFakeTaskRepo()
+	task := &taskdom.Task{ID: uuid.New(), ProjectID: uuid.New(), Title: "private"}
+	repo.tasks[task.ID] = task
+	svc := tasksvc.New(repo, authz.NewTaskAccessPolicy(unitAdminStore{}))
+	if _, err := svc.GetTask(context.Background(), task.ProjectID, task.ID); !errors.Is(err, taskdom.ErrTaskNotFound) {
+		t.Fatalf("unauthenticated GetTask returned %v; want not found", err)
+	}
+}
+
+// Existing business-rule tests run as this explicit synthetic global admin.
+var unitAdminID = uuid.MustParse("10000000-0000-0000-0000-000000000001")
+
+type unitAdminStore struct{}
+
+func (unitAdminStore) FindTaskActorAccess(_ context.Context, userID, projectID uuid.UUID) (authz.TaskActorAccess, error) {
+	if userID != unitAdminID || projectID == uuid.Nil {
+		return authz.TaskActorAccess{}, taskdom.ErrTaskNotFound
+	}
+	return authz.TaskActorAccess{UserID: userID, GlobalPermissions: []authz.Permission{authz.PermissionAll}}, nil
+}
+
+// The cached facade must never cache task content or authorization decisions.
+func TestUS002CachedTaskAccessUsesCurrentPolicy(t *testing.T) {
+	repo := newFakeTaskRepo()
+	projectID, userID, memberID := uuid.New(), uuid.New(), uuid.New()
+	task := &taskdom.Task{ID: uuid.New(), ProjectID: projectID, AssigneeIDs: []uuid.UUID{memberID}}
+	repo.tasks[task.ID] = task
+	policy := &mutableTaskPolicy{scope: taskdom.AccessScope{ProjectID: projectID, UserID: userID, MemberID: memberID, Write: true}}
+	svc := tasksvc.NewCachedService(tasksvc.New(repo, policy), newCacheStore(t), time.Minute, discardLogger())
+	ctx := authz.WithActorID(context.Background(), userID)
+	if _, err := svc.CheckTaskAccess(ctx, projectID, task.ID, taskdom.AccessRead); err != nil {
+		t.Fatal(err)
+	}
+	policy.scope.MemberID = uuid.Nil
+	if _, err := svc.GetTask(ctx, projectID, task.ID); !errors.Is(err, taskdom.ErrTaskNotFound) {
+		t.Fatal("cached task leaked after reassignment")
+	}
+}
+
+type mutableTaskPolicy struct{ scope taskdom.AccessScope }
+
+func (p *mutableTaskPolicy) ResolveTaskAccess(ctx context.Context, projectID uuid.UUID) (taskdom.AccessScope, error) {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok || actor != p.scope.UserID || projectID != p.scope.ProjectID {
+		return taskdom.AccessScope{}, taskdom.ErrTaskNotFound
+	}
+	return p.scope, nil
+}
+
+func TestUS004AllManagerFieldsRefusedBeforeMutation(t *testing.T) {
+	repo := newFakeTaskRepo()
+	project, user, member := uuid.New(), uuid.New(), uuid.New()
+	task := &taskdom.Task{ID: uuid.New(), ProjectID: project, Title: "original", AssigneeIDs: []uuid.UUID{member}}
+	repo.tasks[task.ID] = task
+	policy := &mutableTaskPolicy{scope: taskdom.AccessScope{ProjectID: project, UserID: user, MemberID: member, Write: true}}
+	svc := tasksvc.New(repo, policy)
+	ctx := authz.WithActorID(context.Background(), user)
+	var clearID *uuid.UUID
+	var clearPoints *int
+	var clearDate *time.Time
+	description := json.RawMessage(`[]`)
+	importance := 0
+	assignees := []uuid.UUID{}
+	tags := []string{}
+	fields := map[string]any{}
+	inputs := map[string]taskdom.UpdateTaskInput{
+		"title": {Title: "changed"}, "type": {TaskTypeID: &clearID}, "sprint": {SprintID: &clearID}, "parent": {ParentTaskID: &clearID},
+		"description": {Description: &description}, "importance": {Importance: &importance}, "points": {StoryPoints: &clearPoints}, "assignees": {AssigneeIDs: &assignees},
+		"reporter": {ReporterID: &clearID}, "fields": {CustomFields: &fields}, "start": {StartDate: &clearDate}, "due": {DueDate: &clearDate}, "tags": {Tags: &tags},
+	}
+	for name, input := range inputs {
+		t.Run(name, func(t *testing.T) {
+			input.StatusID = &clearID
+			if _, err := svc.UpdateTask(ctx, project, task.ID, input); !errors.Is(err, taskdom.ErrTaskForbidden) {
+				t.Fatalf("restricted update: %v", err)
+			}
+			got := repo.tasks[task.ID]
+			if got.Title != "original" || len(got.AssigneeIDs) != 1 || !got.UpdatedAt.IsZero() {
+				t.Fatal("rejected update mutated repository")
+			}
+		})
+	}
+	if _, err := svc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: project, Title: "denied"}); !errors.Is(err, taskdom.ErrTaskForbidden) {
+		t.Fatal("assignee created task")
+	}
+	if err := svc.DeleteTask(ctx, project, task.ID); !errors.Is(err, taskdom.ErrTaskForbidden) {
+		t.Fatal("assignee deleted task")
+	}
+	if len(repo.tasks) != 1 {
+		t.Fatal("restricted operation changed task count")
+	}
+}
+
+// Simulate a manager committing between the employee's read and persistence.
+type taskChangedAfterReadRepo struct {
+	*fakeTaskRepo
+	change func(*taskdom.Task)
+}
+
+func (r *taskChangedAfterReadRepo) FindTaskByID(ctx context.Context, id uuid.UUID) (*taskdom.Task, error) {
+	snapshot, err := r.fakeTaskRepo.FindTaskByID(ctx, id)
+	if err == nil && r.change != nil {
+		r.mu.Lock()
+		r.change(r.tasks[id])
+		r.change = nil
+		r.mu.Unlock()
+	}
+	return snapshot, err
+}
+func TestUS004StatusCannotRestoreConcurrentManagerChanges(t *testing.T) {
+	for _, reassign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reassigned_%v", reassign), func(t *testing.T) {
+			project, user, member, status := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+			originalStatus := uuid.New()
+			task := &taskdom.Task{ID: uuid.New(), ProjectID: project, Title: "before", StatusID: &originalStatus, AssigneeIDs: []uuid.UUID{member}}
+			base := newFakeTaskRepo()
+			base.tasks[task.ID] = task
+			repo := &taskChangedAfterReadRepo{fakeTaskRepo: base, change: func(current *taskdom.Task) {
+				current.Title = "manager edit"
+				if reassign {
+					current.AssigneeIDs = []uuid.UUID{uuid.New()}
+				}
+			}}
+			scope := &mutableTaskPolicy{scope: taskdom.AccessScope{ProjectID: project, UserID: user, MemberID: member, Write: true}}
+			svc := tasksvc.New(repo, scope)
+			ctx := authz.WithActorID(context.Background(), user)
+			statusPtr := &status
+			_, err := svc.UpdateTask(ctx, project, task.ID, taskdom.UpdateTaskInput{StatusID: &statusPtr})
+			if reassign && err == nil {
+				t.Fatal("removed assignee changed status")
+			}
+			if !reassign && err != nil {
+				t.Fatal(err)
+			}
+			stored := base.tasks[task.ID]
+			if stored.Title != "manager edit" {
+				t.Fatal("status update overwrote manager title")
+			}
+			if reassign && (*stored.StatusID != originalStatus || stored.AssigneeIDs[0] == member) {
+				t.Fatal("status update restored assignment or changed status after removal")
+			}
+		})
+	}
+}
+
+func (r *fakeTaskRepo) UpdateTaskProgress(_ context.Context, task *taskdom.Task, scope taskdom.AccessScope) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.tasks[task.ID]
+	if !ok {
+		return taskdom.ErrTaskNotFound
+	}
+	if err := scope.Require(current, taskdom.AccessProgress); err != nil {
+		return err
+	}
+	current.StatusID = task.StatusID
+	current.UpdatedAt = task.UpdatedAt
+	*task = *current
+	return nil
+}
+
+func (r *fakeTaskRepo) CreateTaskAuthorized(ctx context.Context, t *taskdom.Task, scope taskdom.AccessScope) error {
+	if !scope.CanCreate() || scope.ProjectID != t.ProjectID {
+		return taskdom.ErrTaskForbidden
+	}
+	return r.CreateTask(ctx, t)
+}
+func (r *fakeTaskRepo) UpdateTaskFields(_ context.Context, t *taskdom.Task, in taskdom.UpdateTaskInput, scope taskdom.AccessScope) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.tasks[t.ID]
+	if !ok {
+		return taskdom.ErrTaskNotFound
+	}
+	if err := scope.Require(current, taskdom.AccessManage); err != nil {
+		return err
+	}
+	in.ApplyTo(current)
+	current.UpdatedAt = time.Now()
+	*t = *current
+	return nil
+}
+func (r *fakeTaskRepo) DeleteTaskAuthorized(ctx context.Context, projectID, id uuid.UUID, scope taskdom.AccessScope) error {
+	current, err := r.FindTaskByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if current.ProjectID != projectID {
+		return taskdom.ErrTaskNotFound
+	}
+	if err := scope.Require(current, taskdom.AccessManage); err != nil {
+		return err
+	}
+	return r.DeleteTask(ctx, id)
 }

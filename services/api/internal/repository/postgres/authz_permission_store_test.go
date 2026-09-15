@@ -47,11 +47,12 @@ func openAuthzStoreTestDB(t *testing.T) *sqlx.DB {
 			created_at DATETIME,
 			updated_at DATETIME
 		);
+		CREATE TABLE projects (id TEXT PRIMARY KEY, deleted_at DATETIME);
 		CREATE TABLE project_members (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
 			user_id TEXT NOT NULL,
-			project_role_id TEXT NOT NULL
+			project_role_id TEXT NOT NULL, deleted_at DATETIME
 		);`
 	if _, err := db.ExecContext(context.Background(), schema); err != nil {
 		t.Fatalf("create schema: %v", err)
@@ -107,14 +108,15 @@ func TestAuthzPermissionStore_ListProjectPermissions(t *testing.T) {
 		userID.String(), "alice", "hash", "Alice", globalRoleID, now, now,
 	)
 	db.MustExec(
-		`INSERT INTO project_roles (id, project_id, role_name, permissions, created_at, updated_at) VALUES ($1, NULL, $2, $3, $4, $5)`,
-		roleID.String(), "PROJECT_MANAGER", []byte(`{"tasks.write":true,"tasks.read":true}`), now, now,
+		`INSERT INTO project_roles (id, project_id, role_name, permissions, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		roleID.String(), projectID.String(), "PROJECT_MANAGER", []byte(`{"tasks.write":true,"tasks.read":true}`), now, now,
 	)
 	db.MustExec(
 		`INSERT INTO project_members (id, project_id, user_id, project_role_id) VALUES ($1, $2, $3, $4)`,
 		uuid.New().String(), projectID.String(), userID.String(), roleID.String(),
 	)
 
+	db.MustExec(`INSERT INTO projects(id) VALUES ($1)`, projectID.String())
 	perms, err := store.ListProjectPermissions(ctx, userID, projectID)
 	if err != nil {
 		t.Fatalf("list project permissions: %v", err)

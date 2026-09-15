@@ -31,9 +31,11 @@ const (
 	PermissionProjectRolesWrite Permission = "project.roles.write"
 	PermissionProjectRolesAll   Permission = "project.roles.*"
 
-	PermissionTasksRead  Permission = "tasks.read"
-	PermissionTasksWrite Permission = "tasks.write"
-	PermissionTasksAll   Permission = "tasks.*"
+	PermissionTasksReadAll Permission = "tasks.read_all"
+	PermissionTasksManage  Permission = "tasks.manage"
+	PermissionTasksRead    Permission = "tasks.read"
+	PermissionTasksWrite   Permission = "tasks.write"
+	PermissionTasksAll     Permission = "tasks.*"
 
 	PermissionSprintsRead  Permission = "sprints.read"
 	PermissionSprintsWrite Permission = "sprints.write"

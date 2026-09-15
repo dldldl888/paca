@@ -72,25 +72,25 @@ type TaskRepository interface {
 	SumTaskField(ctx context.Context, projectID uuid.UUID, filter TaskFilter, fieldKey string) (float64, error)
 	FindTaskByID(ctx context.Context, id uuid.UUID) (*Task, error)
 	FindTaskByNumber(ctx context.Context, projectID uuid.UUID, taskNumber int64) (*Task, error)
+	// Raw primitives are for bounded internal callers/fixture setup, not HTTP authorization.
 	CreateTask(ctx context.Context, t *Task) error
+	CreateTaskAuthorized(ctx context.Context, t *Task, scope AccessScope) error
 	UpdateTask(ctx context.Context, t *Task) error
+	UpdateTaskFields(ctx context.Context, t *Task, in UpdateTaskInput, scope AccessScope) error
+	// UpdateTaskProgress persists execution progress only, rechecking current access
+	// under the mutation transaction and preserving concurrent manager fields.
+	UpdateTaskProgress(ctx context.Context, t *Task, scope AccessScope) error
 	DeleteTask(ctx context.Context, id uuid.UUID) error
+	DeleteTaskAuthorized(ctx context.Context, projectID, id uuid.UUID, scope AccessScope) error
 	// BulkMoveSprintTasks reassigns all non-done tasks in sourceSprintID to
 	// targetSprintID. A nil targetSprintID moves tasks to the backlog (sprint_id = NULL).
 	// Tasks whose status has category "done" are not moved.
 	BulkMoveSprintTasks(ctx context.Context, projectID, sourceSprintID uuid.UUID, targetSprintID *uuid.UUID) error
-	// ListAssignedTasks returns open (non-done) tasks assigned to any of
-	// memberIDs, across whatever projects those members belong to — each
-	// project_members.id already scopes a member to a single project, so no
-	// separate project filter is needed. Results are ordered by importance
-	// descending then created_at ascending, keyset-paginated via cursorAfter
-	// (same cursor format as the "importance" ListTasks sort).
-	// Used by the cross-project "assigned to me" home page widget.
-	ListAssignedTasks(ctx context.Context, memberIDs []uuid.UUID, limit int, cursorAfter *string) ([]*Task, bool, error)
-	// CountOpenTasksByProjects returns the number of non-done tasks across all
-	// of projectIDs in a single query, for cross-project aggregates like the
-	// home page's workspace stats widget — avoids an N-query per-project loop.
-	CountOpenTasksByProjects(ctx context.Context, projectIDs []uuid.UUID) (int64, error)
+	// ListAssignedTasks intersects the verified actor member IDs and scopes,
+	// before keyset pagination (importance descending, created_at ascending).
+	ListAssignedTasks(ctx context.Context, memberIDs []uuid.UUID, scopes []AccessScope, limit int, cursorAfter *string) ([]*Task, bool, error)
+	// CountOpenTasksByProjects counts visible non-done tasks across live scopes.
+	CountOpenTasksByProjects(ctx context.Context, scopes []AccessScope) (int64, error)
 }
 
 // TaskSort carries resolved sort configuration for ListTasks.
@@ -109,18 +109,19 @@ type TaskSort struct {
 
 // TaskFilter carries optional criteria for listing tasks.
 type TaskFilter struct {
-	SprintID     *uuid.UUID  // single-value compat; ignored when SprintIDs is non-empty
-	SprintIDs    []uuid.UUID // multi-value; takes priority over SprintID and BacklogOnly
-	StatusID     *uuid.UUID  // single-value compat; ignored when StatusIDs is non-empty
-	StatusIDs    []uuid.UUID // multi-value; takes priority over StatusID
-	AssigneeID   *uuid.UUID  // single-value compat; ignored when AssigneeIDs is non-empty
-	AssigneeIDs  []uuid.UUID // multi-value; takes priority over AssigneeID
-	AssigneeNull bool        // true → only tasks with no rows in task_assignees
-	ParentTaskID *uuid.UUID  // non-nil → only subtasks of this parent
-	TaskTypeIDs  []uuid.UUID // multi-value; when non-empty, only tasks of these types
-	TaskTypeNull bool        // true → only tasks where task_type_id IS NULL
-	BacklogOnly  bool        // true → only tasks where sprint_id IS NULL
-	CursorAfter  *string     // opaque base64 cursor; when set, replaces offset-based paging
+	Visibility   *AccessScope `json:"-"` // server-only; service always overwrites it
+	SprintID     *uuid.UUID   // single-value compat; ignored when SprintIDs is non-empty
+	SprintIDs    []uuid.UUID  // multi-value; takes priority over SprintID and BacklogOnly
+	StatusID     *uuid.UUID   // single-value compat; ignored when StatusIDs is non-empty
+	StatusIDs    []uuid.UUID  // multi-value; takes priority over StatusID
+	AssigneeID   *uuid.UUID   // single-value compat; ignored when AssigneeIDs is non-empty
+	AssigneeIDs  []uuid.UUID  // multi-value; takes priority over AssigneeID
+	AssigneeNull bool         // true → only tasks with no rows in task_assignees
+	ParentTaskID *uuid.UUID   // non-nil → only subtasks of this parent
+	TaskTypeIDs  []uuid.UUID  // multi-value; when non-empty, only tasks of these types
+	TaskTypeNull bool         // true → only tasks where task_type_id IS NULL
+	BacklogOnly  bool         // true → only tasks where sprint_id IS NULL
+	CursorAfter  *string      // opaque base64 cursor; when set, replaces offset-based paging
 	// Search, when non-nil and non-blank, restricts results to tasks whose title
 	// or "#<task_number>" id contains the text (case-insensitive).
 	Search *string

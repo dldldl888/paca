@@ -9,7 +9,9 @@ import (
 	"github.com/google/uuid"
 
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/cache"
+	pgRepo "github.com/Paca-AI/api/internal/repository/postgres"
 	tasksvc "github.com/Paca-AI/api/internal/service/task"
 )
 
@@ -29,7 +31,7 @@ func TestE2ETaskStatus_CachedUpdatePreservesPositionAndCategory(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	cacheStore := cache.NewStore(env.redisClient, "paca:")
 
-	svc := tasksvc.NewCachedService(tasksvc.New(env.taskRepo), cacheStore, 5*time.Minute, log)
+	svc := tasksvc.NewCachedService(tasksvc.New(env.taskRepo, authz.NewTaskAccessPolicy(pgRepo.NewAuthzPermissionStore(env.db))), cacheStore, 5*time.Minute, log)
 
 	var projectID string
 	if err := env.db.QueryRowContext(env.ctx, `INSERT INTO projects (name) VALUES ($1) RETURNING id`,

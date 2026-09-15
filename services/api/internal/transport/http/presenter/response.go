@@ -173,6 +173,8 @@ func statusAndCodeFor(err error) (int, apierr.Code) {
 		return http.StatusNotFound, apierr.CodeProjectMemberNotFound
 	case errors.Is(err, projectdom.ErrMemberAlreadyAdded):
 		return http.StatusConflict, apierr.CodeProjectMemberAlreadyAdded
+	case errors.Is(err, taskdom.ErrTaskForbidden):
+		return http.StatusForbidden, apierr.CodeForbidden
 	case errors.Is(err, taskdom.ErrTaskNotFound):
 		return http.StatusNotFound, apierr.CodeTaskNotFound
 	case errors.Is(err, taskdom.ErrTaskTitleInvalid):

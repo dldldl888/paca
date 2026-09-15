@@ -245,9 +245,9 @@ func (c *CachedService) SumTaskField(ctx context.Context, projectID uuid.UUID, f
 	return c.svc.SumTaskField(ctx, projectID, filter, fieldKey)
 }
 
-// ListAssignedTasks delegates directly to the underlying service (not cached).
-func (c *CachedService) ListAssignedTasks(ctx context.Context, memberIDs []uuid.UUID, limit int, cursorAfter *string) ([]*taskdom.Task, bool, error) {
-	return c.svc.ListAssignedTasks(ctx, memberIDs, limit, cursorAfter)
+// ListAssignedTasksInProjects delegates directly to the underlying service (not cached).
+func (c *CachedService) ListAssignedTasksInProjects(ctx context.Context, projectIDs []uuid.UUID, limit int, cursorAfter *string) ([]*taskdom.Task, bool, error) {
+	return c.svc.ListAssignedTasksInProjects(ctx, projectIDs, limit, cursorAfter)
 }
 
 // GetTask delegates directly to the underlying service (not cached).
@@ -356,4 +356,13 @@ func (c *CachedService) CreateTaskLink(ctx context.Context, in taskdom.CreateTas
 // DeleteTaskLink delegates directly to the underlying service (not cached).
 func (c *CachedService) DeleteTaskLink(ctx context.Context, projectID, taskID, linkID uuid.UUID) error {
 	return c.svc.DeleteTaskLink(ctx, projectID, taskID, linkID)
+}
+
+// CheckTaskAccess deliberately bypasses the metadata cache: authorization is live.
+func (c *CachedService) CheckTaskAccess(ctx context.Context, projectID, taskID uuid.UUID, action taskdom.AccessAction) (*taskdom.Task, error) {
+	checker, ok := c.svc.(taskdom.AccessChecker)
+	if !ok {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	return checker.CheckTaskAccess(ctx, projectID, taskID, action)
 }

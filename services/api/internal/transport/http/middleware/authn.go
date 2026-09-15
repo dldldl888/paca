@@ -15,6 +15,7 @@ import (
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
 	apikeydom "github.com/Paca-AI/api/internal/domain/apikey"
 	domainauth "github.com/Paca-AI/api/internal/domain/auth"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 	"github.com/Paca-AI/api/internal/transport/http/presenter"
 )
@@ -25,20 +26,12 @@ type claimsContextKey struct{}
 // authMethodContextKey stores the authentication method (e.g. "apikey").
 type authMethodContextKey struct{}
 
-// actorContextKey is the unexported key used to store the authenticated user's
-// UUID in the Go request context.
-type actorContextKey struct{}
-
-// agentContextKey is the unexported key used to store the agent ID when
-// authenticating with an agent API key.
-type agentContextKey struct{}
-
 // agentActorUserContextKey is the unexported key used to store the human
 // actor's user ID for an agent-authenticated request that names one via
 // X-Actor-User-ID (e.g. a global agent's MCP tool call made on behalf of the
 // human chatting with it — see setAPIKeyAuthContext). Only ever set
-// alongside a resolved agentContextKey; a plain human JWT session already
-// carries its own identity via actorContextKey and never needs this.
+// alongside a resolved authz agent ID; a plain human JWT session already
+// carries its own identity via authz and never needs this.
 type agentActorUserContextKey struct{}
 
 // APIKeyAuthenticator validates a raw API key string and returns the key record.
@@ -241,7 +234,7 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 					// same as it already does for an Authenticate error a
 					// few lines up.
 					agentID, actorUserID, _ := agentClaimsForKey(r, apiKeyAuthenticator, tokenStr, key)
-					r = setAPIKeyAuthContext(r, key.UserID, agentID, actorUserID)
+					r = setAPIKeyAuthContext(r, key, apiKeyAuthenticator, tokenStr, agentID, actorUserID)
 				}
 			}
 			return r, true
@@ -269,7 +262,7 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 			return r, false
 		}
 
-		r = setAPIKeyAuthContext(r, key.UserID, agentID, actorUserID)
+		r = setAPIKeyAuthContext(r, key, apiKeyAuthenticator, tokenStr, agentID, actorUserID)
 		return r, true
 	}
 
@@ -296,7 +289,7 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 
 	ctx := context.WithValue(r.Context(), claimsContextKey{}, claims)
 	if actorID, parseErr := uuid.Parse(claims.Subject); parseErr == nil {
-		ctx = context.WithValue(ctx, actorContextKey{}, actorID)
+		ctx = authz.WithActorID(ctx, actorID)
 	}
 	r = r.WithContext(ctx)
 	return r, true
@@ -306,7 +299,7 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 // agent's MCP tool call is acting on behalf of (e.g. "create a project for
 // me" from the home-page chat). Only ever consulted from the agent-API-key
 // branch above — a human JWT session already carries its own identity via
-// actorContextKey and must never have this header honored, or one human
+// authz and must never have this header honored, or one human
 // could impersonate another simply by setting it. Returns (uuid.Nil, nil)
 // when the header is absent — nothing claimed. A non-nil error means the
 // header was present but malformed; resolveAgentClaims treats that as a
@@ -368,10 +361,10 @@ func agentClaimsForKey(r *http.Request, apiKeyAuthenticator APIKeyAuthenticator,
 	return resolveAgentClaims(r, apiKeyAuthenticator, tokenStr)
 }
 
-func setAPIKeyAuthContext(r *http.Request, userID, agentID, actorUserID uuid.UUID) *http.Request {
+func setAPIKeyAuthContext(r *http.Request, key *apikeydom.APIKey, apiKeyAuthenticator APIKeyAuthenticator, tokenStr string, agentID, actorUserID uuid.UUID) *http.Request {
 	syntheticClaims := &domainauth.Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject: userID.String(),
+			Subject: key.UserID.String(),
 		},
 		Kind: "access",
 	}
@@ -381,14 +374,17 @@ func setAPIKeyAuthContext(r *http.Request, userID, agentID, actorUserID uuid.UUI
 	}
 	ctx := context.WithValue(r.Context(), claimsContextKey{}, syntheticClaims)
 	ctx = context.WithValue(ctx, authMethodContextKey{}, "apikey")
-	ctx = context.WithValue(ctx, actorContextKey{}, userID)
+	ctx = authz.WithActorID(ctx, key.UserID)
 	if agentID != uuid.Nil {
-		ctx = context.WithValue(ctx, agentContextKey{}, agentID)
+		ctx = authz.WithAgentID(ctx, agentID)
 		// Only ever paired with a resolved agent ID — see
 		// parseActorUserIDHeader's doc comment.
 		if actorUserID != uuid.Nil {
 			ctx = context.WithValue(ctx, agentActorUserContextKey{}, actorUserID)
 		}
+	}
+	if agentKeyAuth, ok := apiKeyAuthenticator.(AgentAPIKeyAuthenticator); key.AgentID != nil || (ok && agentKeyAuth.IsAgentKey(ctx, tokenStr)) {
+		ctx = authz.WithAgentCredential(ctx)
 	}
 	return r.WithContext(ctx)
 }
@@ -406,37 +402,23 @@ func ClaimsContextKey() any { return claimsContextKey{} }
 
 // ActorIDFromContext extracts the authenticated user's UUID from a Go
 // context.Context. Returns (uuid.Nil, false) when no actor is set.
-func ActorIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	v := ctx.Value(actorContextKey{})
-	if v == nil {
-		return uuid.Nil, false
-	}
-	id, ok := v.(uuid.UUID)
-	return id, ok
-}
+func ActorIDFromContext(ctx context.Context) (uuid.UUID, bool) { return authz.ActorIDFromContext(ctx) }
 
 // AgentIDFromContext extracts the agent ID from a Go context.Context when
 // authenticated via an agent API key with X-Agent-ID header.
 // Returns (uuid.Nil, false) when no agent ID is set.
-func AgentIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	v := ctx.Value(agentContextKey{})
-	if v == nil {
-		return uuid.Nil, false
-	}
-	id, ok := v.(uuid.UUID)
-	return id, ok
-}
+func AgentIDFromContext(ctx context.Context) (uuid.UUID, bool) { return authz.AgentIDFromContext(ctx) }
 
 // WithActorID returns a new context that carries actorID.
 // Use in tests to simulate an authenticated caller.
 func WithActorID(ctx context.Context, actorID uuid.UUID) context.Context {
-	return context.WithValue(ctx, actorContextKey{}, actorID)
+	return authz.WithActorID(ctx, actorID)
 }
 
 // WithAgentID returns a new context that carries agentID.
 // Use in tests to simulate an agent-authenticated caller.
 func WithAgentID(ctx context.Context, agentID uuid.UUID) context.Context {
-	return context.WithValue(ctx, agentContextKey{}, agentID)
+	return authz.WithAgentID(ctx, agentID)
 }
 
 // IsAPIKeyAuth reports whether the current request was authenticated via an API

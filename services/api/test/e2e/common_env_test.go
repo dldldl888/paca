@@ -206,7 +206,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	projectRepo := pgRepo.NewProjectRepository(db)
 	taskRepo := pgRepo.NewTaskRepository(db)
 	projectService := projectsvc.New(projectRepo, taskRepo, agentRepo)
-	taskService := tasksvc.New(taskRepo)
+	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(authzStore))
 	// A real (non-nil) publisher is required so that task.updated activity
 	// events actually reach StreamTaskActivities — otherwise a per-test
 	// worker.AutomationConsumer would never observe task status changes made

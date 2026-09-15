@@ -161,26 +161,27 @@ type LinkedTaskSummary struct {
 
 // Task is the core work item aggregate.
 type Task struct {
-	ID           uuid.UUID
-	ProjectID    uuid.UUID
-	TaskNumber   int64
-	TaskTypeID   *uuid.UUID
-	StatusID     *uuid.UUID
-	SprintID     *uuid.UUID
-	ParentTaskID *uuid.UUID
-	Title        string
-	Description  json.RawMessage
-	Importance   int
-	StoryPoints  *int
-	AssigneeIDs  []uuid.UUID
-	ReporterID   *uuid.UUID
-	CustomFields map[string]any
-	StartDate    *time.Time
-	DueDate      *time.Time
-	Tags         []string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    *time.Time
+	CreatorUserID *uuid.UUID // authenticated immutable creator; NULL for historical tasks
+	ID            uuid.UUID
+	ProjectID     uuid.UUID
+	TaskNumber    int64
+	TaskTypeID    *uuid.UUID
+	StatusID      *uuid.UUID
+	SprintID      *uuid.UUID
+	ParentTaskID  *uuid.UUID
+	Title         string
+	Description   json.RawMessage
+	Importance    int
+	StoryPoints   *int
+	AssigneeIDs   []uuid.UUID
+	ReporterID    *uuid.UUID
+	CustomFields  map[string]any
+	StartDate     *time.Time
+	DueDate       *time.Time
+	Tags          []string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time
 	// ViewPosition is a transient field populated only when ListTasks is called
 	// with a view_position sort (i.e. view_id provided + manual sort). It is not
 	// persisted in the tasks table.

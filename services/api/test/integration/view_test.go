@@ -191,7 +191,7 @@ func buildViewTestRouter(viewRepo *fakeViewRepoIT, sprintRepo *fakeSprintRepoIT,
 	projectRepo := newFakeProjectRepo()
 	taskRepo := newFakeTaskRepoIT()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
-	taskService := tasksvc.New(taskRepo)
+	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
 	sprintService := sprintsvc.New(sprintRepo, taskRepo, nil)
 	viewService := sprintsvc.NewViewService(viewRepo, sprintRepo, taskRepo, nil)
 	activityService := tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)
@@ -296,7 +296,7 @@ func TestIntegrationViews_CRUD(t *testing.T) {
 				authz.PermissionSprintsRead,
 				authz.PermissionSprintsWrite,
 				authz.PermissionTasksRead,
-				authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}
@@ -435,7 +435,7 @@ func TestIntegrationViews_TaskPositions(t *testing.T) {
 				authz.PermissionSprintsRead,
 				authz.PermissionSprintsWrite,
 				authz.PermissionTasksRead,
-				authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}
@@ -501,7 +501,7 @@ func TestIntegrationViews_BulkMoveTasks(t *testing.T) {
 				authz.PermissionSprintsRead,
 				authz.PermissionSprintsWrite,
 				authz.PermissionTasksRead,
-				authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}
@@ -656,7 +656,7 @@ func TestIntegrationBacklogViews_BulkMoveTasks(t *testing.T) {
 				authz.PermissionSprintsRead,
 				authz.PermissionSprintsWrite,
 				authz.PermissionTasksRead,
-				authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}
@@ -741,7 +741,7 @@ func newBacklogViewPerms(projectID uuid.UUID) *projectPermStore {
 				authz.PermissionSprintsRead,
 				authz.PermissionSprintsWrite,
 				authz.PermissionTasksRead,
-				authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}
@@ -1179,7 +1179,7 @@ func newTimelineViewPerms(projectID uuid.UUID) *projectPermStore {
 				authz.PermissionSprintsRead,
 				authz.PermissionSprintsWrite,
 				authz.PermissionTasksRead,
-				authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}

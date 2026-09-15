@@ -3,6 +3,7 @@ package taskdom
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -127,10 +128,9 @@ type TaskService interface {
 	UpdateTask(ctx context.Context, projectID, id uuid.UUID, in UpdateTaskInput) (*Task, error)
 	// DeleteTask removes the task identified by id, verifying it belongs to projectID.
 	DeleteTask(ctx context.Context, projectID, id uuid.UUID) error
-	// ListAssignedTasks returns open (non-done) tasks assigned to any of
-	// memberIDs, across their respective projects — see
-	// Repository.ListAssignedTasks for the keyset-pagination contract.
-	ListAssignedTasks(ctx context.Context, memberIDs []uuid.UUID, limit int, cursorAfter *string) ([]*Task, bool, error)
+	// ListAssignedTasksInProjects resolves the authenticated actor's current
+	// memberships in candidate projects before querying assigned open tasks.
+	ListAssignedTasksInProjects(ctx context.Context, projectIDs []uuid.UUID, limit int, cursorAfter *string) ([]*Task, bool, error)
 	// CountOpenTasksByProjects returns the number of non-done tasks across all
 	// of projectIDs in a single query — see Repository.CountOpenTasksByProjects.
 	CountOpenTasksByProjects(ctx context.Context, projectIDs []uuid.UUID) (int64, error)
@@ -215,4 +215,52 @@ type UpdateCustomFieldDefinitionInput struct {
 	FieldType   *FieldType
 	Options     []CustomFieldOption
 	IsRequired  *bool
+}
+
+// ApplyTo modifies only submitted fields; omitted fields retain the locked row's
+// current values. Callers validate permissions before invoking it.
+func (in UpdateTaskInput) ApplyTo(t *Task) {
+	if title := strings.TrimSpace(in.Title); title != "" {
+		t.Title = title
+	}
+
+	if in.TaskTypeID != nil {
+		t.TaskTypeID = *in.TaskTypeID
+	}
+	if in.StatusID != nil {
+		t.StatusID = *in.StatusID
+	}
+	if in.SprintID != nil {
+		t.SprintID = *in.SprintID
+	}
+	if in.ParentTaskID != nil {
+		t.ParentTaskID = *in.ParentTaskID
+	}
+	if in.Description != nil {
+		t.Description = *in.Description
+	}
+	if in.Importance != nil {
+		t.Importance = *in.Importance
+	}
+	if in.StoryPoints != nil {
+		t.StoryPoints = *in.StoryPoints
+	}
+	if in.AssigneeIDs != nil {
+		t.AssigneeIDs = *in.AssigneeIDs
+	}
+	if in.ReporterID != nil {
+		t.ReporterID = *in.ReporterID
+	}
+	if in.CustomFields != nil {
+		t.CustomFields = *in.CustomFields
+	}
+	if in.StartDate != nil {
+		t.StartDate = *in.StartDate
+	}
+	if in.DueDate != nil {
+		t.DueDate = *in.DueDate
+	}
+	if in.Tags != nil {
+		t.Tags = *in.Tags
+	}
 }

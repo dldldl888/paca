@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	projectdom "github.com/Paca-AI/api/internal/domain/project"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 	authsvc "github.com/Paca-AI/api/internal/service/auth"
@@ -484,7 +485,7 @@ func buildProjectTestRouterWithTaskRepo(repo *fakeProjectRepo, store *projectPer
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(&fakeGlobalRoleService{}),
 		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(store)),
-		Task:                 handler.NewTaskHandler(tasksvc.New(taskRepo), sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil), tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)),
+		Task:                 handler.NewTaskHandler(tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store)), sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil), tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)),
 		Log:                  log,
 	}), taskRepo
 }
@@ -1076,4 +1077,20 @@ func TestIntegrationProject_AnonymousAccess_PrivateProject_Returns401(t *testing
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d (%s)", w.Code, w.Body.String())
 	}
+}
+
+func (s *projectPermStore) FindTaskActorAccess(ctx context.Context, userID, projectID uuid.UUID) (authz.TaskActorAccess, error) {
+	if userID == uuid.Nil || projectID == uuid.Nil {
+		return authz.TaskActorAccess{}, taskdom.ErrTaskNotFound
+	}
+	permissions, err := s.ListProjectPermissions(ctx, userID, projectID)
+	if err != nil {
+		return authz.TaskActorAccess{}, err
+	}
+	actor := authz.TaskActorAccess{UserID: userID, GlobalPermissions: s.globalPerms}
+	if len(permissions) > 0 {
+		actor.MemberID = &userID
+		actor.ProjectPermissions = permissions
+	}
+	return actor, nil
 }

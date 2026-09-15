@@ -277,7 +277,7 @@ func buildAttachmentTestRouter(attachRepo *fakeAttachmentRepo, store *fakeStorag
 		_ = taskRepo.CreateTask(context.Background(), t)
 	}
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
-	taskService := tasksvc.New(taskRepo)
+	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(permStore))
 	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil)
 	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil)
 	active := tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)

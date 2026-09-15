@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"net/http"
@@ -89,19 +88,10 @@ func (h *TaskHandler) toActivityResponse(ctx context.Context, a *taskdom.Activit
 	return resp
 }
 
-// assignedToMeMemberLookupConcurrency caps how many per-project ListMembers
-// lookups ListAssignedToMe issues concurrently while resolving the caller's
-// member IDs.
-const assignedToMeMemberLookupConcurrency = 20
-
-// projectServiceForAssigned is the minimal project-service surface used by
-// ListAssignedToMe to resolve which projects the caller belongs to and their
-// per-project member ID — task_assignees references project_members.id, not
-// the global user ID, so a membership lookup is required before the tasks
-// can be queried.
+// projectServiceForAssigned provides candidate projects; task access resolves
+// the current actor's membership and visibility inside the service.
 type projectServiceForAssigned interface {
 	ListAccessible(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]*projectdom.Project, int64, error)
-	ListMembers(ctx context.Context, projectID uuid.UUID) ([]*projectdom.ProjectMember, error)
 }
 
 // WithTaskAssignedProjectService wires the project service used by
@@ -830,41 +820,11 @@ func (h *TaskHandler) ListAssignedToMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the caller's project_members.id in each project — task
-	// assignment is stored by member ID, not user ID. Capped so a caller
-	// belonging to many projects can't fan out unbounded concurrent lookups.
-	g, gctx := errgroup.WithContext(r.Context())
-	g.SetLimit(assignedToMeMemberLookupConcurrency)
-	var mu sync.Mutex
-	var memberIDs []uuid.UUID
+	projectIDs := make([]uuid.UUID, 0, len(projects))
 	for _, p := range projects {
-		projectID := p.ID
-		g.Go(func() error {
-			members, listErr := h.projectSvc.ListMembers(gctx, projectID)
-			if listErr != nil {
-				return listErr
-			}
-			for _, m := range members {
-				if m.UserID == userID {
-					mu.Lock()
-					memberIDs = append(memberIDs, m.ID)
-					mu.Unlock()
-					break
-				}
-			}
-			return nil
-		})
+		projectIDs = append(projectIDs, p.ID)
 	}
-	if err := g.Wait(); err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-	if len(memberIDs) == 0 {
-		empty()
-		return
-	}
-
-	tasks, hasMore, err := h.svc.ListAssignedTasks(r.Context(), memberIDs, pageSize, cursor)
+	tasks, hasMore, err := h.svc.ListAssignedTasksInProjects(r.Context(), projectIDs, pageSize, cursor)
 	if err != nil {
 		presenter.Error(w, r, err)
 		return

@@ -3,6 +3,7 @@ package tasksvc
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -24,12 +25,13 @@ type automationStatusChecker interface {
 // Service is the concrete implementation of taskdom.Service.
 type Service struct {
 	repo              taskdom.Repository
+	access            taskdom.AccessPolicy
 	automationChecker automationStatusChecker
 }
 
 // New returns a configured task service.
-func New(repo taskdom.Repository) *Service {
-	return &Service{repo: repo}
+func New(repo taskdom.Repository, access taskdom.AccessPolicy) *Service {
+	return &Service{repo: repo, access: access}
 }
 
 // WithAutomationStatusChecker configures a check that refuses to delete a
@@ -285,6 +287,11 @@ func (s *Service) wouldCreateCycle(ctx context.Context, taskID, proposedParentID
 // the beginning. When set, returns tasks after the cursor position.
 // Returns hasMore=true when a next page exists.
 func (s *Service) ListTasks(ctx context.Context, projectID uuid.UUID, filter taskdom.TaskFilter, pageSize int, sort taskdom.TaskSort) ([]*taskdom.Task, bool, error) {
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return nil, false, err
+	}
+	filter.Visibility = &scope
 	if pageSize < 1 {
 		pageSize = 20
 	}
@@ -293,49 +300,83 @@ func (s *Service) ListTasks(ctx context.Context, projectID uuid.UUID, filter tas
 
 // CountTasks returns the number of tasks in a project matching the given filter.
 func (s *Service) CountTasks(ctx context.Context, projectID uuid.UUID, filter taskdom.TaskFilter) (int64, error) {
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	filter.Visibility = &scope
 	return s.repo.CountTasks(ctx, projectID, filter)
 }
 
 // CountOpenTasksByProjects returns the number of non-done tasks across all of
 // projectIDs in a single query.
 func (s *Service) CountOpenTasksByProjects(ctx context.Context, projectIDs []uuid.UUID) (int64, error) {
-	return s.repo.CountOpenTasksByProjects(ctx, projectIDs)
+	scopes, err := s.projectScopes(ctx, projectIDs)
+	if err != nil {
+		return 0, err
+	}
+	return s.repo.CountOpenTasksByProjects(ctx, scopes)
 }
 
 // SumTaskField sums a numeric field across all matching tasks, ignoring pagination.
 func (s *Service) SumTaskField(ctx context.Context, projectID uuid.UUID, filter taskdom.TaskFilter, fieldKey string) (float64, error) {
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	filter.Visibility = &scope
 	return s.repo.SumTaskField(ctx, projectID, filter, fieldKey)
 }
 
-// ListAssignedTasks returns open tasks assigned to any of memberIDs, across
-// their respective projects — see taskdom.Repository.ListAssignedTasks.
-func (s *Service) ListAssignedTasks(ctx context.Context, memberIDs []uuid.UUID, limit int, cursorAfter *string) ([]*taskdom.Task, bool, error) {
+// ListAssignedTasksInProjects queries only the current actor's live memberships.
+func (s *Service) ListAssignedTasksInProjects(ctx context.Context, projectIDs []uuid.UUID, limit int, cursorAfter *string) ([]*taskdom.Task, bool, error) {
 	if limit < 1 {
 		limit = 10
 	}
-	return s.repo.ListAssignedTasks(ctx, memberIDs, limit, cursorAfter)
+	scopes, err := s.projectScopes(ctx, projectIDs)
+	if err != nil {
+		return nil, false, err
+	}
+	var memberIDs []uuid.UUID
+	for _, scope := range scopes {
+		if scope.MemberID != uuid.Nil {
+			memberIDs = append(memberIDs, scope.MemberID)
+		}
+	}
+	return s.repo.ListAssignedTasks(ctx, memberIDs, scopes, limit, cursorAfter)
 }
 
 // GetTask returns the task with the given ID, verifying it belongs to projectID.
 func (s *Service) GetTask(ctx context.Context, projectID, id uuid.UUID) (*taskdom.Task, error) {
-	t, err := s.repo.FindTaskByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if t.ProjectID != projectID {
-		return nil, taskdom.ErrTaskNotFound
-	}
-	return t, nil
+	return s.CheckTaskAccess(ctx, projectID, id, taskdom.AccessRead)
 }
 
 // GetTaskByNumber returns the task with the given project-scoped sequential number.
 func (s *Service) GetTaskByNumber(ctx context.Context, projectID uuid.UUID, taskNumber int64) (*taskdom.Task, error) {
-	return s.repo.FindTaskByNumber(ctx, projectID, taskNumber)
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.repo.FindTaskByNumber(ctx, projectID, taskNumber)
+	if err != nil {
+		return nil, err
+	}
+	if err := scope.Require(t, taskdom.AccessRead); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
 // CreateTask creates a new task. When TaskTypeID or StatusID are not provided,
 // the project's default task type / status is resolved automatically.
 func (s *Service) CreateTask(ctx context.Context, in taskdom.CreateTaskInput) (*taskdom.Task, error) {
+	scope, err := s.scope(ctx, in.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !scope.CanCreate() {
+		return nil, taskdom.ErrTaskForbidden
+	}
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
 		return nil, taskdom.ErrTaskTitleInvalid
@@ -384,27 +425,28 @@ func (s *Service) CreateTask(ctx context.Context, in taskdom.CreateTaskInput) (*
 
 	now := time.Now()
 	t := &taskdom.Task{
-		ID:           uuid.New(),
-		ProjectID:    in.ProjectID,
-		TaskTypeID:   taskTypeID,
-		StatusID:     statusID,
-		SprintID:     in.SprintID,
-		ParentTaskID: in.ParentTaskID,
-		Title:        title,
-		Description:  in.Description,
-		Importance:   in.Importance,
-		StoryPoints:  in.StoryPoints,
-		AssigneeIDs:  assigneeIDs,
-		ReporterID:   in.ReporterID,
-		CustomFields: cf,
-		StartDate:    in.StartDate,
-		DueDate:      in.DueDate,
-		Tags:         tags,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		CreatorUserID: &scope.UserID,
+		ID:            uuid.New(),
+		ProjectID:     in.ProjectID,
+		TaskTypeID:    taskTypeID,
+		StatusID:      statusID,
+		SprintID:      in.SprintID,
+		ParentTaskID:  in.ParentTaskID,
+		Title:         title,
+		Description:   in.Description,
+		Importance:    in.Importance,
+		StoryPoints:   in.StoryPoints,
+		AssigneeIDs:   assigneeIDs,
+		ReporterID:    in.ReporterID,
+		CustomFields:  cf,
+		StartDate:     in.StartDate,
+		DueDate:       in.DueDate,
+		Tags:          tags,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
-	if err := s.repo.CreateTask(ctx, t); err != nil {
+	if err := s.repo.CreateTaskAuthorized(ctx, t, scope); err != nil {
 		return nil, err
 	}
 	return t, nil
@@ -412,16 +454,31 @@ func (s *Service) CreateTask(ctx context.Context, in taskdom.CreateTaskInput) (*
 
 // UpdateTask updates the mutable fields of an existing task.
 func (s *Service) UpdateTask(ctx context.Context, projectID, id uuid.UUID, in taskdom.UpdateTaskInput) (*taskdom.Task, error) {
+	action := taskdom.AccessProgress
+	if strings.TrimSpace(in.Title) != "" || in.TaskTypeID != nil || in.SprintID != nil || in.ParentTaskID != nil || in.Description != nil || in.Importance != nil || in.StoryPoints != nil || in.AssigneeIDs != nil || in.ReporterID != nil || in.CustomFields != nil || in.StartDate != nil || in.DueDate != nil || in.Tags != nil {
+		action = taskdom.AccessManage
+	}
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 	t, err := s.repo.FindTaskByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if t.ProjectID != projectID {
-		return nil, taskdom.ErrTaskNotFound
+	if err := scope.Require(t, action); err != nil {
+		return nil, err
 	}
-
-	if title := strings.TrimSpace(in.Title); title != "" {
-		t.Title = title
+	if action == taskdom.AccessProgress {
+		if in.StatusID == nil {
+			return t, nil
+		}
+		t.StatusID = *in.StatusID
+		t.UpdatedAt = time.Now()
+		if err := s.repo.UpdateTaskProgress(ctx, t, scope); err != nil {
+			return nil, err
+		}
+		return t, nil
 	}
 
 	// Compute the effective parent and type IDs after the update to validate constraints.
@@ -450,48 +507,9 @@ func (s *Service) UpdateTask(ctx context.Context, projectID, id uuid.UUID, in ta
 		}
 	}
 
-	if in.TaskTypeID != nil {
-		t.TaskTypeID = *in.TaskTypeID
-	}
-	if in.StatusID != nil {
-		t.StatusID = *in.StatusID
-	}
-	if in.SprintID != nil {
-		t.SprintID = *in.SprintID
-	}
-	if in.ParentTaskID != nil {
-		t.ParentTaskID = *in.ParentTaskID
-	}
-	if in.Description != nil {
-		t.Description = *in.Description
-	}
-	if in.Importance != nil {
-		t.Importance = *in.Importance
-	}
-	if in.StoryPoints != nil {
-		t.StoryPoints = *in.StoryPoints
-	}
-	if in.AssigneeIDs != nil {
-		t.AssigneeIDs = *in.AssigneeIDs
-	}
-	if in.ReporterID != nil {
-		t.ReporterID = *in.ReporterID
-	}
-	if in.CustomFields != nil {
-		t.CustomFields = *in.CustomFields
-	}
-	if in.StartDate != nil {
-		t.StartDate = *in.StartDate
-	}
-	if in.DueDate != nil {
-		t.DueDate = *in.DueDate
-	}
-	if in.Tags != nil {
-		t.Tags = *in.Tags
-	}
 	t.UpdatedAt = time.Now()
 
-	if err := s.repo.UpdateTask(ctx, t); err != nil {
+	if err := s.repo.UpdateTaskFields(ctx, t, in, scope); err != nil {
 		return nil, err
 	}
 	return t, nil
@@ -499,14 +517,18 @@ func (s *Service) UpdateTask(ctx context.Context, projectID, id uuid.UUID, in ta
 
 // DeleteTask soft-deletes a task by ID, verifying it belongs to projectID.
 func (s *Service) DeleteTask(ctx context.Context, projectID, id uuid.UUID) error {
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return err
+	}
 	t, err := s.repo.FindTaskByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if t.ProjectID != projectID {
-		return taskdom.ErrTaskNotFound
+	if err := scope.Require(t, taskdom.AccessManage); err != nil {
+		return err
 	}
-	return s.repo.DeleteTask(ctx, id)
+	return s.repo.DeleteTaskAuthorized(ctx, projectID, id, scope)
 }
 
 // --- Custom Field Definitions -----------------------------------------------
@@ -612,4 +634,50 @@ func (s *Service) DeleteCustomFieldDefinition(ctx context.Context, projectID, id
 		return taskdom.ErrCustomFieldNotFound
 	}
 	return s.repo.DeleteCustomFieldDefinition(ctx, id)
+}
+
+func (s *Service) scope(ctx context.Context, projectID uuid.UUID) (taskdom.AccessScope, error) {
+	if s.access == nil {
+		return taskdom.AccessScope{}, taskdom.ErrTaskNotFound
+	}
+	scope, err := s.access.ResolveTaskAccess(ctx, projectID)
+	if err != nil {
+		return taskdom.AccessScope{}, err
+	}
+	if scope.ProjectID != projectID || projectID == uuid.Nil {
+		return taskdom.AccessScope{}, taskdom.ErrTaskNotFound
+	}
+	return scope, nil
+}
+
+func (s *Service) projectScopes(ctx context.Context, projectIDs []uuid.UUID) ([]taskdom.AccessScope, error) {
+	scopes := make([]taskdom.AccessScope, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		scope, err := s.scope(ctx, projectID)
+		if errors.Is(err, taskdom.ErrTaskNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		scopes = append(scopes, scope)
+	}
+	return scopes, nil
+}
+
+// CheckTaskAccess is shared by task-related services; resolve live permissions
+// before obtaining content, and authorize before mutations or external effects.
+func (s *Service) CheckTaskAccess(ctx context.Context, projectID, taskID uuid.UUID, action taskdom.AccessAction) (*taskdom.Task, error) {
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.repo.FindTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := scope.Require(t, action); err != nil {
+		return nil, err
+	}
+	return t, nil
 }

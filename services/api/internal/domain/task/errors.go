@@ -4,6 +4,7 @@ import "errors"
 
 // Sentinel domain errors for the task aggregate.
 var (
+	ErrTaskForbidden           = errors.New("task: forbidden")
 	ErrTaskNotFound            = errors.New("task: not found")
 	ErrTaskTitleInvalid        = errors.New("task: title is empty or invalid")
 	ErrEpicCannotHaveParent    = errors.New("task: epic tasks cannot have a parent task")

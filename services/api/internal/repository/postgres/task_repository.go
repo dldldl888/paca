@@ -15,6 +15,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
 )
 
 // --- sqlx models ------------------------------------------------------------
@@ -45,25 +46,26 @@ type taskStatusRecord struct {
 }
 
 type taskRecord struct {
-	ID           string           `db:"id"`
-	ProjectID    string           `db:"project_id"`
-	TaskNumber   int64            `db:"task_number"`
-	TaskTypeID   *string          `db:"task_type_id"`
-	StatusID     *string          `db:"status_id"`
-	SprintID     *string          `db:"sprint_id"`
-	ParentTaskID *string          `db:"parent_task_id"`
-	Title        string           `db:"title"`
-	Description  *json.RawMessage `db:"description"`
-	Importance   int              `db:"importance"`
-	StoryPoints  *int             `db:"story_points"`
-	ReporterID   *string          `db:"reporter_id"`
-	CustomFields []byte           `db:"custom_fields"`
-	StartDate    *time.Time       `db:"start_date"`
-	DueDate      *time.Time       `db:"due_date"`
-	Tags         []byte           `db:"tags"`
-	CreatedAt    time.Time        `db:"created_at"`
-	UpdatedAt    time.Time        `db:"updated_at"`
-	DeletedAt    *time.Time       `db:"deleted_at"`
+	ID            string           `db:"id"`
+	ProjectID     string           `db:"project_id"`
+	TaskNumber    int64            `db:"task_number"`
+	TaskTypeID    *string          `db:"task_type_id"`
+	StatusID      *string          `db:"status_id"`
+	SprintID      *string          `db:"sprint_id"`
+	ParentTaskID  *string          `db:"parent_task_id"`
+	Title         string           `db:"title"`
+	Description   *json.RawMessage `db:"description"`
+	Importance    int              `db:"importance"`
+	StoryPoints   *int             `db:"story_points"`
+	ReporterID    *string          `db:"reporter_id"`
+	CreatorUserID *string          `db:"creator_user_id"`
+	CustomFields  []byte           `db:"custom_fields"`
+	StartDate     *time.Time       `db:"start_date"`
+	DueDate       *time.Time       `db:"due_date"`
+	Tags          []byte           `db:"tags"`
+	CreatedAt     time.Time        `db:"created_at"`
+	UpdatedAt     time.Time        `db:"updated_at"`
+	DeletedAt     *time.Time       `db:"deleted_at"`
 }
 
 // taskCounterRecord mirrors the task_counters table used for atomic
@@ -75,49 +77,51 @@ type taskCounterRecord struct {
 
 // taskWithPositionRow is a flat struct for scanning the view_position LEFT JOIN result.
 type taskWithPositionRow struct {
-	ID           string           `db:"id"`
-	ProjectID    string           `db:"project_id"`
-	TaskNumber   int64            `db:"task_number"`
-	TaskTypeID   *string          `db:"task_type_id"`
-	StatusID     *string          `db:"status_id"`
-	SprintID     *string          `db:"sprint_id"`
-	ParentTaskID *string          `db:"parent_task_id"`
-	Title        string           `db:"title"`
-	Description  *json.RawMessage `db:"description"`
-	Importance   int              `db:"importance"`
-	StoryPoints  *int             `db:"story_points"`
-	ReporterID   *string          `db:"reporter_id"`
-	CustomFields []byte           `db:"custom_fields"`
-	StartDate    *time.Time       `db:"start_date"`
-	DueDate      *time.Time       `db:"due_date"`
-	Tags         []byte           `db:"tags"`
-	CreatedAt    time.Time        `db:"created_at"`
-	UpdatedAt    time.Time        `db:"updated_at"`
-	DeletedAt    *time.Time       `db:"deleted_at"`
-	VTPPosition  *float64         `db:"vtp_position"`
+	ID            string           `db:"id"`
+	ProjectID     string           `db:"project_id"`
+	TaskNumber    int64            `db:"task_number"`
+	TaskTypeID    *string          `db:"task_type_id"`
+	StatusID      *string          `db:"status_id"`
+	SprintID      *string          `db:"sprint_id"`
+	ParentTaskID  *string          `db:"parent_task_id"`
+	Title         string           `db:"title"`
+	Description   *json.RawMessage `db:"description"`
+	Importance    int              `db:"importance"`
+	StoryPoints   *int             `db:"story_points"`
+	ReporterID    *string          `db:"reporter_id"`
+	CreatorUserID *string          `db:"creator_user_id"`
+	CustomFields  []byte           `db:"custom_fields"`
+	StartDate     *time.Time       `db:"start_date"`
+	DueDate       *time.Time       `db:"due_date"`
+	Tags          []byte           `db:"tags"`
+	CreatedAt     time.Time        `db:"created_at"`
+	UpdatedAt     time.Time        `db:"updated_at"`
+	DeletedAt     *time.Time       `db:"deleted_at"`
+	VTPPosition   *float64         `db:"vtp_position"`
 }
 
 func (r *taskWithPositionRow) asTaskRecord() taskRecord {
 	return taskRecord{
-		ID:           r.ID,
-		ProjectID:    r.ProjectID,
-		TaskNumber:   r.TaskNumber,
-		TaskTypeID:   r.TaskTypeID,
-		StatusID:     r.StatusID,
-		SprintID:     r.SprintID,
-		ParentTaskID: r.ParentTaskID,
-		Title:        r.Title,
-		Description:  r.Description,
-		Importance:   r.Importance,
-		StoryPoints:  r.StoryPoints,
-		ReporterID:   r.ReporterID,
-		CustomFields: r.CustomFields,
-		StartDate:    r.StartDate,
-		DueDate:      r.DueDate,
-		Tags:         r.Tags,
-		CreatedAt:    r.CreatedAt,
-		UpdatedAt:    r.UpdatedAt,
-		DeletedAt:    r.DeletedAt,
+		ID:            r.ID,
+		ProjectID:     r.ProjectID,
+		TaskNumber:    r.TaskNumber,
+		TaskTypeID:    r.TaskTypeID,
+		StatusID:      r.StatusID,
+		SprintID:      r.SprintID,
+		ParentTaskID:  r.ParentTaskID,
+		Title:         r.Title,
+		Description:   r.Description,
+		Importance:    r.Importance,
+		StoryPoints:   r.StoryPoints,
+		ReporterID:    r.ReporterID,
+		CreatorUserID: r.CreatorUserID,
+		CustomFields:  r.CustomFields,
+		StartDate:     r.StartDate,
+		DueDate:       r.DueDate,
+		Tags:          r.Tags,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+		DeletedAt:     r.DeletedAt,
 	}
 }
 
@@ -426,11 +430,14 @@ func (r *TaskRepository) FindDefaultTaskStatus(ctx context.Context, projectID uu
 
 const taskCols = `id, project_id, task_number, task_type_id, status_id, sprint_id, parent_task_id,
 	title, description, importance, story_points, reporter_id,
-	custom_fields, start_date, due_date, tags, created_at, updated_at, deleted_at`
+	custom_fields, start_date, due_date, tags, created_at, updated_at, deleted_at, creator_user_id`
 
 // applyTaskFilter adds WHERE predicates for all TaskFilter fields.
 // b is the shared queryBuilder; the base "project_id = $1 AND deleted_at IS NULL" clause is already set.
 func applyTaskFilter(b *queryBuilder, filter taskdom.TaskFilter) {
+	if filter.Visibility != nil {
+		applyTaskVisibility(b, []taskdom.AccessScope{*filter.Visibility})
+	}
 	switch {
 	case filter.ParentTaskID != nil:
 		p := b.placeholder()
@@ -1059,7 +1066,7 @@ func (r *TaskRepository) ListTasks(ctx context.Context, projectID uuid.UUID, fil
 // member_id already scopes each task_assignees row to a single project (via
 // project_members), so unlike ListTasks this needs no project_id filter —
 // the caller resolves memberIDs from whichever projects it wants included.
-func (r *TaskRepository) ListAssignedTasks(ctx context.Context, memberIDs []uuid.UUID, limit int, cursorAfter *string) ([]*taskdom.Task, bool, error) {
+func (r *TaskRepository) ListAssignedTasks(ctx context.Context, memberIDs []uuid.UUID, scopes []taskdom.AccessScope, limit int, cursorAfter *string) ([]*taskdom.Task, bool, error) {
 	if len(memberIDs) == 0 {
 		return nil, false, nil
 	}
@@ -1076,6 +1083,7 @@ func (r *TaskRepository) ListAssignedTasks(ctx context.Context, memberIDs []uuid
 		" AND EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = tasks.id AND ta.member_id IN (" + strings.Join(memberPlaceholders, ",") + "))" +
 		" AND NOT EXISTS (SELECT 1 FROM task_statuses ts WHERE ts.id = tasks.status_id AND ts.category = 'done')"
 
+	applyTaskVisibility(b, scopes)
 	sort := taskdom.TaskSort{By: "importance"}
 	fromClause, orderByClause, selectCols := applyTaskSort(sort, b)
 
@@ -1149,18 +1157,18 @@ func (r *TaskRepository) CountTasks(ctx context.Context, projectID uuid.UUID, fi
 // widget to avoid an N-query fan-out. The INNER JOIN to task_statuses
 // intentionally excludes tasks with no status assigned (status_id NULL),
 // matching CountTasks' status_id-IN-clause semantics for a single project.
-func (r *TaskRepository) CountOpenTasksByProjects(ctx context.Context, projectIDs []uuid.UUID) (int64, error) {
-	if len(projectIDs) == 0 {
+func (r *TaskRepository) CountOpenTasksByProjects(ctx context.Context, scopes []taskdom.AccessScope) (int64, error) {
+	if len(scopes) == 0 {
 		return 0, nil
 	}
 
 	b := newQueryBuilder()
-	b.addInClause("t.project_id", uuidSliceToStrSlice(projectIDs))
+	applyTaskVisibility(b, scopes)
 
 	query := `
-		SELECT COUNT(*) FROM tasks t
-		JOIN task_statuses ts ON ts.id = t.status_id
-		WHERE t.deleted_at IS NULL AND ts.category != 'done' AND ` +
+		SELECT COUNT(*) FROM tasks
+		JOIN task_statuses ts ON ts.id = tasks.status_id
+		WHERE tasks.deleted_at IS NULL AND ts.category != 'done' AND ` +
 		strings.Join(b.whereClauses, " AND ")
 
 	var count int64
@@ -1242,6 +1250,10 @@ func (r *TaskRepository) FindTaskByNumber(ctx context.Context, projectID uuid.UU
 
 // CreateTask persists a new task, assigning the next per-project task_number atomically.
 func (r *TaskRepository) CreateTask(ctx context.Context, t *taskdom.Task) error {
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error { return createTaskTx(ctx, tx, t) })
+}
+
+func createTaskTx(ctx context.Context, tx *sqlx.Tx, t *taskdom.Task) error {
 	cf, err := json.Marshal(t.CustomFields)
 	if err != nil {
 		return fmt.Errorf("task repo: marshal custom_fields: %w", err)
@@ -1255,45 +1267,47 @@ func (r *TaskRepository) CreateTask(ctx context.Context, t *taskdom.Task) error 
 		return fmt.Errorf("task repo: marshal tags: %w", err)
 	}
 
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		// Atomically increment the per-project counter and retrieve its new value.
-		var counter taskCounterRecord
-		if err := tx.GetContext(ctx, &counter, `
+	// Atomically increment the per-project counter and retrieve its new value.
+	var counter taskCounterRecord
+	if err := tx.GetContext(ctx, &counter, `
 			INSERT INTO task_counters (project_id, last_value)
 			VALUES ($1, 1)
 			ON CONFLICT (project_id) DO UPDATE
 			  SET last_value = task_counters.last_value + 1
 			RETURNING project_id, last_value`,
-			t.ProjectID.String(),
-		); err != nil {
-			return fmt.Errorf("task repo: increment counter: %w", err)
-		}
-		t.TaskNumber = counter.LastValue
+		t.ProjectID.String(),
+	); err != nil {
+		return fmt.Errorf("task repo: increment counter: %w", err)
+	}
+	t.TaskNumber = counter.LastValue
 
-		_, err := tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 			INSERT INTO tasks (id, project_id, task_number, task_type_id, status_id, sprint_id, parent_task_id,
 			  title, description, importance, story_points, reporter_id,
-			  custom_fields, start_date, due_date, tags, created_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-			t.ID.String(), t.ProjectID.String(), t.TaskNumber,
-			uuidPtrToStrPtr(t.TaskTypeID), uuidPtrToStrPtr(t.StatusID),
-			uuidPtrToStrPtr(t.SprintID), uuidPtrToStrPtr(t.ParentTaskID),
-			t.Title, t.Description, t.Importance, t.StoryPoints,
-			uuidPtrToStrPtr(t.ReporterID),
-			cf, t.StartDate, t.DueDate, tagsJSON, t.CreatedAt, t.UpdatedAt,
-		)
-		if err != nil {
-			return fmt.Errorf("task repo: create: %w", err)
-		}
-		if err := insertTaskAssignees(ctx, tx, t.ID, t.AssigneeIDs); err != nil {
-			return err
-		}
-		return nil
-	})
+			  custom_fields, start_date, due_date, tags, created_at, updated_at, creator_user_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		t.ID.String(), t.ProjectID.String(), t.TaskNumber,
+		uuidPtrToStrPtr(t.TaskTypeID), uuidPtrToStrPtr(t.StatusID),
+		uuidPtrToStrPtr(t.SprintID), uuidPtrToStrPtr(t.ParentTaskID),
+		t.Title, t.Description, t.Importance, t.StoryPoints,
+		uuidPtrToStrPtr(t.ReporterID),
+		cf, t.StartDate, t.DueDate, tagsJSON, t.CreatedAt, t.UpdatedAt, uuidPtrToStrPtr(t.CreatorUserID),
+	)
+	if err != nil {
+		return fmt.Errorf("task repo: create: %w", err)
+	}
+	if err := insertTaskAssignees(ctx, tx, t.ID, t.AssigneeIDs); err != nil {
+		return err
+	}
+	return nil
 }
 
 // UpdateTask persists changes to an existing task.
 func (r *TaskRepository) UpdateTask(ctx context.Context, t *taskdom.Task) error {
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error { return updateTaskTx(ctx, tx, t, true) })
+}
+
+func updateTaskTx(ctx context.Context, tx *sqlx.Tx, t *taskdom.Task, syncAssignees bool) error {
 	cf, err := json.Marshal(t.CustomFields)
 	if err != nil {
 		return fmt.Errorf("task repo: marshal custom_fields: %w", err)
@@ -1306,28 +1320,29 @@ func (r *TaskRepository) UpdateTask(ctx context.Context, t *taskdom.Task) error 
 	if err != nil {
 		return fmt.Errorf("task repo: marshal tags: %w", err)
 	}
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+
+	_, err = tx.ExecContext(ctx, `
 			UPDATE tasks SET
 			  task_type_id=$1, status_id=$2, sprint_id=$3, parent_task_id=$4,
 			  title=$5, description=$6, importance=$7, story_points=$8,
 			  reporter_id=$9, custom_fields=$10,
 			  start_date=$11, due_date=$12, tags=$13, updated_at=$14
 			WHERE id=$15`,
-			uuidPtrToStrPtr(t.TaskTypeID), uuidPtrToStrPtr(t.StatusID),
-			uuidPtrToStrPtr(t.SprintID), uuidPtrToStrPtr(t.ParentTaskID),
-			t.Title, t.Description, t.Importance, t.StoryPoints,
-			uuidPtrToStrPtr(t.ReporterID),
-			cf, t.StartDate, t.DueDate, tagsJSON, t.UpdatedAt, t.ID.String(),
-		)
-		if err != nil {
-			return fmt.Errorf("task repo: update: %w", err)
-		}
+		uuidPtrToStrPtr(t.TaskTypeID), uuidPtrToStrPtr(t.StatusID),
+		uuidPtrToStrPtr(t.SprintID), uuidPtrToStrPtr(t.ParentTaskID),
+		t.Title, t.Description, t.Importance, t.StoryPoints,
+		uuidPtrToStrPtr(t.ReporterID),
+		cf, t.StartDate, t.DueDate, tagsJSON, t.UpdatedAt, t.ID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("task repo: update: %w", err)
+	}
+	if syncAssignees {
 		if err := syncTaskAssignees(ctx, tx, t.ID, t.AssigneeIDs); err != nil {
 			return err
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // syncTaskAssignees reconciles task_assignees with wantIDs by removing only
@@ -1544,25 +1559,26 @@ func toTaskEntity(r *taskRecord) (*taskdom.Task, error) {
 	}
 
 	return &taskdom.Task{
-		ID:           id,
-		ProjectID:    pid,
-		TaskNumber:   r.TaskNumber,
-		TaskTypeID:   strPtrToUUIDPtr(r.TaskTypeID),
-		StatusID:     strPtrToUUIDPtr(r.StatusID),
-		SprintID:     strPtrToUUIDPtr(r.SprintID),
-		ParentTaskID: strPtrToUUIDPtr(r.ParentTaskID),
-		Title:        r.Title,
-		Description:  desc,
-		Importance:   r.Importance,
-		StoryPoints:  r.StoryPoints,
-		ReporterID:   strPtrToUUIDPtr(r.ReporterID),
-		CustomFields: cf,
-		StartDate:    r.StartDate,
-		DueDate:      r.DueDate,
-		Tags:         tags,
-		CreatedAt:    r.CreatedAt,
-		UpdatedAt:    r.UpdatedAt,
-		DeletedAt:    r.DeletedAt,
+		ID:            id,
+		ProjectID:     pid,
+		TaskNumber:    r.TaskNumber,
+		TaskTypeID:    strPtrToUUIDPtr(r.TaskTypeID),
+		StatusID:      strPtrToUUIDPtr(r.StatusID),
+		SprintID:      strPtrToUUIDPtr(r.SprintID),
+		ParentTaskID:  strPtrToUUIDPtr(r.ParentTaskID),
+		Title:         r.Title,
+		Description:   desc,
+		Importance:    r.Importance,
+		StoryPoints:   r.StoryPoints,
+		ReporterID:    strPtrToUUIDPtr(r.ReporterID),
+		CreatorUserID: strPtrToUUIDPtr(r.CreatorUserID),
+		CustomFields:  cf,
+		StartDate:     r.StartDate,
+		DueDate:       r.DueDate,
+		Tags:          tags,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+		DeletedAt:     r.DeletedAt,
 	}, nil
 }
 
@@ -1776,4 +1792,181 @@ func strPtrToUUIDPtr(s *string) *uuid.UUID {
 		return nil
 	}
 	return &u
+}
+
+// applyTaskVisibility intersects live server scopes with all caller filters,
+// before cursor pagination and aggregates. Empty scopes deny every row.
+func applyTaskVisibility(b *queryBuilder, scopes []taskdom.AccessScope) {
+	branches := make([]string, 0, len(scopes))
+	bind := func(value any) string { p := b.placeholder(); b.args = append(b.args, value); return p }
+	for _, scope := range scopes {
+		if scope.ProjectID == uuid.Nil {
+			continue
+		}
+		clause := "tasks.project_id = " + bind(scope.ProjectID.String())
+		if !scope.ReadAll {
+			relations := []string{"FALSE"}
+			if scope.UserID != uuid.Nil {
+				relations = append(relations, "tasks.creator_user_id = "+bind(scope.UserID.String()))
+			}
+			if scope.MemberID != uuid.Nil {
+				relations = append(relations, "EXISTS (SELECT 1 FROM task_assignees va WHERE va.task_id = tasks.id AND va.member_id = "+bind(scope.MemberID.String())+")")
+			}
+			clause += " AND (" + strings.Join(relations, " OR ") + ")"
+		}
+		if scope.TaskIDs != nil {
+			ids := make([]string, 0, len(scope.TaskIDs))
+			for _, id := range scope.TaskIDs {
+				ids = append(ids, bind(id.String()))
+			}
+			if len(ids) == 0 {
+				clause += " AND FALSE"
+			} else {
+				clause += " AND tasks.id IN (" + strings.Join(ids, ",") + ")"
+			}
+		}
+		branches = append(branches, "("+clause+")")
+	}
+	if len(branches) == 0 {
+		b.whereClauses = append(b.whereClauses, "FALSE")
+		return
+	}
+	b.whereClauses = append(b.whereClauses, "("+strings.Join(branches, " OR ")+")")
+}
+
+// lockTaskProjectAccess establishes mutation authorization under row locks.
+// Lock role IDs from their already-locked parent rows in separate statements:
+// a role reassignment while a joined query waits cannot leave the new role unlocked.
+func lockTaskProjectAccess(ctx context.Context, tx *sqlx.Tx, projectID uuid.UUID) (taskdom.AccessScope, error) {
+	var project uuid.UUID
+	err := tx.GetContext(ctx, &project, `SELECT id FROM projects WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return taskdom.AccessScope{}, taskdom.ErrTaskNotFound
+	}
+	if err != nil {
+		return taskdom.AccessScope{}, err
+	}
+	if userID, ok := authz.ActorIDFromContext(ctx); ok {
+		var globalRole uuid.UUID
+		err := tx.GetContext(ctx, &globalRole, `SELECT role_id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, userID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return taskdom.AccessScope{}, taskdom.ErrTaskNotFound
+		}
+		if err != nil {
+			return taskdom.AccessScope{}, err
+		}
+		var locked uuid.UUID
+		if err := tx.GetContext(ctx, &locked, `SELECT id FROM global_roles WHERE id=$1 FOR SHARE`, globalRole); err != nil {
+			return taskdom.AccessScope{}, err
+		}
+		var projectRoles []uuid.UUID
+		if err := tx.SelectContext(ctx, &projectRoles, `SELECT project_role_id FROM project_members WHERE user_id=$1 AND project_id=$2 AND member_type='human' AND deleted_at IS NULL FOR SHARE`, userID, projectID); err != nil {
+			return taskdom.AccessScope{}, err
+		}
+		for _, roleID := range projectRoles {
+			if err := tx.GetContext(ctx, &locked, `SELECT id FROM project_roles WHERE id=$1 FOR SHARE`, roleID); err != nil {
+				return taskdom.AccessScope{}, err
+			}
+		}
+	}
+	return authz.NewTaskAccessPolicy(NewAuthzPermissionStore(tx)).ResolveTaskAccess(ctx, projectID)
+}
+
+func lockAuthorizedTask(ctx context.Context, tx *sqlx.Tx, projectID, taskID uuid.UUID, prechecked taskdom.AccessScope, action taskdom.AccessAction) (*taskdom.Task, error) {
+	scope, err := lockTaskProjectAccess(ctx, tx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	var record taskRecord
+	err = tx.GetContext(ctx, &record, `SELECT `+taskCols+` FROM tasks WHERE id=$1 AND project_id=$2 AND deleted_at IS NULL FOR UPDATE`, taskID, projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	current, err := toTaskEntity(&record)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.SelectContext(ctx, &current.AssigneeIDs, `SELECT member_id FROM task_assignees WHERE task_id=$1 ORDER BY assigned_at`, taskID); err != nil {
+		return nil, err
+	}
+	// Both the entry scope and the current locked authority must permit the write.
+	if err := prechecked.Require(current, action); err != nil {
+		return nil, err
+	}
+	if err := scope.Require(current, action); err != nil {
+		return nil, err
+	}
+	return current, nil
+}
+
+func (r *TaskRepository) CreateTaskAuthorized(ctx context.Context, t *taskdom.Task, prechecked taskdom.AccessScope) error {
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		scope, err := lockTaskProjectAccess(ctx, tx, t.ProjectID)
+		if err != nil {
+			return err
+		}
+		if prechecked.ProjectID != t.ProjectID || !prechecked.CanCreate() || !scope.CanCreate() || prechecked.UserID != scope.UserID {
+			return taskdom.ErrTaskForbidden
+		}
+		t.CreatorUserID = &scope.UserID
+		return createTaskTx(ctx, tx, t)
+	})
+}
+
+// UpdateTaskFields merges the explicit patch into the current locked row, never
+// into the earlier service snapshot. Assignment reconciliation is explicit-only.
+func (r *TaskRepository) UpdateTaskFields(ctx context.Context, t *taskdom.Task, in taskdom.UpdateTaskInput, prechecked taskdom.AccessScope) error {
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		current, err := lockAuthorizedTask(ctx, tx, t.ProjectID, t.ID, prechecked, taskdom.AccessManage)
+		if err != nil {
+			return err
+		}
+		in.ApplyTo(current)
+		// The service validated an earlier snapshot; recheck the merged pair.
+		if current.ParentTaskID != nil && current.TaskTypeID != nil {
+			var isEpic bool
+			if err := tx.GetContext(ctx, &isEpic, `SELECT is_system AND name='Epic' FROM task_types WHERE id=$1 FOR SHARE`, *current.TaskTypeID); err != nil {
+				return err
+			}
+			if isEpic {
+				return taskdom.ErrEpicCannotHaveParent
+			}
+		}
+		current.UpdatedAt = time.Now()
+		if err := updateTaskTx(ctx, tx, current, in.AssigneeIDs != nil); err != nil {
+			return err
+		}
+		*t = *current
+		return nil
+	})
+}
+
+func (r *TaskRepository) DeleteTaskAuthorized(ctx context.Context, projectID, id uuid.UUID, prechecked taskdom.AccessScope) error {
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		if _, err := lockAuthorizedTask(ctx, tx, projectID, id, prechecked, taskdom.AccessManage); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE tasks SET deleted_at=$1 WHERE id=$2 AND project_id=$3`, time.Now(), id, projectID)
+		return err
+	})
+}
+
+// UpdateTaskProgress uses the same mutation boundary while persisting status only.
+func (r *TaskRepository) UpdateTaskProgress(ctx context.Context, t *taskdom.Task, prechecked taskdom.AccessScope) error {
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		current, err := lockAuthorizedTask(ctx, tx, t.ProjectID, t.ID, prechecked, taskdom.AccessProgress)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE tasks SET status_id=$1,updated_at=$2 WHERE id=$3 AND project_id=$4`, uuidPtrToStrPtr(t.StatusID), t.UpdatedAt, t.ID, t.ProjectID); err != nil {
+			return err
+		}
+		current.StatusID = t.StatusID
+		current.UpdatedAt = t.UpdatedAt
+		*t = *current
+		return nil
+	})
 }

@@ -618,11 +618,11 @@ func (r *fakeTaskRepo) DeleteTaskLink(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (r *fakeTaskRepo) ListAssignedTasks(_ context.Context, _ []uuid.UUID, _ int, _ *string) ([]*taskdom.Task, bool, error) {
+func (r *fakeTaskRepo) ListAssignedTasks(_ context.Context, _ []uuid.UUID, _ []taskdom.AccessScope, _ int, _ *string) ([]*taskdom.Task, bool, error) {
 	return nil, false, nil
 }
 
-func (r *fakeTaskRepo) CountOpenTasksByProjects(_ context.Context, _ []uuid.UUID) (int64, error) {
+func (r *fakeTaskRepo) CountOpenTasksByProjects(_ context.Context, _ []taskdom.AccessScope) (int64, error) {
 	return 0, nil
 }
 
@@ -732,7 +732,7 @@ func buildTaskTestRouterWithSprints(taskRepo *fakeTaskRepo, sprintRepo *fakeSpri
 	userService := usersvc.New(userRepo)
 	projectRepo := newFakeProjectRepo()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
-	taskService := tasksvc.New(taskRepo)
+	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
 	sprintService := sprintsvc.New(sprintRepo, taskRepo, nil)
 	viewService := sprintsvc.NewViewService(viewRepo, sprintRepo, taskRepo, nil)
 	activityRepo := newFakeTaskActivityRepo()
@@ -830,7 +830,7 @@ func TestIntegrationTaskTypes_CRUD(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -883,7 +883,7 @@ func TestIntegrationTaskTypes_InvalidNameReturns400(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -904,7 +904,7 @@ func TestIntegrationTaskTypes_DeleteNotFoundReturns404(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -929,7 +929,7 @@ func TestIntegrationTaskTypes_SetDefault(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -998,7 +998,7 @@ func TestIntegrationTaskTypes_SetDefault_NotFound(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1016,7 +1016,7 @@ func TestIntegrationTaskTypes_SystemTypeCannotBeUpdated(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1051,7 +1051,7 @@ func TestIntegrationTaskTypes_SystemTypeCannotBeDeleted(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1082,7 +1082,7 @@ func TestIntegrationTaskTypes_ReservedNameRejected(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1109,7 +1109,7 @@ func TestIntegrationTaskStatuses_CRUD(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1188,7 +1188,7 @@ func TestIntegrationTaskStatuses_Reorder(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1244,7 +1244,7 @@ func TestIntegrationTaskStatuses_ReorderInvalidSetReturns400(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1276,7 +1276,7 @@ func TestIntegrationTaskStatuses_InvalidCategoryReturns400(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1385,7 +1385,7 @@ func TestIntegrationTasks_CRUD(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1479,7 +1479,7 @@ func TestIntegrationTasks_EmptyTitleReturns400(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1522,7 +1522,7 @@ func TestIntegrationTasks_ListWithSprintFilter(t *testing.T) {
 	sprintID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1555,7 +1555,7 @@ func TestIntegrationTasks_ListWithSearchFilter(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1615,7 +1615,7 @@ func TestIntegrationTasks_DatesAndTags(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -1834,7 +1834,7 @@ func TestIntegrationSprints_GetSprintTasks(t *testing.T) {
 	sprintRepo := newFakeSprintRepoIT()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionSprintsRead, authz.PermissionSprintsWrite, authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionSprintsRead, authz.PermissionSprintsWrite, authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouterWithSprints(taskRepo, sprintRepo, newFakeViewRepoIT(), store)
@@ -1893,7 +1893,7 @@ func TestIntegrationTasks_Backlog(t *testing.T) {
 	sprintRepo := newFakeSprintRepoIT()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionSprintsWrite, authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionSprintsWrite, authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouterWithSprints(taskRepo, sprintRepo, newFakeViewRepoIT(), store)
@@ -1959,7 +1959,7 @@ func TestIntegrationTasks_ListAndViewPositions(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionSprintsWrite, authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionSprintsWrite, authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouterWithSprints(taskRepo, newFakeSprintRepoIT(), viewRepo, store)
@@ -2097,7 +2097,7 @@ func TestIntegrationSprints_GetSprintTasksWithViewPositions(t *testing.T) {
 		projectPerms: map[uuid.UUID][]authz.Permission{
 			projectID: {
 				authz.PermissionSprintsRead, authz.PermissionSprintsWrite,
-				authz.PermissionTasksRead, authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}
@@ -2257,7 +2257,7 @@ func TestIntegrationTasks_BacklogWithViewPositions(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouterWithSprints(taskRepo, newFakeSprintRepoIT(), viewRepo, store)
@@ -2403,7 +2403,7 @@ func TestIntegrationCustomFields_CRUD(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2464,7 +2464,7 @@ func TestIntegrationCustomFields_SelectTypeWithOptions(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2503,7 +2503,7 @@ func TestIntegrationCustomFields_DuplicateKeyReturns409(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2534,7 +2534,7 @@ func TestIntegrationCustomFields_InvalidTypeReturns400(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2580,7 +2580,7 @@ func TestIntegrationCustomFields_EmptyKeyReturns400(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2637,7 +2637,7 @@ func TestIntegrationTasks_PatchStatusPreservesSprintID(t *testing.T) {
 	statusID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2687,7 +2687,7 @@ func TestIntegrationTasks_PatchExplicitNullSprintIDClearsField(t *testing.T) {
 	sprintID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2730,7 +2730,7 @@ func TestIntegrationTasks_PatchTitleOnlyPreservesAllFields(t *testing.T) {
 	statusID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2814,7 +2814,7 @@ func TestIntegrationTasks_TaskNumberIncrementsPerProject(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2856,8 +2856,8 @@ func TestIntegrationTasks_TaskNumberScopedToProject(t *testing.T) {
 	projB := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projA: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
-			projB: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projA: {authz.PermissionTasksAll},
+			projB: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2900,7 +2900,7 @@ func TestIntegrationTasks_GetByNumber_OK(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3108,7 +3108,7 @@ func TestActivities_ListEmpty(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3138,7 +3138,7 @@ func TestActivities_AddAndListComment(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3181,7 +3181,7 @@ func TestActivities_AddComment_StringContentReturns400(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3213,7 +3213,7 @@ func TestActivities_AddComment_RequiresAuth(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3237,7 +3237,7 @@ func TestActivities_UpdateComment(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3278,7 +3278,7 @@ func TestActivities_DeleteComment(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3322,7 +3322,7 @@ func TestIntegrationTasks_EpicCannotHaveParent(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3361,7 +3361,7 @@ func TestIntegrationTasks_UpdateToEpicWithParentRejected(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3406,7 +3406,7 @@ func TestIntegrationTasks_SelfParentRejected(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3436,7 +3436,7 @@ func TestIntegrationTasks_ParentCycleDetected(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3481,7 +3481,7 @@ func TestIntegrationTasks_ListTotalCountNoFilter(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3512,7 +3512,7 @@ func TestIntegrationTasks_ListTotalCountWithSprintFilter(t *testing.T) {
 	sprintID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3551,7 +3551,7 @@ func TestIntegrationTasks_ListTotalCountBacklogFilter(t *testing.T) {
 	sprintID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3588,7 +3588,7 @@ func TestIntegrationTasks_ListTotalCountExcludesDeleted(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3627,7 +3627,7 @@ func TestIntegrationTasks_ListTotalCountIgnoresCursor(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3710,7 +3710,7 @@ func TestIntegrationTasks_SumCustomField_BasicSum(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3749,7 +3749,7 @@ func TestIntegrationTasks_SumCustomField_FilterBySprint(t *testing.T) {
 	sprintID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3793,7 +3793,7 @@ func TestIntegrationTasks_SumCustomField_BacklogOnly(t *testing.T) {
 	sprintID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3833,7 +3833,7 @@ func TestIntegrationTasks_SumCustomField_IgnoresCursor(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3896,7 +3896,7 @@ func TestIntegrationTasks_SumCustomField_AbsentWhenNotRequested(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3925,7 +3925,7 @@ func TestIntegrationTasks_ListTotalCountWithStatusFilter(t *testing.T) {
 	statusB := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionTasksRead, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -3976,7 +3976,7 @@ func TestIntegrationTasks_ViewPositionSort(t *testing.T) {
 			projectID: {
 				authz.PermissionSprintsWrite,
 				authz.PermissionTasksRead,
-				authz.PermissionTasksWrite,
+				authz.PermissionTasksAll,
 			},
 		},
 	}
@@ -4100,4 +4100,55 @@ func taskListItemIDs(t *testing.T, body []byte) []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (r *fakeTaskRepo) UpdateTaskProgress(_ context.Context, task *taskdom.Task, scope taskdom.AccessScope) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.tasks[task.ID]
+	if !ok {
+		return taskdom.ErrTaskNotFound
+	}
+	if err := scope.Require(current, taskdom.AccessProgress); err != nil {
+		return err
+	}
+	current.StatusID = task.StatusID
+	current.UpdatedAt = task.UpdatedAt
+	*task = *current
+	return nil
+}
+
+func (r *fakeTaskRepo) CreateTaskAuthorized(ctx context.Context, t *taskdom.Task, scope taskdom.AccessScope) error {
+	if !scope.CanCreate() || scope.ProjectID != t.ProjectID {
+		return taskdom.ErrTaskForbidden
+	}
+	return r.CreateTask(ctx, t)
+}
+func (r *fakeTaskRepo) UpdateTaskFields(_ context.Context, t *taskdom.Task, in taskdom.UpdateTaskInput, scope taskdom.AccessScope) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.tasks[t.ID]
+	if !ok {
+		return taskdom.ErrTaskNotFound
+	}
+	if err := scope.Require(current, taskdom.AccessManage); err != nil {
+		return err
+	}
+	in.ApplyTo(current)
+	current.UpdatedAt = time.Now()
+	*t = *current
+	return nil
+}
+func (r *fakeTaskRepo) DeleteTaskAuthorized(ctx context.Context, projectID, id uuid.UUID, scope taskdom.AccessScope) error {
+	current, err := r.FindTaskByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if current.ProjectID != projectID {
+		return taskdom.ErrTaskNotFound
+	}
+	if err := scope.Require(current, taskdom.AccessManage); err != nil {
+		return err
+	}
+	return r.DeleteTask(ctx, id)
 }

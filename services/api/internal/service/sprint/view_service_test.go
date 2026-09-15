@@ -65,10 +65,10 @@ func (permissiveTaskRepo) DeleteTask(context.Context, uuid.UUID) error     { ret
 func (permissiveTaskRepo) BulkMoveSprintTasks(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID) error {
 	return nil
 }
-func (permissiveTaskRepo) ListAssignedTasks(context.Context, []uuid.UUID, int, *string) ([]*taskdom.Task, bool, error) {
+func (permissiveTaskRepo) ListAssignedTasks(context.Context, []uuid.UUID, []taskdom.AccessScope, int, *string) ([]*taskdom.Task, bool, error) {
 	return nil, false, nil
 }
-func (permissiveTaskRepo) CountOpenTasksByProjects(context.Context, []uuid.UUID) (int64, error) {
+func (permissiveTaskRepo) CountOpenTasksByProjects(context.Context, []taskdom.AccessScope) (int64, error) {
 	return 0, nil
 }
 
@@ -1258,4 +1258,18 @@ func TestViewService_BulkMoveTasks_WrongProject_ReturnsNotFound(t *testing.T) {
 	if len(repo.positions) != 0 {
 		t.Errorf("no task position should have been persisted, found %d", len(repo.positions))
 	}
+}
+
+func (permissiveTaskRepo) UpdateTaskProgress(context.Context, *taskdom.Task, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
+}
+
+func (permissiveTaskRepo) CreateTaskAuthorized(context.Context, *taskdom.Task, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
+}
+func (permissiveTaskRepo) UpdateTaskFields(context.Context, *taskdom.Task, taskdom.UpdateTaskInput, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
+}
+func (permissiveTaskRepo) DeleteTaskAuthorized(context.Context, uuid.UUID, uuid.UUID, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
 }

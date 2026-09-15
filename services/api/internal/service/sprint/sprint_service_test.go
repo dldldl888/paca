@@ -191,11 +191,11 @@ func (r *fakeTaskRepo) DeleteTaskLink(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (r *fakeTaskRepo) ListAssignedTasks(_ context.Context, _ []uuid.UUID, _ int, _ *string) ([]*taskdom.Task, bool, error) {
+func (r *fakeTaskRepo) ListAssignedTasks(_ context.Context, _ []uuid.UUID, _ []taskdom.AccessScope, _ int, _ *string) ([]*taskdom.Task, bool, error) {
 	return nil, false, nil
 }
 
-func (r *fakeTaskRepo) CountOpenTasksByProjects(_ context.Context, _ []uuid.UUID) (int64, error) {
+func (r *fakeTaskRepo) CountOpenTasksByProjects(_ context.Context, _ []taskdom.AccessScope) (int64, error) {
 	return 0, nil
 }
 
@@ -709,4 +709,18 @@ func TestCompleteSprint_MoveToSprintWrongProject_ReturnsNotFound(t *testing.T) {
 	if updated.Status == sprintdom.SprintStatusCompleted {
 		t.Error("source sprint must not be completed when the destination sprint check fails")
 	}
+}
+
+func (r *fakeTaskRepo) UpdateTaskProgress(context.Context, *taskdom.Task, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
+}
+
+func (*fakeTaskRepo) CreateTaskAuthorized(context.Context, *taskdom.Task, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
+}
+func (*fakeTaskRepo) UpdateTaskFields(context.Context, *taskdom.Task, taskdom.UpdateTaskInput, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
+}
+func (*fakeTaskRepo) DeleteTaskAuthorized(context.Context, uuid.UUID, uuid.UUID, taskdom.AccessScope) error {
+	return taskdom.ErrTaskForbidden
 }
