@@ -40,7 +40,7 @@ def selected_stories(stories, current, final):
     return [s for s in stories if s.get('passes') or s['id'] == current]
 
 
-def native(root, cwd, command, timeout=600):
+def native(root, cwd, command, timeout=600, stdout_only=False):
     """Use an installed runtime, or the dedicated local test image, without a shell."""
     if not shutil.which(command[0]):
         image = 'oven/bun:1-alpine' if command[0] == 'bun' else 'paca-recovery-test:local'
@@ -53,7 +53,7 @@ def native(root, cwd, command, timeout=600):
     if result.returncode:
         # Tests use synthetic fixtures. Never execute this gate against private runtime files.
         raise SpecError(f'{command[0]} exited {result.returncode}:\n{(result.stdout + result.stderr)[-6000:]}')
-    return result.stdout + result.stderr
+    return result.stdout if stdout_only else result.stdout + result.stderr
 
 
 def python_binding(path, node, sut):
@@ -93,7 +93,7 @@ def validate_scenario(root, scenario):
             if module is None:
                 raise SpecError('test has no Go module')
             package = './' + str(path.parent.relative_to(module))
-            metadata = json.loads(native(root, module, ['go', 'list', '-json', package]))
+            metadata = json.loads(native(root, module, ['go', 'list', '-json', package], stdout_only=True))
             if path.name not in metadata.get('TestGoFiles', []) + metadata.get('XTestGoFiles', []):
                 raise SpecError('bound Go file is excluded from the active build')
             rel = str(path.relative_to(module))
