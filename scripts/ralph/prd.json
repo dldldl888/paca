@@ -1,0 +1,566 @@
+{
+  "project": "Paca + Hermes 企业工作台",
+  "branchName": "codex/context-recovery-isolation",
+  "description": "修复桥接重启/闲置后的上下文恢复、任务对象权限及 Hermes 私人状态工具隔离。",
+  "source": "tasks/prd-context-recovery-isolation.md",
+  "status": "specified_not_implemented",
+  "executionMode": "new_codex_task_superpowers_with_ponytail_review_and_ablation",
+  "testBindingConvention": "test=仓库相对文件::原生测试名（Go函数、Bun测试名或Python unittest节点）；sut=直接被测符号。新符号与测试节点均为计划名称，实施时与实际代码同步。不得以注释或文件级字符串代替测试体调用。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "可靠任务创建者与权限注册",
+      "description": "作为工作台用户或维护者，我需要可靠任务创建者与权限注册，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [],
+      "scenarios": [
+        {
+          "id": "US-001-S1",
+          "given": "旧任务只有可编辑 reporter_id",
+          "when": "升级数据库后读取旧任务",
+          "then": "创建者保持 NULL，任务及负责人完整",
+          "sut": "FindTaskByID",
+          "test": "services/api/internal/repository/postgres/task_repository_test.go::TestUS001CreatorMigration"
+        },
+        {
+          "id": "US-001-S2",
+          "given": "员工有 read/write，经理有 tasks.*",
+          "when": "查询新增权限",
+          "then": "员工无 read_all/manage，经理权限仅在授权范围生效",
+          "sut": "HasPermissions",
+          "test": "services/api/internal/platform/authz/authorizer_test.go::TestUS001Capabilities"
+        }
+      ],
+      "acceptanceCriteria": [
+        "迁移添加只由认证服务端赋值的 creator_user_id；旧数据不按 reporter_id 回填。",
+        "注册 tasks.read_all/tasks.manage；tasks.* 保持管理能力，普通 read/write 不扩权。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "任务详情统一对象鉴权",
+      "description": "作为工作台用户或维护者，我需要任务详情统一对象鉴权，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-001"
+      ],
+      "scenarios": [
+        {
+          "id": "US-002-S1",
+          "given": "同项目 A/B，任务仅分配 A",
+          "when": "按 ID 和编号读取任务",
+          "then": "A 与授权经理可读，B 与跨项目经理无任务数据",
+          "sut": "GetTask",
+          "test": "services/api/internal/service/task/task_service_test.go::TestUS002ReadMatrix"
+        },
+        {
+          "id": "US-002-S2",
+          "given": "A 为可靠创建者，C 仅为 reporter",
+          "when": "分别读取，再移除 A 项目资格",
+          "then": "C 不可读，移除后的 A 也不可读",
+          "sut": "GetTaskByNumber",
+          "test": "services/api/internal/service/task/task_service_test.go::TestUS002CreatorMembership"
+        }
+      ],
+      "acceptanceCriteria": [
+        "先校验身份和项目资格，再校验动作及负责人/可靠创建者；缺少身份默认拒绝。",
+        "覆盖 ID、编号、service 直接调用；内部自动化身份显式限定。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "任务列表搜索和聚合隔离",
+      "description": "作为工作台用户或维护者，我需要任务列表搜索和聚合隔离，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-002"
+      ],
+      "scenarios": [
+        {
+          "id": "US-003-S1",
+          "given": "A/B 有不同任务，B 有多页可读结果",
+          "when": "B 按 A 标题、assignee、视图和游标查询",
+          "then": "A 任务不出现，B 可见分页完整无重复",
+          "sut": "ListTasks",
+          "test": "services/api/internal/repository/postgres/task_repository_test.go::TestUS003VisibleQueries"
+        },
+        {
+          "id": "US-003-S2",
+          "given": "项目含仅 A 可见任务",
+          "when": "B 查询计数、求和和首页数量",
+          "then": "只计算 B 获准数据，经理取得授权范围统计",
+          "sut": "CountTasks",
+          "test": "services/api/internal/service/task/task_service_test.go::TestUS003ScopedAggregates"
+        }
+      ],
+      "acceptanceCriteria": [
+        "服务端授权谓词与用户筛选取交集，在分页/统计之前执行。",
+        "覆盖任务搜索、sprint/view/backlog、首页数量、计数及求和；过滤参数不得扩权。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "任务写入与管理字段边界",
+      "description": "作为工作台用户或维护者，我需要任务写入与管理字段边界，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-002"
+      ],
+      "scenarios": [
+        {
+          "id": "US-004-S1",
+          "given": "A 是负责人但无管理权",
+          "when": "更新状态后混入受限字段再次提交",
+          "then": "正常状态成功，混合请求全部拒绝且无副作用",
+          "sut": "UpdateTask",
+          "test": "services/api/internal/service/task/task_service_test.go::TestUS004FieldAuthorization"
+        },
+        {
+          "id": "US-004-S2",
+          "given": "A 有 read/write，M 有管理权",
+          "when": "分别创建、改派和删除",
+          "then": "A 被拒绝，M 在授权项目成功，创建者来自认证身份",
+          "sut": "CreateTask",
+          "test": "services/api/internal/service/task/task_service_test.go::TestUS004TaskManagement"
+        }
+      ],
+      "acceptanceCriteria": [
+        "负责人可按写权限更新执行状态与进展；创建正式任务、改派、改要求/期限/业务字段及删除需 tasks.manage。",
+        "所有受限字段先校验后事务写入；禁止伪造创建者，拒绝时无事件/通知副作用。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "任务评论活动与关联内容隔离",
+      "description": "作为工作台用户或维护者，我需要任务评论活动与关联内容隔离，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-002",
+        "US-004"
+      ],
+      "scenarios": [
+        {
+          "id": "US-005-S1",
+          "given": "B 知道 A 的评论/活动/标注 ID",
+          "when": "读取和修改相关内容",
+          "then": "无受限正文或元数据，写入失败且无副作用",
+          "sut": "ListActivities",
+          "test": "services/api/internal/service/task/activity_service_test.go::TestUS005RelatedContent"
+        },
+        {
+          "id": "US-005-S2",
+          "given": "B 可读 X 不可读关联任务 Y",
+          "when": "列出或修改父子/依赖关系",
+          "then": "不泄露 Y 的标识标题，不通过关系取得访问权",
+          "sut": "ListTaskLinks",
+          "test": "services/api/internal/service/task/task_link_service_test.go::TestUS005TaskLinks"
+        }
+      ],
+      "acceptanceCriteria": [
+        "评论、活动、标注及父子/依赖关系统一检查所属任务与动作权限。",
+        "关系两端分别授权；提及/订阅/评论不能授予任务访问权。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "任务附件各阶段授权",
+      "description": "作为工作台用户或维护者，我需要任务附件各阶段授权，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-002",
+        "US-004"
+      ],
+      "scenarios": [
+        {
+          "id": "US-006-S1",
+          "given": "B 知道 A 附件 ID 和任务 ID",
+          "when": "请求列表、签名和内容",
+          "then": "不返回文件名、正文、storage key 或下载 URL",
+          "sut": "GetDownloadURL",
+          "test": "services/api/internal/service/attachment/service_test.go::TestUS006AttachmentReads"
+        },
+        {
+          "id": "US-006-S2",
+          "given": "B 无 A 任务访问权限",
+          "when": "伪造上传完成并删除附件",
+          "then": "无关联新增/删除及其他副作用",
+          "sut": "CompleteUpload",
+          "test": "services/api/internal/service/attachment/service_test.go::TestUS006AttachmentWrites"
+        }
+      ],
+      "acceptanceCriteria": [
+        "上传初始化/完成、列表、签名下载、直接内容及删除均校验对象和动作。",
+        "记录合法旧签名链接的有效期边界，不宣称撤权立即销毁已签链接。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "任务事件按当前授权用户投递",
+      "description": "作为工作台用户或维护者，我需要任务事件按当前授权用户投递，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-002",
+        "US-004",
+        "US-005",
+        "US-006"
+      ],
+      "scenarios": [
+        {
+          "id": "US-007-S1",
+          "given": "A/B 同时连接同一项目",
+          "when": "发出仅 A 可读任务的各种事件",
+          "then": "A 得到一次有效载荷，B 敏感载荷数为零",
+          "sut": "routeEvent",
+          "test": "services/realtime/src/subscriber.test.ts::US007RecipientRouting"
+        },
+        {
+          "id": "US-007-S2",
+          "given": "事件缺少可靠收件人或授权查询失败",
+          "when": "尝试路由任务事件",
+          "then": "不回退项目广播，记录不含敏感内容的失败",
+          "sut": "routeEvent",
+          "test": "services/realtime/src/subscriber.test.ts::US007FailClosed"
+        }
+      ],
+      "acceptanceCriteria": [
+        "任务及相关 agent/workflow 等敏感事件不广播到项目 tasks 房间。",
+        "复用 API 共同权限确定收件人；未知路由或权限错误拒绝投递；新增任务通知校验当前可见性。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "任务上下文与私聊授权一致",
+      "description": "作为工作台用户或维护者，我需要任务上下文与私聊授权一致，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-002",
+        "US-004"
+      ],
+      "scenarios": [
+        {
+          "id": "US-008-S1",
+          "given": "B 知道 A 的任务和私聊 ID",
+          "when": "新建或续聊时引用 A 的任务，读取/控制 A 私聊",
+          "then": "模型请求没有 A 任务内容，私聊各入口拒绝 B",
+          "sut": "StartChatSession",
+          "test": "services/api/internal/service/agent/agent_service_test.go::TestUS008ContextAuthorization"
+        },
+        {
+          "id": "US-008-S2",
+          "given": "M 可管理 A 的任务但不是私聊主人",
+          "when": "访问 A 的私聊详情、事件、搜索和控制",
+          "then": "保持主人私有语义",
+          "sut": "GetConversation",
+          "test": "services/api/internal/service/agent/agent_service_test.go::TestUS008ManagerChatIsolation"
+        }
+      ],
+      "acceptanceCriteria": [
+        "新建、续聊、排队及 context_items 解析均检查任务权限。",
+        "保留主人私聊读取/控制隔离；任务管理权和 Agent 全局权限不能越过用户对象范围。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "派发可信身份并分开私人会话键",
+      "description": "作为工作台用户或维护者，我需要派发可信身份并分开私人会话键，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-008"
+      ],
+      "scenarios": [
+        {
+          "id": "US-009-S1",
+          "given": "A/B 各有同任务私聊，配置 scope=task 或 agent",
+          "when": "映射运行键",
+          "then": "两者运行和原生会话独立，输出归各自 conversation",
+          "sut": "sessionKeyFor",
+          "test": "apps/acp-bridge/internal/runner/session_scope_test.go::TestUS009PrivateKeys"
+        },
+        {
+          "id": "US-009-S2",
+          "given": "持久会话属于 A，请求伪造 B 或缺少私人归属",
+          "when": "后端派发并校验",
+          "then": "使用可信身份或拒绝，不产生共享运行",
+          "sut": "DispatchTrigger",
+          "test": "services/agent-runner/internal/acpbridge/dispatch_test.go::TestUS009TrustedIdentity"
+        }
+      ],
+      "acceptanceCriteria": [
+        "派发绑定持久会话 owner/project/agent/conversation 与既有轮次；私人身份缺失或冲突即拒绝。",
+        "私人命名空间不受 task/agent scope 合并；包含实例边界，拒绝客户端路径和专用实例非预期共享触发。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Hermes 每会话存储与实际沙箱隔离",
+      "description": "作为工作台用户或维护者，我需要Hermes 每会话存储与实际沙箱隔离，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-009"
+      ],
+      "scenarios": [
+        {
+          "id": "US-010-S1",
+          "given": "A 历史和记忆含随机标记，B 有独立 home",
+          "when": "在 B 实际环境调用 session_search、按 A ID 加载及读文件",
+          "then": "得不到 A 数据，B 本会话工具仍可用",
+          "sut": "session_search",
+          "test": "apps/acp-bridge/scripts/test_hermes_isolation.py::TestHermesIsolation.test_us010_native_tools"
+        },
+        {
+          "id": "US-010-S2",
+          "given": "B 含指向 A/个人文件的符号链接及路径穿越参数",
+          "when": "真实启动与子进程读取",
+          "then": "启动拒绝非法路径或由 OS 拒绝文件访问，正常本会话访问成功",
+          "sut": "launch_hermes",
+          "test": "apps/acp-bridge/scripts/test_hermes_isolation.py::TestHermesIsolation.test_us010_filesystem"
+        }
+      ],
+      "acceptanceCriteria": [
+        "复用验证 launcher，独立 HERMES_HOME/work/tmp，可信端提供必要配置且不下发 Paca 管理凭据。",
+        "macOS 沙箱覆盖实际进程/子进程，拒绝 sibling/共享旧库/个人目录及符号链接逃逸；不以0700或禁用所有工具替代隔离。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "原生 ACP session/load 客户端",
+      "description": "作为工作台用户或维护者，我需要原生 ACP session/load 客户端，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [],
+      "scenarios": [
+        {
+          "id": "US-011-S1",
+          "given": "server 支持 loadSession 且 sess-A 已存在",
+          "when": "initialize 后 LoadSession",
+          "then": "请求参数正确，处理响应前更新，未调用 session/new",
+          "sut": "LoadSession",
+          "test": "apps/acp-bridge/internal/acpclient/acpclient_test.go::TestUS011LoadProtocol"
+        },
+        {
+          "id": "US-011-S2",
+          "given": "不支持 load 或返回 null/错误/超时",
+          "when": "加载原会话",
+          "then": "明确返回失败，不创建空会话",
+          "sut": "LoadSession",
+          "test": "apps/acp-bridge/internal/acpclient/acpclient_test.go::TestUS011LoadFailures"
+        }
+      ],
+      "acceptanceCriteria": [
+        "解析 initialize 的 loadSession 能力；实现 session/load 及响应校验。",
+        "覆盖 load 返回之前历史更新、null/不支持/RPC 错误/超时，不退为 new。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "原生会话映射原子持久化与归属校验",
+      "description": "作为工作台用户或维护者，我需要原生会话映射原子持久化与归属校验，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-009",
+        "US-010"
+      ],
+      "scenarios": [
+        {
+          "id": "US-012-S1",
+          "given": "原生会话创建成功，但映射写故障或提交前进程终止",
+          "when": "保存绑定并准备 prompt",
+          "then": "不发送 prompt、不损坏旧文件，不接受半写状态",
+          "sut": "saveSessionBinding",
+          "test": "apps/acp-bridge/internal/runner/session_store_test.go::TestUS012AtomicBinding"
+        },
+        {
+          "id": "US-012-S2",
+          "given": "映射属于 A/P1，而请求为 B/P2 或路径/版本/文件损坏",
+          "when": "读取映射",
+          "then": "拒绝错误归属及无效映射，不泄露 ID 或删除历史",
+          "sut": "loadSessionBinding",
+          "test": "apps/acp-bridge/internal/runner/session_store_test.go::TestUS012BindingOwnership"
+        }
+      ],
+      "acceptanceCriteria": [
+        "在模型不可修改的可信目录保存版本、完整身份、原生 ID 和固定 cwd，仅元数据。",
+        "原子写成功后才允许首次 prompt；回收不删映射；已知旧会话缺少映射不能当首次；禁止整体复制旧混合 home。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "重启回收后的恢复与历史重播处理",
+      "description": "作为工作台用户或维护者，我需要重启回收后的恢复与历史重播处理，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-011",
+        "US-012"
+      ],
+      "scenarios": [
+        {
+          "id": "US-013-S1",
+          "given": "原会话记住随机标记",
+          "when": "重建 Runner/子进程，以及 idle eviction 后续聊",
+          "then": "加载同一原生 session、记忆保留，历史不重复",
+          "sut": "ensureSession",
+          "test": "apps/acp-bridge/internal/runner/runner_test.go::TestUS013RestartAndEviction"
+        },
+        {
+          "id": "US-013-S2",
+          "given": "load 发出历史用户/助手/工具重播，之后 prompt 发新输出",
+          "when": "处理恢复及新一轮消息",
+          "then": "历史不新增，旧工具不执行，新回复只记录一次",
+          "sut": "handleUpdate",
+          "test": "apps/acp-bridge/internal/runner/runner_test.go::TestUS013ReplayDedup"
+        },
+        {
+          "id": "US-013-S3",
+          "given": "原生会话丢失、映射缺失或 load 出错",
+          "when": "同一旧会话续聊",
+          "then": "本轮 failed，无空上下文 prompt，历史完整",
+          "sut": "runTurn",
+          "test": "apps/acp-bridge/internal/runner/runner_test.go::TestUS013FailClosed"
+        }
+      ],
+      "acceptanceCriteria": [
+        "重启、ACP 子进程退出与 idle 回收共用 initialize/load 路径；同一会话串行。",
+        "加载重播不存回 Paca 或执行工具；后续更新核对原生 session；失败则 failed、无 prompt、新空 session 或历史损失。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "撤权阻止排队运行与实时续接",
+      "description": "作为工作台用户或维护者，我需要撤权阻止排队运行与实时续接，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-007",
+        "US-008",
+        "US-009",
+        "US-013"
+      ],
+      "scenarios": [
+        {
+          "id": "US-014-S1",
+          "given": "A 排队的对话引用任务，随后失去任务或项目资格",
+          "when": "出队派发、续聊或恢复",
+          "then": "不启动或恢复模型，不读取受限任务，明确授权失败",
+          "sut": "DispatchTrigger",
+          "test": "services/agent-runner/internal/acpbridge/dispatch_test.go::TestUS014QueueReauthorization"
+        },
+        {
+          "id": "US-014-S2",
+          "given": "A 保持 socket 连接，任务相关回复正在流式生成",
+          "when": "撤权后有新 chunk 和延迟事件到达",
+          "then": "停止运行，撤权生效后不再向 A 投递受限内容，其他人正常",
+          "sut": "routeEvent",
+          "test": "services/realtime/src/subscriber.test.ts::US014Revocation"
+        }
+      ],
+      "acceptanceCriteria": [
+        "改派/移除/降权/停用后重新验证实际派发、加载与事件投递，停止受影响活动运行。",
+        "已连接 socket、已排队和延迟事件均不能继续泄露新内容；此前合法私人历史保留归属阅读规则。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "验收契约与真实本地回归交付",
+      "description": "作为工作台用户或维护者，我需要验收契约与真实本地回归交付，以满足本阶段恢复与隐私验收。",
+      "dependsOn": [
+        "US-001",
+        "US-002",
+        "US-003",
+        "US-004",
+        "US-005",
+        "US-006",
+        "US-007",
+        "US-008",
+        "US-009",
+        "US-010",
+        "US-011",
+        "US-012",
+        "US-013",
+        "US-014"
+      ],
+      "scenarios": [
+        {
+          "id": "US-015-S1",
+          "given": "scenario 绑定不存在测试、零测试或仅空壳断言",
+          "when": "执行绑定与行为检查",
+          "then": "非零退出并指出 scenario，不可标 passes=true",
+          "sut": "validate_story",
+          "test": "scripts/ralph/test_validate_spec.py::TestSpecGate.test_us015_reject_missing_or_empty"
+        },
+        {
+          "id": "US-015-S2",
+          "given": "真实测试体调用绑定 SUT 且行为通过，随后已完成 story 出现漂移",
+          "when": "执行当前故事及最终全量门",
+          "then": "有效绑定通过，后续漂移导致最终门失败",
+          "sut": "validate_story",
+          "test": "scripts/ralph/test_validate_spec.py::TestSpecGate.test_us015_scope_and_binding"
+        }
+      ],
+      "acceptanceCriteria": [
+        "适配现有门的 Go/Bun/Python 收集与指定测试体 SUT 绑定；每轮检查当前及已完成 stories，最终全部 scenarios。",
+        "真实执行原私聊8项、模型13项及新增同任务双人/原生工具/沙箱/闲置/错误恢复/撤权检查，保留旧失败证据。",
+        "本地更新前备份合成验证数据库和配置；增量升级专用 API/realtime/bridge，交付版本、结果、回退步骤且不提交 runtime。",
+        "浏览器验证 A/B 任务通知、对方拒绝及续聊，记录既有 Devtools 鼠标遮挡边界。",
+        "绑定的真实行为测试通过，缺少或零测试不得标绿。",
+        "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
