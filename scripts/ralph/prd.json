@@ -339,7 +339,7 @@
           "given": "A 历史和记忆含随机标记，B 有独立 home",
           "when": "在 B 实际环境调用 session_search、按 A ID 加载及读文件",
           "then": "得不到 A 数据，B 本会话工具仍可用",
-          "sut": "session_search",
+          "sut": "build_launch",
           "test": "apps/acp-bridge/scripts/test_hermes_isolation.py::TestHermesIsolation.test_us010_native_tools"
         },
         {
@@ -347,7 +347,7 @@
           "given": "B 含指向 A/个人文件的符号链接及路径穿越参数",
           "when": "真实启动与子进程读取",
           "then": "启动拒绝非法路径或由 OS 拒绝文件访问，正常本会话访问成功",
-          "sut": "launch_hermes",
+          "sut": "build_launch",
           "test": "apps/acp-bridge/scripts/test_hermes_isolation.py::TestHermesIsolation.test_us010_filesystem"
         }
       ],
