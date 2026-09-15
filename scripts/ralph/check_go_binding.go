@@ -27,8 +27,30 @@ func main() {
 		if !ok || fn.Name.Name != args[1] || !strings.HasPrefix(fn.Name.Name, "Test") || fn.Body == nil {
 			continue
 		}
+		// Count invoked closures and t.Run callbacks, not merely declared helpers.
+		invoked := make(map[*ast.FuncLit]bool)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if closure, ok := call.Fun.(*ast.FuncLit); ok {
+				invoked[closure] = true
+			}
+			if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Run" {
+				for _, argument := range call.Args {
+					if closure, ok := argument.(*ast.FuncLit); ok {
+						invoked[closure] = true
+					}
+				}
+			}
+			return true
+		})
 		callsSUT, asserts := false, false
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if closure, ok := n.(*ast.FuncLit); ok && !invoked[closure] {
+				return false
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
