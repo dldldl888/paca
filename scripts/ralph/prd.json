@@ -391,8 +391,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented dd718e1; native Go tests TestUS011LoadProtocol/TestUS011LoadFailures and full bridge regression passed. Independent spec/correctness and Ponytail review passed. Native protocol capability/schema verified; whole recovery acceptance remains US013/015."
     },
     {
       "id": "US-012",
