@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -446,5 +447,214 @@ func TestCloseUnblocksAPendingCall(t *testing.T) {
 		}
 	case <-time.After(testTimeout):
 		t.Fatal("Initialize did not unblock after Close")
+	}
+}
+
+func initializeLoadClient(t *testing.T, c *Client, peer *fakePeer, result any) error {
+	t.Helper()
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Initialize(withTimeout(t)) }()
+	req := peer.next()
+	if req.Method != "initialize" {
+		t.Fatalf("method = %q, want initialize", req.Method)
+	}
+	peer.respond(req.ID, result)
+	return <-errCh
+}
+
+func assertNoMoreRequests(t *testing.T, c *Client, peer *fakePeer) {
+	t.Helper()
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for raw := range peer.lines {
+		t.Errorf("unexpected request (load must never fall back to session/new): %s", raw)
+	}
+}
+
+func TestUS011LoadProtocol(t *testing.T) {
+	for _, withModes := range []bool{false, true} {
+		t.Run(map[bool]string{false: "empty_object", true: "modes"}[withModes], func(t *testing.T) {
+			var updates []Update
+			c, peer := newTestClient(t, func(u Update) { updates = append(updates, u) })
+			if c.SupportsLoadSession() {
+				t.Fatal("load supported before initialize")
+			}
+			if err := initializeLoadClient(t, c, peer, map[string]any{
+				"protocolVersion": 1, "agentCapabilities": map[string]any{"loadSession": true},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !c.SupportsLoadSession() {
+				t.Fatal("initialize did not retain loadSession capability")
+			}
+			type result struct {
+				modes *SessionModeState
+				err   error
+			}
+			resCh := make(chan result, 1)
+			go func() {
+				modes, err := c.LoadSession(withTimeout(t), "sess-A", "/workspace")
+				resCh <- result{modes, err}
+			}()
+			req := peer.next()
+			if req.Method != "session/load" {
+				t.Fatalf("method = %q, want session/load", req.Method)
+			}
+			var params struct {
+				SessionID  string `json:"sessionId"`
+				Cwd        string `json:"cwd"`
+				MCPServers []any  `json:"mcpServers"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				t.Fatal(err)
+			}
+			if params.SessionID != "sess-A" || params.Cwd != "/workspace" || params.MCPServers == nil || len(params.MCPServers) != 0 {
+				t.Fatalf("unexpected load params: %s", req.Params)
+			}
+			for _, kind := range []string{"user_message_chunk", "agent_message_chunk"} {
+				peer.notify("session/update", map[string]any{
+					"sessionId": "sess-A", "update": map[string]any{
+						"sessionUpdate": kind, "content": map[string]any{"type": "text", "text": "history"},
+					},
+				})
+			}
+			response := map[string]any{}
+			if withModes {
+				response["modes"] = map[string]any{"currentModeId": "default", "availableModes": []map[string]any{{"id": "default", "name": "Default"}}}
+			}
+			peer.respond(req.ID, response)
+			res := <-resCh
+			if res.err != nil {
+				t.Fatal(res.err)
+			}
+			if withModes && (res.modes == nil || res.modes.CurrentModeID != "default" || !res.modes.Offers("default")) {
+				t.Fatalf("modes = %+v, want default", res.modes)
+			}
+			if !withModes && res.modes != nil {
+				t.Fatalf("empty load response modes = %+v, want nil", res.modes)
+			}
+			if len(updates) != 2 || updates[0].SessionID != "sess-A" || updates[1].SessionID != "sess-A" || updates[0].Kind != "user_message_chunk" || updates[1].Kind != "agent_message_chunk" {
+				t.Fatalf("updates before load returned = %+v, want ordered history", updates)
+			}
+			assertNoMoreRequests(t, c, peer)
+		})
+	}
+}
+
+func TestUS011LoadFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		result          any
+		initializeError bool
+	}{
+		{"uninitialized", nil, false},
+		{"capability_missing", map[string]any{"protocolVersion": 1}, false},
+		{"capability_false", map[string]any{"agentCapabilities": map[string]any{"loadSession": false}}, false},
+		{"capability_invalid", map[string]any{"agentCapabilities": map[string]any{"loadSession": "true"}}, true},
+		{"initialize_scalar", true, true},
+		{"initialize_null", json.RawMessage("null"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, peer := newTestClient(t, nil)
+			if tc.result != nil {
+				err := initializeLoadClient(t, c, peer, tc.result)
+				if (err != nil) != tc.initializeError {
+					t.Fatalf("Initialize error = %v, want error %v", err, tc.initializeError)
+				}
+			}
+			if c.SupportsLoadSession() {
+				t.Fatal("invalid/missing capability must not permit load")
+			}
+			if _, err := c.LoadSession(withTimeout(t), "sess-A", "/workspace"); err == nil {
+				t.Fatal("unsupported load succeeded")
+			}
+			assertNoMoreRequests(t, c, peer)
+		})
+	}
+	for _, tc := range []struct{ name, sessionID, cwd string }{
+		{"empty_session", "", "/workspace"}, {"blank_session", " \t", "/workspace"},
+		{"empty_cwd", "sess-A", ""}, {"relative_cwd", "sess-A", "workspace"},
+		{"nul_cwd", "sess-A", "/workspace\x00other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, peer := newTestClient(t, nil)
+			if err := initializeLoadClient(t, c, peer, map[string]any{"agentCapabilities": map[string]any{"loadSession": true}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.LoadSession(withTimeout(t), tc.sessionID, tc.cwd); err == nil {
+				t.Fatal("invalid load input succeeded")
+			}
+			assertNoMoreRequests(t, c, peer)
+		})
+	}
+	for _, tc := range []struct {
+		name   string
+		result any
+	}{
+		{"null", nil}, {"scalar", "bad"}, {"array", []any{}},
+		{"malformed_modes", map[string]any{"modes": true}},
+		{"malformed_mode_id", map[string]any{"modes": map[string]any{"currentModeId": 42}}},
+		{"rpc_error", nil}, {"missing_result", nil}, {"malformed_json", nil}, {"timeout", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, peer := newTestClient(t, nil)
+			if err := initializeLoadClient(t, c, peer, map[string]any{"agentCapabilities": map[string]any{"loadSession": true}}); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			errCh := make(chan error, 1)
+			go func() { _, err := c.LoadSession(ctx, "sess-A", "/workspace"); errCh <- err }()
+			req := peer.next()
+			if req.Method != "session/load" {
+				t.Fatalf("method = %q, want session/load", req.Method)
+			}
+			switch tc.name {
+			case "rpc_error":
+				peer.write(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": &RPCError{Code: -32001, Message: "session missing"}})
+			case "missing_result":
+				peer.write(map[string]any{"jsonrpc": "2.0", "id": req.ID})
+			case "malformed_json":
+				if _, err := peer.w.Write([]byte("{\"jsonrpc\":\"2.0\",\"id\":" + string(req.ID) + ",\"result\":{\n")); err != nil {
+					t.Fatal(err)
+				}
+			case "timeout":
+			default:
+				peer.respond(req.ID, tc.result)
+			}
+			err := <-errCh
+			if err == nil {
+				t.Fatal("invalid load response succeeded")
+			}
+			if (tc.name == "timeout" || tc.name == "malformed_json") && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("error = %v, want deadline exceeded", err)
+			}
+			if tc.name == "rpc_error" {
+				var rpcErr *RPCError
+				if !errors.As(err, &rpcErr) || rpcErr.Code != -32001 {
+					t.Fatalf("error = %v, want original RPC error", err)
+				}
+			}
+			assertNoMoreRequests(t, c, peer)
+		})
+	}
+}
+
+func TestUS011AliveTracksPeerExit(t *testing.T) {
+	c, peer := newTestClient(t, nil)
+	if !c.Alive() {
+		t.Fatal("new connection is not alive")
+	}
+	if err := peer.w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.closed:
+	case <-time.After(testTimeout):
+		t.Fatal("connection did not observe peer exit")
+	}
+	if c.Alive() {
+		t.Fatal("connection is alive after peer exit")
 	}
 }

@@ -33,6 +33,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -178,8 +180,9 @@ type Client struct {
 	wait func() error
 	kill func()
 
-	writeMu sync.Mutex
-	nextID  atomic.Int64
+	writeMu             sync.Mutex
+	nextID              atomic.Int64
+	supportsLoadSession atomic.Bool
 
 	mu      sync.Mutex
 	pending map[int64]chan inMessage
@@ -254,7 +257,7 @@ func Spawn(command []string, workspace string, onUpdate func(Update), log *slog.
 }
 
 // Initialize performs the ACP handshake. Must be called exactly once,
-// before NewSession.
+// before NewSession or LoadSession.
 func (c *Client) Initialize(ctx context.Context) error {
 	params := map[string]any{
 		"protocolVersion": protocolVersion,
@@ -267,11 +270,70 @@ func (c *Client) Initialize(ctx context.Context) error {
 			"terminal": false,
 		},
 	}
-	_, err := c.call(ctx, "initialize", params)
+	raw, err := c.call(ctx, "initialize", params)
 	if err != nil {
 		return fmt.Errorf("acpclient: initialize: %w", err)
 	}
+	var result *struct {
+		AgentCapabilities struct {
+			LoadSession bool `json:"loadSession"`
+		} `json:"agentCapabilities"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("acpclient: initialize: decoding result: %w", err)
+	}
+	if result == nil {
+		return fmt.Errorf("acpclient: initialize: expected result object")
+	}
+	c.supportsLoadSession.Store(result.AgentCapabilities.LoadSession)
 	return nil
+}
+
+// SupportsLoadSession reports the capability advertised during Initialize.
+func (c *Client) SupportsLoadSession() bool {
+	return c.supportsLoadSession.Load()
+}
+
+// LoadSession restores an existing session. History updates are delivered to
+// onUpdate before this returns; callers decide how to handle that replay.
+func (c *Client) LoadSession(ctx context.Context, sessionID, cwd string) (*SessionModeState, error) {
+	if !c.SupportsLoadSession() {
+		return nil, fmt.Errorf("acpclient: session/load: agent did not advertise loadSession")
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("acpclient: session/load: empty sessionId")
+	}
+	if !filepath.IsAbs(cwd) || strings.ContainsRune(cwd, 0) {
+		return nil, fmt.Errorf("acpclient: session/load: cwd must be an absolute path without NUL")
+	}
+	raw, err := c.call(ctx, "session/load", map[string]any{
+		"sessionId":  sessionID,
+		"cwd":        cwd,
+		"mcpServers": []any{},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("acpclient: session/load: %w", err)
+	}
+	var result *struct {
+		Modes *SessionModeState `json:"modes,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("acpclient: session/load: decoding result: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("acpclient: session/load: expected result object")
+	}
+	return result.Modes, nil
+}
+
+// Alive reports whether the connection's read loop is still open.
+func (c *Client) Alive() bool {
+	select {
+	case <-c.closed:
+		return false
+	default:
+		return true
+	}
 }
 
 // NewSession opens a new ACP session rooted at cwd (must be absolute) and
