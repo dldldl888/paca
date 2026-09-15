@@ -18,8 +18,17 @@ function visit(node, prefix = []) {
       let called = false, asserted = false;
       function inspect(part) {
         if (ts.isFunctionDeclaration(part)) return;
-        if ((ts.isArrowFunction(part) || ts.isFunctionExpression(part)) &&
-            !(ts.isCallExpression(part.parent) && part.parent.expression === part)) return;
+        if (ts.isArrowFunction(part) || ts.isFunctionExpression(part)) {
+          let expression = part;
+          while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+          let invocation = expression.parent;
+          let runs = ts.isCallExpression(invocation) && invocation.expression === expression;
+          if (ts.isCallExpression(invocation) && callName(invocation.expression) === 'expect') {
+            while (ts.isPropertyAccessExpression(invocation.parent)) invocation = invocation.parent;
+            runs ||= ['toThrow', 'toThrowError'].includes(callName(invocation)) && ts.isCallExpression(invocation.parent);
+          }
+          if (!runs) return;
+        }
         if (ts.isCallExpression(part)) {
           called ||= callName(part.expression) === sut;
           asserted ||= callName(part.expression) === 'expect';

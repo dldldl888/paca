@@ -73,6 +73,10 @@ class TestSpecGate(unittest.TestCase):
         story["scenarios"] = [{"id": "bun", "sut": "target", "test": str(bound.relative_to(root)) + "::group bound"}]
         bound.write_text('import {describe,test,expect} from "bun:test"; function target(){return 1;} describe("group",()=>{ test("bound",()=>{expect(target()).toBe(1);}); });\n')
         self.assertEqual(validate_story(root, story), ["bun"])
+        for body in ('expect(() => target()).toThrow();', '(() => { expect(target()).toBe(1); })()'):
+            target = 'throw new Error("expected");' if 'toThrow' in body else 'return 1;'
+            bound.write_text('import {describe,test,expect} from "bun:test"; function target(){' + target + '} describe("group",()=>{ test("bound",()=>{' + body + '}); });\n')
+            self.assertEqual(validate_story(root, story), ["bun"])
         bound.write_text('import {describe,test,expect} from "bun:test"; function target(){throw new Error("executed");} describe("group",()=>{ test("bound",()=>{function unused(){expect(target()).toBe(1);} }); });\n')
         with self.assertRaises(SpecError):
             validate_story(root, story)
