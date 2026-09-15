@@ -77,6 +77,18 @@ export const PROJECT_KNOWN_PERMISSIONS = [
 		descriptionKey: "roles.permissions.tasksWrite.description",
 		domain: "tasks",
 	},
+	{
+		key: "tasks.read_all",
+		labelKey: "roles.permissions.tasksReadAll.label",
+		descriptionKey: "roles.permissions.tasksReadAll.description",
+		domain: "tasks",
+	},
+	{
+		key: "tasks.manage",
+		labelKey: "roles.permissions.tasksManage.label",
+		descriptionKey: "roles.permissions.tasksManage.description",
+		domain: "tasks",
+	},
 	// sprints
 	{
 		key: "sprints.read",

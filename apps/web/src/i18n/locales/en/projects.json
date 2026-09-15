@@ -704,11 +704,19 @@
 			},
 			"tasksRead": {
 				"label": "View Tasks",
-				"description": "Browse and read tasks in the project"
+				"description": "Read assigned or self-created tasks"
 			},
 			"tasksWrite": {
 				"label": "Edit Tasks",
-				"description": "Create, update, and move tasks"
+				"description": "Update assigned task status and progress"
+			},
+			"tasksReadAll": {
+				"label": "View All Tasks",
+				"description": "Read all project tasks; also requires View Tasks"
+			},
+			"tasksManage": {
+				"label": "Manage Tasks",
+				"description": "Create, reassign, edit requirements, and delete project tasks; also requires Edit Tasks"
 			},
 			"sprintsRead": {
 				"label": "View Sprints",

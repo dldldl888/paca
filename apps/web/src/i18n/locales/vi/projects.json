@@ -704,11 +704,19 @@
 			},
 			"tasksRead": {
 				"label": "Xem nhiệm vụ",
-				"description": "Duyệt và đọc nhiệm vụ trong dự án"
+				"description": "Đọc công việc được giao hoặc do bạn tạo"
 			},
 			"tasksWrite": {
 				"label": "Sửa nhiệm vụ",
-				"description": "Tạo, cập nhật và di chuyển nhiệm vụ"
+				"description": "Cập nhật trạng thái và tiến độ công việc được giao"
+			},
+			"tasksReadAll": {
+				"label": "Xem mọi công việc",
+				"description": "Đọc mọi công việc trong dự án; cũng cần quyền Xem công việc"
+			},
+			"tasksManage": {
+				"label": "Quản lý công việc",
+				"description": "Tạo, giao lại, sửa yêu cầu và xóa công việc; cũng cần quyền Sửa công việc"
 			},
 			"sprintsRead": {
 				"label": "Xem sprint",

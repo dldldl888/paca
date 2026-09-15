@@ -704,11 +704,19 @@
 			},
 			"tasksRead": {
 				"label": "タスクの閲覧",
-				"description": "プロジェクト内のタスクを閲覧します"
+				"description": "自分に割り当てられたタスクや自分が作成したタスクを表示"
 			},
 			"tasksWrite": {
 				"label": "タスクの編集",
-				"description": "タスクの作成・更新・移動を行います"
+				"description": "担当タスクの状態と進捗を更新"
+			},
+			"tasksReadAll": {
+				"label": "すべてのタスクを表示",
+				"description": "プロジェクトの全タスクを表示。「タスクを表示」権限も必要"
+			},
+			"tasksManage": {
+				"label": "タスクを管理",
+				"description": "タスクの作成、再割り当て、要件編集、削除。「タスクを編集」権限も必要"
 			},
 			"sprintsRead": {
 				"label": "スプリントの閲覧",

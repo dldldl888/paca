@@ -704,11 +704,19 @@
 			},
 			"tasksRead": {
 				"label": "查看任务",
-				"description": "浏览并读取项目中的任务"
+				"description": "查看分配给自己或由自己创建的任务"
 			},
 			"tasksWrite": {
 				"label": "编辑任务",
-				"description": "创建、更新和移动任务"
+				"description": "更新自己负责的任务状态和进展"
+			},
+			"tasksReadAll": {
+				"label": "查看全部任务",
+				"description": "查看项目内全部任务；同时需要“查看任务”权限"
+			},
+			"tasksManage": {
+				"label": "管理任务",
+				"description": "创建、改派、修改要求和删除项目任务；同时需要“编辑任务”权限"
 			},
 			"sprintsRead": {
 				"label": "查看冲刺",

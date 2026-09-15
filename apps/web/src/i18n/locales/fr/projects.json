@@ -704,11 +704,19 @@
 			},
 			"tasksRead": {
 				"label": "Voir les tâches",
-				"description": "Parcourir et lire les tâches du projet"
+				"description": "Lire les tâches attribuées ou créées par vous"
 			},
 			"tasksWrite": {
 				"label": "Modifier les tâches",
-				"description": "Créer, mettre à jour et déplacer des tâches"
+				"description": "Mettre à jour le statut et la progression des tâches attribuées"
+			},
+			"tasksReadAll": {
+				"label": "Voir toutes les tâches",
+				"description": "Lire toutes les tâches du projet ; nécessite aussi Voir les tâches"
+			},
+			"tasksManage": {
+				"label": "Gérer les tâches",
+				"description": "Créer, réattribuer, modifier les exigences et supprimer les tâches ; nécessite aussi Modifier les tâches"
 			},
 			"sprintsRead": {
 				"label": "Voir les sprints",

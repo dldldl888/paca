@@ -704,11 +704,19 @@
 			},
 			"tasksRead": {
 				"label": "Ver tareas",
-				"description": "Explorar y leer las tareas del proyecto"
+				"description": "Leer tareas asignadas o creadas por ti"
 			},
 			"tasksWrite": {
 				"label": "Editar tareas",
-				"description": "Crear, actualizar y mover tareas"
+				"description": "Actualizar el estado y progreso de las tareas asignadas"
+			},
+			"tasksReadAll": {
+				"label": "Ver todas las tareas",
+				"description": "Leer todas las tareas del proyecto; también requiere Ver tareas"
+			},
+			"tasksManage": {
+				"label": "Gestionar tareas",
+				"description": "Crear, reasignar, editar requisitos y eliminar tareas; también requiere Editar tareas"
 			},
 			"sprintsRead": {
 				"label": "Ver sprints",
