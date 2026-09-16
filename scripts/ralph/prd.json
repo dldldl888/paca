@@ -19,15 +19,15 @@
           "when": "升级数据库后读取旧任务",
           "then": "创建者保持 NULL，任务及负责人完整",
           "sut": "FindTaskByID",
-          "test": "services/api/internal/repository/postgres/task_repository_test.go::TestUS001CreatorMigration"
+          "test": "services/api/test/e2e/task_access_test.go::TestUS001CreatorMigration"
         },
         {
           "id": "US-001-S2",
           "given": "员工有 read/write，经理有 tasks.*",
           "when": "查询新增权限",
           "then": "员工无 read_all/manage，经理权限仅在授权范围生效",
-          "sut": "HasPermissions",
-          "test": "services/api/internal/platform/authz/authorizer_test.go::TestUS001Capabilities"
+          "sut": "ResolveTaskAccess",
+          "test": "services/api/internal/platform/authz/task_access_test.go::TestUS002LiveTaskPolicyScopeAndPermissions"
         }
       ],
       "acceptanceCriteria": [
