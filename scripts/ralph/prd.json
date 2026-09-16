@@ -160,7 +160,7 @@
           "when": "读取和修改相关内容",
           "then": "无受限正文或元数据，写入失败且无副作用",
           "sut": "ListActivities",
-          "test": "services/api/internal/service/task/activity_service_test.go::TestUS005RelatedContent"
+          "test": "services/api/test/e2e/task_attachment_annotation_access_test.go::TestTaskBoundAnnotationSQLVisibility"
         },
         {
           "id": "US-005-S2",
@@ -168,7 +168,7 @@
           "when": "列出或修改父子/依赖关系",
           "then": "不泄露 Y 的标识标题，不通过关系取得访问权",
           "sut": "ListTaskLinks",
-          "test": "services/api/internal/service/task/task_link_service_test.go::TestUS005TaskLinks"
+          "test": "services/api/test/e2e/task_related_access_test.go::TestUS005RelatedTaskBoundaries"
         }
       ],
       "acceptanceCriteria": [
@@ -196,7 +196,7 @@
           "when": "请求列表、签名和内容",
           "then": "不返回文件名、正文、storage key 或下载 URL",
           "sut": "GetDownloadURL",
-          "test": "services/api/internal/service/attachment/service_test.go::TestUS006AttachmentReads"
+          "test": "services/api/test/e2e/task_attachment_annotation_access_test.go::TestTaskUploadBindingAndCurrentAccess"
         },
         {
           "id": "US-006-S2",
@@ -204,7 +204,7 @@
           "when": "伪造上传完成并删除附件",
           "then": "无关联新增/删除及其他副作用",
           "sut": "CompleteUpload",
-          "test": "services/api/internal/service/attachment/service_test.go::TestUS006AttachmentWrites"
+          "test": "services/api/test/e2e/task_attachment_annotation_access_test.go::TestTaskUploadBindingAndCurrentAccess"
         }
       ],
       "acceptanceCriteria": [
