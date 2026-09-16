@@ -11,14 +11,20 @@ import (
 
 // ListTaskLinks returns all links for a task, computing display labels.
 func (s *Service) ListTaskLinks(ctx context.Context, projectID, taskID uuid.UUID) ([]*taskdom.TaskLink, error) {
-	task, err := s.repo.FindTaskByID(ctx, taskID)
+	if _, err := s.CheckTaskAccess(ctx, projectID, taskID, taskdom.AccessRead); err != nil {
+		return nil, err
+	}
+	scope, err := s.scope(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	if task.ProjectID != projectID {
+	repo, ok := s.repo.(interface {
+		ListTaskLinksVisible(context.Context, uuid.UUID, taskdom.AccessScope) ([]*taskdom.TaskLink, error)
+	})
+	if !ok {
 		return nil, taskdom.ErrTaskNotFound
 	}
-	return s.repo.ListTaskLinks(ctx, taskID)
+	return repo.ListTaskLinksVisible(ctx, taskID, scope)
 }
 
 // CreateTaskLink validates and persists a new directed link.
@@ -28,6 +34,9 @@ func (s *Service) CreateTaskLink(ctx context.Context, in taskdom.CreateTaskLinkI
 	}
 	if !taskdom.ValidLinkTypes[in.LinkType] {
 		return nil, taskdom.ErrTaskLinkTypeInvalid
+	}
+	if _, err := s.CheckTaskAccess(ctx, in.ProjectID, in.SourceTaskID, taskdom.AccessManage); err != nil {
+		return nil, err
 	}
 
 	source, err := s.repo.FindTaskByID(ctx, in.SourceTaskID)
@@ -44,6 +53,9 @@ func (s *Service) CreateTaskLink(ctx context.Context, in taskdom.CreateTaskLinkI
 	}
 	if target.ProjectID != in.ProjectID {
 		return nil, taskdom.ErrTaskLinkCrossProject
+	}
+	if _, err := s.CheckTaskAccess(ctx, in.ProjectID, in.TargetTaskID, taskdom.AccessManage); err != nil {
+		return nil, err
 	}
 
 	link := &taskdom.TaskLink{
@@ -91,6 +103,12 @@ func (s *Service) DeleteTaskLink(ctx context.Context, projectID, taskID, linkID 
 	}
 	if task.ProjectID != projectID {
 		return taskdom.ErrTaskLinkNotFound
+	}
+	if _, err := s.CheckTaskAccess(ctx, projectID, link.SourceTaskID, taskdom.AccessManage); err != nil {
+		return err
+	}
+	if _, err := s.CheckTaskAccess(ctx, projectID, link.TargetTaskID, taskdom.AccessManage); err != nil {
+		return err
 	}
 	return s.repo.DeleteTaskLink(ctx, linkID)
 }

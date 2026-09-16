@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
 	sprintdom "github.com/Paca-AI/api/internal/domain/sprint"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 )
 
 // --- sqlx models ------------------------------------------------------------
@@ -283,4 +285,23 @@ func toTaskPositionEntity(r *viewTaskPositionRecord) *sprintdom.ViewTaskPosition
 		Position: r.Position,
 		GroupKey: r.GroupKey,
 	}
+}
+
+// ListTaskPositionsVisible filters task IDs and group keys before materialization.
+func (r *ViewRepository) ListTaskPositionsVisible(ctx context.Context, viewID uuid.UUID, scope taskdom.AccessScope) ([]*sprintdom.ViewTaskPosition, error) {
+	b := &queryBuilder{idx: 2, args: []any{viewID.String()}}
+	applyTaskVisibility(b, []taskdom.AccessScope{scope})
+	q := `SELECT p.id,p.view_id,p.task_id,p.position,p.group_key FROM view_task_positions p
+ JOIN tasks ON tasks.id=p.task_id AND tasks.deleted_at IS NULL
+ JOIN sprint_views v ON v.id=p.view_id AND v.project_id=tasks.project_id
+ WHERE p.view_id=$1 AND ` + strings.Join(b.whereClauses, " AND ") + ` ORDER BY p.position ASC`
+	var records []viewTaskPositionRecord
+	if err := r.db.SelectContext(ctx, &records, q, b.args...); err != nil {
+		return nil, err
+	}
+	out := make([]*sprintdom.ViewTaskPosition, 0, len(records))
+	for i := range records {
+		out = append(out, toTaskPositionEntity(&records[i]))
+	}
+	return out, nil
 }

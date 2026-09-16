@@ -19,12 +19,18 @@ type Service struct {
 	repo      sprintdom.SprintRepository
 	taskRepo  taskdom.TaskRepository
 	publisher *messaging.Publisher
+	access    taskdom.AccessChecker
 }
 
 // New returns a configured sprint service. publisher may be nil; real-time
 // events are then skipped silently.
 func New(repo sprintdom.SprintRepository, taskRepo taskdom.TaskRepository, publisher *messaging.Publisher) *Service {
 	return &Service{repo: repo, taskRepo: taskRepo, publisher: publisher}
+}
+
+func (s *Service) WithTaskAccessChecker(checker taskdom.AccessChecker) *Service {
+	s.access = checker
+	return s
 }
 
 // publish sends a real-time pub/sub notification for a sprint change.
@@ -192,7 +198,24 @@ func (s *Service) DeleteSprint(ctx context.Context, projectID, id uuid.UUID) err
 	if sp.ProjectID != projectID {
 		return sprintdom.ErrSprintNotFound
 	}
-	if err := s.repo.DeleteSprint(ctx, id); err != nil {
+	policy, ok := s.access.(taskdom.AccessPolicy)
+	if !ok {
+		return taskdom.ErrTaskForbidden
+	}
+	scope, err := policy.ResolveTaskAccess(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if scope.ProjectID != projectID || !scope.ReadAll || !scope.CanCreate() {
+		return taskdom.ErrTaskForbidden
+	}
+	repo, ok := s.repo.(interface {
+		DeleteSprintAuthorized(context.Context, uuid.UUID, uuid.UUID) error
+	})
+	if !ok {
+		return taskdom.ErrTaskForbidden
+	}
+	if err := repo.DeleteSprintAuthorized(ctx, projectID, id); err != nil {
 		return err
 	}
 	s.publish(ctx, events.TopicSprintDeleted, map[string]any{
@@ -204,7 +227,7 @@ func (s *Service) DeleteSprint(ctx context.Context, projectID, id uuid.UUID) err
 }
 
 // CompleteSprint bulk-moves all non-done tasks out of the sprint and marks
-// the sprint as completed in two sequential writes.  Tasks whose status
+// the sprint as completed in one authorized transaction. Tasks whose status
 // has category "done" are left in place.  Verifies the sprint belongs to projectID.
 func (s *Service) CompleteSprint(ctx context.Context, projectID, id uuid.UUID, in sprintdom.CompleteSprintInput) (*sprintdom.Sprint, error) {
 	sp, err := s.repo.FindSprintByID(ctx, id)
@@ -226,16 +249,33 @@ func (s *Service) CompleteSprint(ctx context.Context, projectID, id uuid.UUID, i
 			return nil, sprintdom.ErrSprintNotFound
 		}
 	}
-
-	// Move non-done tasks first so a subsequent failure leaves the sprint
-	// in its original state (retrying the complete is then still possible).
-	if err := s.taskRepo.BulkMoveSprintTasks(ctx, sp.ProjectID, id, in.MoveToSprintID); err != nil {
+	if s.access == nil {
+		return nil, taskdom.ErrTaskForbidden
+	}
+	lister, ok := s.taskRepo.(interface {
+		ListOpenTaskIDsInSprint(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error)
+	})
+	if !ok {
+		return nil, taskdom.ErrTaskForbidden
+	}
+	ids, err := lister.ListOpenTaskIDsInSprint(ctx, projectID, id)
+	if err != nil {
 		return nil, err
 	}
+	for _, taskID := range ids {
+		if _, err := s.access.CheckTaskAccess(ctx, projectID, taskID, taskdom.AccessManage); err != nil {
+			return nil, err
+		}
+	}
 
-	sp.Status = sprintdom.SprintStatusCompleted
-	sp.UpdatedAt = time.Now()
-	if err := s.repo.UpdateSprint(ctx, sp); err != nil {
+	repo, ok := s.repo.(interface {
+		CompleteSprintAuthorized(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, []uuid.UUID) (*sprintdom.Sprint, error)
+	})
+	if !ok {
+		return nil, taskdom.ErrTaskForbidden
+	}
+	sp, err = repo.CompleteSprintAuthorized(ctx, projectID, id, in.MoveToSprintID, ids)
+	if err != nil {
 		return nil, err
 	}
 	s.publish(ctx, events.TopicSprintCompleted, map[string]any{

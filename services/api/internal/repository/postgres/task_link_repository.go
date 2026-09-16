@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,7 +55,15 @@ func NewTaskLinkRepository(db *sqlx.DB) *TaskLinkRepository {
 
 // ListTaskLinks returns all links where taskID is either source or target.
 func (r *TaskLinkRepository) ListTaskLinks(ctx context.Context, taskID uuid.UUID) ([]*taskdom.TaskLink, error) {
-	const q = `
+	return r.listTaskLinks(ctx, taskID, nil)
+}
+
+func (r *TaskLinkRepository) ListTaskLinksVisible(ctx context.Context, taskID uuid.UUID, scope taskdom.AccessScope) ([]*taskdom.TaskLink, error) {
+	return r.listTaskLinks(ctx, taskID, &scope)
+}
+
+func (r *TaskLinkRepository) listTaskLinks(ctx context.Context, taskID uuid.UUID, scope *taskdom.AccessScope) ([]*taskdom.TaskLink, error) {
+	q := `
 		SELECT
 		    tl.id,
 		    tl.source_task_id,
@@ -62,23 +71,32 @@ func (r *TaskLinkRepository) ListTaskLinks(ctx context.Context, taskID uuid.UUID
 		    tl.link_type,
 		    tl.created_by,
 		    tl.created_at,
-		    linked.id           AS linked_task_id,
-		    linked.task_number  AS linked_task_number,
-		    linked.title        AS linked_task_title,
-		    linked.status_id    AS linked_task_status_id,
-		    linked.task_type_id AS linked_task_type_id,
+		    tasks.id           AS linked_task_id,
+		    tasks.task_number  AS linked_task_number,
+		    tasks.title        AS linked_task_title,
+		    tasks.status_id    AS linked_task_status_id,
+		    tasks.task_type_id AS linked_task_type_id,
 		    CASE WHEN tl.source_task_id = $1 THEN 'source' ELSE 'target' END AS perspective
 		FROM task_links tl
-		JOIN tasks linked ON linked.id = CASE
+		JOIN tasks ON tasks.id = CASE
 		    WHEN tl.source_task_id = $1 THEN tl.target_task_id
 		    ELSE tl.source_task_id
 		END
 		WHERE (tl.source_task_id = $1 OR tl.target_task_id = $1)
-		  AND linked.deleted_at IS NULL
-		ORDER BY tl.created_at ASC`
+		  AND tasks.deleted_at IS NULL
+		`
 
+	args := []any{taskID.String()}
+	if scope != nil {
+		b := &queryBuilder{idx: 2, args: args}
+		applyTaskVisibility(b, []taskdom.AccessScope{*scope})
+		predicate := strings.Join(b.whereClauses, " AND ")
+		q += " AND (" + predicate + ") AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id=$1 AND tasks.deleted_at IS NULL AND (" + predicate + "))"
+		args = b.args
+	}
+	q += " ORDER BY tl.created_at ASC"
 	var rows []taskLinkWithTaskRow
-	if err := r.db.SelectContext(ctx, &rows, q, taskID.String()); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, q, args...); err != nil {
 		return nil, err
 	}
 

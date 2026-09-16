@@ -417,7 +417,7 @@ func TestE2ETaskLinkManagement_Authorization(t *testing.T) {
 
 	var linkID string
 
-	t.Run("read_user_can_list_links", func(t *testing.T) {
+	t.Run("unrelated_read_user_cannot_list_links", func(t *testing.T) {
 		// First create a link with write user
 		body := jsonBody(t, map[string]any{
 			"target_task_id": taskID2,
@@ -436,21 +436,15 @@ func TestE2ETaskLinkManagement_Authorization(t *testing.T) {
 		data := assertDataMap(t, env2)
 		linkID, _ = data["id"].(string)
 
-		// Now read user should be able to list links
+		// The unassigned reader must not learn the task or link exists.
 		req = mustRequest(env.ctx, t, http.MethodGet,
 			fmt.Sprintf("%s/api/v1/projects/%s/tasks/%s/links", env.base, projID, taskID1), nil)
 		req.Header.Set("Authorization", "Bearer "+readToken)
 		resp = mustDo(t, readClient, req)
 		defer func() { _ = resp.Body.Close() }()
-		assertStatus(t, resp, http.StatusOK)
-
-		var env3 envelope
-		decodeJSON(t, resp, &env3)
-		data2 := assertDataMap(t, env3)
-		items, _ := data2["items"].([]any)
-		if len(items) < 1 {
-			t.Errorf("expected at least 1 link, got %d", len(items))
-		}
+		// The task is owned by writeUser and readUser is not assigned, so
+		// object-scoped task authorization returns not-found.
+		assertStatus(t, resp, http.StatusNotFound)
 	})
 
 	t.Run("readonly_user_cannot_create_link", func(t *testing.T) {

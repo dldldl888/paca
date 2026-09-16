@@ -485,8 +485,9 @@ func (r *fakeTaskRepo) BulkMoveSprintTasks(_ context.Context, projectID, sourceS
 // ---------------------------------------------------------------------------
 
 type fakeSprintRepoIT struct {
-	mu      sync.RWMutex
-	sprints map[uuid.UUID]*sprintdom.Sprint
+	taskRepo *fakeTaskRepo
+	mu       sync.RWMutex
+	sprints  map[uuid.UUID]*sprintdom.Sprint
 }
 
 func newFakeSprintRepoIT() *fakeSprintRepoIT {
@@ -733,10 +734,11 @@ func buildTaskTestRouterWithSprints(taskRepo *fakeTaskRepo, sprintRepo *fakeSpri
 	projectRepo := newFakeProjectRepo()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
 	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
-	sprintService := sprintsvc.New(sprintRepo, taskRepo, nil)
-	viewService := sprintsvc.NewViewService(viewRepo, sprintRepo, taskRepo, nil)
+	sprintRepo.taskRepo = taskRepo
+	sprintService := sprintsvc.New(sprintRepo, taskRepo, nil).WithTaskAccessChecker(taskService)
+	viewService := sprintsvc.NewViewService(viewRepo, sprintRepo, taskRepo, nil).WithTaskAccessChecker(taskService)
 	activityRepo := newFakeTaskActivityRepo()
-	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, &fakeActivityMemberRepo{}, nil)
+	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, &fakeActivityMemberRepo{}, nil).WithTaskAccessChecker(taskService)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	return router.New(router.Deps{
@@ -1304,7 +1306,7 @@ func TestIntegrationSprints_CRUD(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionSprintsRead, authz.PermissionSprintsWrite},
+			projectID: {authz.PermissionSprintsRead, authz.PermissionSprintsWrite, authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouter(taskRepo, store)
@@ -2969,7 +2971,7 @@ func TestIntegrationCompleteSprint_MovesToBacklog(t *testing.T) {
 	projectID := uuid.New()
 	store := &projectPermStore{
 		projectPerms: map[uuid.UUID][]authz.Permission{
-			projectID: {authz.PermissionSprintsWrite, authz.PermissionTasksWrite},
+			projectID: {authz.PermissionSprintsWrite, authz.PermissionTasksAll},
 		},
 	}
 	r := buildTaskTestRouterWithSprints(taskRepo, sprintRepo, newFakeViewRepoIT(), store)
@@ -4151,4 +4153,40 @@ func (r *fakeTaskRepo) DeleteTaskAuthorized(ctx context.Context, projectID, id u
 		return err
 	}
 	return r.DeleteTask(ctx, id)
+}
+
+func (r *fakeTaskActivityRepo) ListActivitiesVisible(ctx context.Context, id uuid.UUID, _ taskdom.AccessScope) ([]*taskdom.Activity, error) {
+	return r.ListActivities(ctx, id)
+}
+func (r *fakeTaskRepo) ListOpenTaskIDsInSprint(_ context.Context, pid, sid uuid.UUID) ([]uuid.UUID, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var ids []uuid.UUID
+	for id, t := range r.tasks {
+		if t.ProjectID == pid && t.DeletedAt == nil && t.SprintID != nil && *t.SprintID == sid {
+			if t.StatusID == nil || r.statuses[*t.StatusID] == nil || r.statuses[*t.StatusID].Category != taskdom.StatusCategoryDone {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
+}
+func (r *fakeSprintRepoIT) CompleteSprintAuthorized(ctx context.Context, pid, id uuid.UUID, target *uuid.UUID, ids []uuid.UUID) (*sprintdom.Sprint, error) {
+	if r.taskRepo == nil {
+		return nil, taskdom.ErrTaskForbidden
+	}
+	r.taskRepo.mu.Lock()
+	for _, tid := range ids {
+		r.taskRepo.tasks[tid].SprintID = target
+	}
+	r.taskRepo.mu.Unlock()
+	sp, err := r.FindSprintByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	sp.Status = sprintdom.SprintStatusCompleted
+	return sp, r.UpdateSprint(ctx, sp)
+}
+func (r *fakeSprintRepoIT) DeleteSprintAuthorized(ctx context.Context, pid, id uuid.UUID) error {
+	return r.DeleteSprint(ctx, id)
 }

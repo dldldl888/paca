@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
+	sprintdom "github.com/Paca-AI/api/internal/domain/sprint"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
 )
@@ -171,6 +172,44 @@ func (b *queryBuilder) placeholder() string {
 	return p
 }
 
+// lockTaskTypeForMutation serializes reference creation/deletion with the legacy
+// cross-project guard. Include soft-deleted tasks: FK actions still affect them.
+func lockTaskTypeForMutation(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) error {
+	var projectID uuid.UUID
+	if err := tx.GetContext(ctx, &projectID, `SELECT project_id FROM task_types WHERE id=$1 FOR UPDATE`, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return taskdom.ErrTypeNotFound
+		}
+		return err
+	}
+	var foreign bool
+	if err := tx.GetContext(ctx, &foreign, `SELECT EXISTS(SELECT 1 FROM tasks WHERE task_type_id=$1 AND project_id<>$2)`, id, projectID); err != nil {
+		return err
+	}
+	if foreign {
+		return taskdom.ErrTaskForbidden
+	}
+	return nil
+}
+
+func lockTaskStatusForMutation(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) error {
+	var projectID uuid.UUID
+	if err := tx.GetContext(ctx, &projectID, `SELECT project_id FROM task_statuses WHERE id=$1 FOR UPDATE`, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return taskdom.ErrStatusNotFound
+		}
+		return err
+	}
+	var foreign bool
+	if err := tx.GetContext(ctx, &foreign, `SELECT EXISTS(SELECT 1 FROM tasks WHERE status_id=$1 AND project_id<>$2)`, id, projectID); err != nil {
+		return err
+	}
+	if foreign {
+		return taskdom.ErrTaskForbidden
+	}
+	return nil
+}
+
 // --- Task Types -------------------------------------------------------------
 
 const taskTypeCols = `id, project_id, name, icon, color, description, is_default, is_system, created_at, updated_at`
@@ -217,23 +256,33 @@ func (r *TaskRepository) CreateTaskType(ctx context.Context, t *taskdom.TaskType
 
 // UpdateTaskType persists changes to an existing task type.
 func (r *TaskRepository) UpdateTaskType(ctx context.Context, t *taskdom.TaskType) error {
-	_, err := r.db.ExecContext(ctx, `
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		if err := lockTaskTypeForMutation(ctx, tx, t.ID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
 		UPDATE task_types SET name=$1, icon=$2, color=$3, description=$4, updated_at=$5 WHERE id=$6`,
-		t.Name, t.Icon, t.Color, t.Description, t.UpdatedAt, t.ID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("task type repo: update: %w", err)
-	}
-	return nil
+			t.Name, t.Icon, t.Color, t.Description, t.UpdatedAt, t.ID.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("task type repo: update: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteTaskType removes a task type by ID.
 func (r *TaskRepository) DeleteTaskType(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM task_types WHERE id = $1`, id.String())
-	if err != nil {
-		return fmt.Errorf("task type repo: delete: %w", err)
-	}
-	return nil
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		if err := lockTaskTypeForMutation(ctx, tx, id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM task_types WHERE id = $1`, id.String())
+		if err != nil {
+			return fmt.Errorf("task type repo: delete: %w", err)
+		}
+		return nil
+	})
 }
 
 // SetDefaultTaskType atomically marks typeID as the project's default task type,
@@ -315,23 +364,33 @@ func (r *TaskRepository) CreateTaskStatus(ctx context.Context, s *taskdom.TaskSt
 
 // UpdateTaskStatus persists changes to an existing task status.
 func (r *TaskRepository) UpdateTaskStatus(ctx context.Context, s *taskdom.TaskStatus) error {
-	_, err := r.db.ExecContext(ctx, `
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		if err := lockTaskStatusForMutation(ctx, tx, s.ID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
 		UPDATE task_statuses SET name=$1, color=$2, category=$3, position=$4, updated_at=$5 WHERE id=$6`,
-		s.Name, s.Color, string(s.Category), s.Position, s.UpdatedAt, s.ID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("task status repo: update: %w", err)
-	}
-	return nil
+			s.Name, s.Color, string(s.Category), s.Position, s.UpdatedAt, s.ID.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("task status repo: update: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteTaskStatus removes a task status by ID.
 func (r *TaskRepository) DeleteTaskStatus(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM task_statuses WHERE id = $1`, id.String())
-	if err != nil {
-		return fmt.Errorf("task status repo: delete: %w", err)
-	}
-	return nil
+	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		if err := lockTaskStatusForMutation(ctx, tx, id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM task_statuses WHERE id = $1`, id.String())
+		if err != nil {
+			return fmt.Errorf("task status repo: delete: %w", err)
+		}
+		return nil
+	})
 }
 
 // SetDefaultTaskStatus marks statusID as the project's default task status,
@@ -1253,7 +1312,37 @@ func (r *TaskRepository) CreateTask(ctx context.Context, t *taskdom.Task) error 
 	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error { return createTaskTx(ctx, tx, t) })
 }
 
+// lockTaskReferences checks the project of every persisted configuration ID.
+// SHARE keeps category/project interpretation stable through the task write and
+// conflicts with configuration mutation guards; nil references remain allowed.
+func lockTaskReferences(ctx context.Context, tx *sqlx.Tx, t *taskdom.Task) error {
+	for _, ref := range []struct {
+		id      *uuid.UUID
+		query   string
+		missing error
+	}{
+		{t.TaskTypeID, `SELECT id FROM task_types WHERE id=$1 AND project_id=$2 FOR SHARE`, taskdom.ErrTypeNotFound},
+		{t.StatusID, `SELECT id FROM task_statuses WHERE id=$1 AND project_id=$2 FOR SHARE`, taskdom.ErrStatusNotFound},
+		{t.SprintID, `SELECT id FROM sprints WHERE id=$1 AND project_id=$2 FOR SHARE`, sprintdom.ErrSprintNotFound},
+	} {
+		if ref.id == nil {
+			continue
+		}
+		var id uuid.UUID
+		if err := tx.GetContext(ctx, &id, ref.query, *ref.id, t.ProjectID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ref.missing
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 func createTaskTx(ctx context.Context, tx *sqlx.Tx, t *taskdom.Task) error {
+	if err := lockTaskReferences(ctx, tx, t); err != nil {
+		return err
+	}
 	cf, err := json.Marshal(t.CustomFields)
 	if err != nil {
 		return fmt.Errorf("task repo: marshal custom_fields: %w", err)
@@ -1308,6 +1397,9 @@ func (r *TaskRepository) UpdateTask(ctx context.Context, t *taskdom.Task) error 
 }
 
 func updateTaskTx(ctx context.Context, tx *sqlx.Tx, t *taskdom.Task, syncAssignees bool) error {
+	if err := lockTaskReferences(ctx, tx, t); err != nil {
+		return err
+	}
 	cf, err := json.Marshal(t.CustomFields)
 	if err != nil {
 		return fmt.Errorf("task repo: marshal custom_fields: %w", err)
@@ -1492,6 +1584,19 @@ func (r *TaskRepository) BulkMoveSprintTasks(ctx context.Context, projectID, sou
 		return fmt.Errorf("task repo: bulk move sprint tasks: %w", err)
 	}
 	return nil
+}
+
+// ListOpenTaskIDsInSprint returns the current non-done task set for bounded
+// bulk operations. Callers must authorize every returned ID before mutation.
+func (r *TaskRepository) ListOpenTaskIDsInSprint(ctx context.Context, projectID, sprintID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.SelectContext(ctx, &ids, `
+		SELECT t.id FROM tasks t
+		WHERE t.project_id=$1 AND t.sprint_id=$2 AND t.deleted_at IS NULL
+		  AND (t.status_id IS NULL OR t.status_id NOT IN (
+		    SELECT id FROM task_statuses WHERE project_id=$1 AND category=$3
+		  ))`, projectID.String(), sprintID.String(), string(taskdom.StatusCategoryDone))
+	return ids, err
 }
 
 // --- Entity converters ------------------------------------------------------
@@ -1961,10 +2066,13 @@ func (r *TaskRepository) UpdateTaskProgress(ctx context.Context, t *taskdom.Task
 		if err != nil {
 			return err
 		}
+		current.StatusID = t.StatusID
+		if err := lockTaskReferences(ctx, tx, current); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE tasks SET status_id=$1,updated_at=$2 WHERE id=$3 AND project_id=$4`, uuidPtrToStrPtr(t.StatusID), t.UpdatedAt, t.ID, t.ProjectID); err != nil {
 			return err
 		}
-		current.StatusID = t.StatusID
 		current.UpdatedAt = t.UpdatedAt
 		*t = *current
 		return nil

@@ -49,6 +49,17 @@ func (s *Service) ListTaskTypes(ctx context.Context, projectID uuid.UUID) ([]*ta
 	return s.repo.ListTaskTypes(ctx, projectID)
 }
 
+func (s *Service) requireProjectManage(ctx context.Context, projectID uuid.UUID) error {
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if scope.UserID == uuid.Nil || !scope.ReadAll || !scope.Write || !scope.Manage || scope.TaskIDs != nil {
+		return taskdom.ErrTaskForbidden
+	}
+	return nil
+}
+
 // GetTaskType returns the task type with the given ID.
 func (s *Service) GetTaskType(ctx context.Context, id uuid.UUID) (*taskdom.TaskType, error) {
 	return s.repo.FindTaskTypeByID(ctx, id)
@@ -56,6 +67,9 @@ func (s *Service) GetTaskType(ctx context.Context, id uuid.UUID) (*taskdom.TaskT
 
 // CreateTaskType creates a new task type for the given project.
 func (s *Service) CreateTaskType(ctx context.Context, in taskdom.CreateTaskTypeInput) (*taskdom.TaskType, error) {
+	if err := s.requireProjectManage(ctx, in.ProjectID); err != nil {
+		return nil, err
+	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		return nil, taskdom.ErrTypeNameInvalid
@@ -84,6 +98,9 @@ func (s *Service) CreateTaskType(ctx context.Context, in taskdom.CreateTaskTypeI
 
 // UpdateTaskType updates the mutable fields of an existing task type.
 func (s *Service) UpdateTaskType(ctx context.Context, projectID, id uuid.UUID, in taskdom.UpdateTaskTypeInput) (*taskdom.TaskType, error) {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return nil, err
+	}
 	t, err := s.repo.FindTaskTypeByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -117,6 +134,9 @@ func (s *Service) UpdateTaskType(ctx context.Context, projectID, id uuid.UUID, i
 
 // DeleteTaskType removes a task type by ID.
 func (s *Service) DeleteTaskType(ctx context.Context, projectID, id uuid.UUID) error {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return err
+	}
 	t, err := s.repo.FindTaskTypeByID(ctx, id)
 	if err != nil {
 		return err
@@ -133,6 +153,9 @@ func (s *Service) DeleteTaskType(ctx context.Context, projectID, id uuid.UUID) e
 // SetDefaultTaskType marks typeID as the project's default task type,
 // clearing the flag on all other types in the same project.
 func (s *Service) SetDefaultTaskType(ctx context.Context, projectID, typeID uuid.UUID) (*taskdom.TaskType, error) {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return nil, err
+	}
 	if err := s.repo.SetDefaultTaskType(ctx, projectID, typeID); err != nil {
 		return nil, err
 	}
@@ -153,6 +176,9 @@ func (s *Service) GetTaskStatus(ctx context.Context, id uuid.UUID) (*taskdom.Tas
 
 // CreateTaskStatus creates a new task status for the given project.
 func (s *Service) CreateTaskStatus(ctx context.Context, in taskdom.CreateTaskStatusInput) (*taskdom.TaskStatus, error) {
+	if err := s.requireProjectManage(ctx, in.ProjectID); err != nil {
+		return nil, err
+	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		return nil, taskdom.ErrStatusNameInvalid
@@ -181,6 +207,9 @@ func (s *Service) CreateTaskStatus(ctx context.Context, in taskdom.CreateTaskSta
 
 // UpdateTaskStatus updates the mutable fields of an existing task status.
 func (s *Service) UpdateTaskStatus(ctx context.Context, projectID, id uuid.UUID, in taskdom.UpdateTaskStatusInput) (*taskdom.TaskStatus, error) {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return nil, err
+	}
 	st, err := s.repo.FindTaskStatusByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -214,6 +243,9 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, projectID, id uuid.UUID,
 
 // DeleteTaskStatus removes a task status by ID.
 func (s *Service) DeleteTaskStatus(ctx context.Context, projectID, id uuid.UUID) error {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return err
+	}
 	st, err := s.repo.FindTaskStatusByID(ctx, id)
 	if err != nil {
 		return err
@@ -236,6 +268,9 @@ func (s *Service) DeleteTaskStatus(ctx context.Context, projectID, id uuid.UUID)
 // SetDefaultTaskStatus marks statusID as the project's default task status,
 // returning the updated status.
 func (s *Service) SetDefaultTaskStatus(ctx context.Context, projectID, statusID uuid.UUID) (*taskdom.TaskStatus, error) {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return nil, err
+	}
 	if err := s.repo.SetDefaultTaskStatus(ctx, projectID, statusID); err != nil {
 		return nil, err
 	}
@@ -245,6 +280,9 @@ func (s *Service) SetDefaultTaskStatus(ctx context.Context, projectID, statusID 
 // ReorderTaskStatuses persists a new display order for the project's task
 // statuses, assigning position = index in statusIDs to each status.
 func (s *Service) ReorderTaskStatuses(ctx context.Context, projectID uuid.UUID, statusIDs []uuid.UUID) error {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return err
+	}
 	if len(statusIDs) == 0 {
 		return taskdom.ErrStatusReorderInvalid
 	}
@@ -295,7 +333,29 @@ func (s *Service) ListTasks(ctx context.Context, projectID uuid.UUID, filter tas
 	if pageSize < 1 {
 		pageSize = 20
 	}
-	return s.repo.ListTasks(ctx, projectID, filter, pageSize, sort)
+	tasks, more, err := s.repo.ListTasks(ctx, projectID, filter, pageSize, sort)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, t := range tasks {
+		s.redactParent(ctx, projectID, t)
+	}
+	return tasks, more, nil
+}
+
+func (s *Service) redactParent(ctx context.Context, projectID uuid.UUID, t *taskdom.Task) {
+	if t == nil || t.ParentTaskID == nil || s.access == nil {
+		return
+	}
+	scope, err := s.scope(ctx, projectID)
+	if err != nil {
+		t.ParentTaskID = nil
+		return
+	}
+	parent, err := s.repo.FindTaskByID(ctx, *t.ParentTaskID)
+	if err != nil || scope.Require(parent, taskdom.AccessRead) != nil {
+		t.ParentTaskID = nil
+	}
 }
 
 // CountTasks returns the number of tasks in a project matching the given filter.
@@ -343,7 +403,14 @@ func (s *Service) ListAssignedTasksInProjects(ctx context.Context, projectIDs []
 			memberIDs = append(memberIDs, scope.MemberID)
 		}
 	}
-	return s.repo.ListAssignedTasks(ctx, memberIDs, scopes, limit, cursorAfter)
+	tasks, more, err := s.repo.ListAssignedTasks(ctx, memberIDs, scopes, limit, cursorAfter)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, t := range tasks {
+		s.redactParent(ctx, t.ProjectID, t)
+	}
+	return tasks, more, nil
 }
 
 // GetTask returns the task with the given ID, verifying it belongs to projectID.
@@ -364,6 +431,7 @@ func (s *Service) GetTaskByNumber(ctx context.Context, projectID uuid.UUID, task
 	if err := scope.Require(t, taskdom.AccessRead); err != nil {
 		return nil, err
 	}
+	s.redactParent(ctx, projectID, t)
 	return t, nil
 }
 
@@ -383,6 +451,9 @@ func (s *Service) CreateTask(ctx context.Context, in taskdom.CreateTaskInput) (*
 	}
 
 	if in.ParentTaskID != nil {
+		if _, err := s.CheckTaskAccess(ctx, in.ProjectID, *in.ParentTaskID, taskdom.AccessRead); err != nil {
+			return nil, err
+		}
 		isEpic, err := s.isEpicTaskType(ctx, in.TaskTypeID)
 		if err != nil {
 			return nil, err
@@ -471,6 +542,7 @@ func (s *Service) UpdateTask(ctx context.Context, projectID, id uuid.UUID, in ta
 	}
 	if action == taskdom.AccessProgress {
 		if in.StatusID == nil {
+			s.redactParent(ctx, projectID, t)
 			return t, nil
 		}
 		t.StatusID = *in.StatusID
@@ -478,6 +550,7 @@ func (s *Service) UpdateTask(ctx context.Context, projectID, id uuid.UUID, in ta
 		if err := s.repo.UpdateTaskProgress(ctx, t, scope); err != nil {
 			return nil, err
 		}
+		s.redactParent(ctx, projectID, t)
 		return t, nil
 	}
 
@@ -492,6 +565,11 @@ func (s *Service) UpdateTask(ctx context.Context, projectID, id uuid.UUID, in ta
 	}
 	// Validate parent constraints using the post-update effective values.
 	if effectiveParentID != nil {
+		if in.ParentTaskID != nil {
+			if _, err := s.CheckTaskAccess(ctx, projectID, *effectiveParentID, taskdom.AccessRead); err != nil {
+				return nil, err
+			}
+		}
 		if *effectiveParentID == t.ID {
 			return nil, taskdom.ErrTaskCannotBeOwnParent
 		}
@@ -512,6 +590,7 @@ func (s *Service) UpdateTask(ctx context.Context, projectID, id uuid.UUID, in ta
 	if err := s.repo.UpdateTaskFields(ctx, t, in, scope); err != nil {
 		return nil, err
 	}
+	s.redactParent(ctx, projectID, t)
 	return t, nil
 }
 
@@ -553,6 +632,9 @@ func (s *Service) GetCustomFieldDefinition(ctx context.Context, projectID, id uu
 
 // CreateCustomFieldDefinition creates a new custom field definition.
 func (s *Service) CreateCustomFieldDefinition(ctx context.Context, in taskdom.CreateCustomFieldDefinitionInput) (*taskdom.CustomFieldDefinition, error) {
+	if err := s.requireProjectManage(ctx, in.ProjectID); err != nil {
+		return nil, err
+	}
 	fieldKey := strings.TrimSpace(in.FieldKey)
 	if fieldKey == "" {
 		return nil, taskdom.ErrCustomFieldKeyInvalid
@@ -592,6 +674,9 @@ func (s *Service) CreateCustomFieldDefinition(ctx context.Context, in taskdom.Cr
 // UpdateCustomFieldDefinition updates the mutable fields of a custom field
 // definition. The field_key is immutable after creation.
 func (s *Service) UpdateCustomFieldDefinition(ctx context.Context, projectID, id uuid.UUID, in taskdom.UpdateCustomFieldDefinitionInput) (*taskdom.CustomFieldDefinition, error) {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return nil, err
+	}
 	f, err := s.repo.FindCustomFieldDefinitionByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -626,6 +711,9 @@ func (s *Service) UpdateCustomFieldDefinition(ctx context.Context, projectID, id
 // DeleteCustomFieldDefinition removes a custom field definition by ID,
 // verifying it belongs to projectID.
 func (s *Service) DeleteCustomFieldDefinition(ctx context.Context, projectID, id uuid.UUID) error {
+	if err := s.requireProjectManage(ctx, projectID); err != nil {
+		return err
+	}
 	f, err := s.repo.FindCustomFieldDefinitionByID(ctx, id)
 	if err != nil {
 		return err
@@ -679,5 +767,11 @@ func (s *Service) CheckTaskAccess(ctx context.Context, projectID, taskID uuid.UU
 	if err := scope.Require(t, action); err != nil {
 		return nil, err
 	}
+	s.redactParent(ctx, projectID, t)
 	return t, nil
+}
+
+// ResolveTaskAccess exposes the same live policy to related SQL queries.
+func (s *Service) ResolveTaskAccess(ctx context.Context, projectID uuid.UUID) (taskdom.AccessScope, error) {
+	return s.scope(ctx, projectID)
 }

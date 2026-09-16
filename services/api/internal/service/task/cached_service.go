@@ -366,3 +366,12 @@ func (c *CachedService) CheckTaskAccess(ctx context.Context, projectID, taskID u
 	}
 	return checker.CheckTaskAccess(ctx, projectID, taskID, action)
 }
+
+// ResolveTaskAccess bypasses metadata caching, just like CheckTaskAccess.
+func (c *CachedService) ResolveTaskAccess(ctx context.Context, projectID uuid.UUID) (taskdom.AccessScope, error) {
+	policy, ok := c.svc.(taskdom.AccessPolicy)
+	if !ok {
+		return taskdom.AccessScope{}, taskdom.ErrTaskNotFound
+	}
+	return policy.ResolveTaskAccess(ctx, projectID)
+}

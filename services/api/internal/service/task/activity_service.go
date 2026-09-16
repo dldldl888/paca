@@ -48,6 +48,26 @@ type ActivitySvc struct {
 	publisher       *messaging.Publisher
 	notificationSvc notificationdom.Service
 	agentTrigger    agentCommentTrigger
+	access          taskdom.AccessChecker
+}
+
+// WithTaskAccessChecker enables current task visibility checks for user-facing
+// activity/comment operations. System RecordActivity intentionally remains
+// available to trusted internal callers.
+func (s *ActivitySvc) WithTaskAccessChecker(checker taskdom.AccessChecker) *ActivitySvc {
+	s.access = checker
+	return s
+}
+
+func (s *ActivitySvc) requireTask(ctx context.Context, projectID, taskID uuid.UUID, action taskdom.AccessAction, notFoundErr error) error {
+	if err := s.taskInProject(ctx, projectID, taskID, notFoundErr); err != nil {
+		return err
+	}
+	if s.access == nil {
+		return taskdom.ErrTaskNotFound
+	}
+	_, err := s.access.CheckTaskAccess(ctx, projectID, taskID, action)
+	return err
 }
 
 // NewActivityService creates a new ActivitySvc backed by repo.
@@ -119,10 +139,24 @@ func (s *ActivitySvc) RecordActivity(ctx context.Context, in taskdom.RecordActiv
 
 // ListActivities returns all non-deleted activities for a task, oldest first.
 func (s *ActivitySvc) ListActivities(ctx context.Context, projectID, taskID uuid.UUID) ([]*taskdom.Activity, error) {
-	if err := s.taskInProject(ctx, projectID, taskID, taskdom.ErrTaskNotFound); err != nil {
+	if err := s.requireTask(ctx, projectID, taskID, taskdom.AccessRead, taskdom.ErrTaskNotFound); err != nil {
 		return nil, err
 	}
-	return s.repo.ListActivities(ctx, taskID)
+	policy, ok := s.access.(taskdom.AccessPolicy)
+	if !ok {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	scope, err := policy.ResolveTaskAccess(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	repo, ok := s.repo.(interface {
+		ListActivitiesVisible(context.Context, uuid.UUID, taskdom.AccessScope) ([]*taskdom.Activity, error)
+	})
+	if !ok {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	return repo.ListActivitiesVisible(ctx, taskID, scope)
 }
 
 // AddComment creates a user comment on the task.
@@ -130,7 +164,7 @@ func (s *ActivitySvc) AddComment(ctx context.Context, in taskdom.AddCommentInput
 	if isContentEmpty(in.Content) || !isContentTypeValid(in.Content) {
 		return nil, taskdom.ErrCommentContentInvalid
 	}
-	if err := s.taskInProject(ctx, in.ProjectID, in.TaskID, taskdom.ErrTaskNotFound); err != nil {
+	if err := s.requireTask(ctx, in.ProjectID, in.TaskID, taskdom.AccessProgress, taskdom.ErrTaskNotFound); err != nil {
 		return nil, err
 	}
 	member, err := s.memberRepo.FindMemberByActor(ctx, in.ProjectID, in.ActorID, in.AgentID)
@@ -237,7 +271,7 @@ func (s *ActivitySvc) UpdateComment(ctx context.Context, id uuid.UUID, projectID
 	if a.ActivityType != taskdom.ActivityTypeComment {
 		return nil, taskdom.ErrActivityNotAComment
 	}
-	if err := s.taskInProject(ctx, projectID, a.TaskID, taskdom.ErrActivityNotFound); err != nil {
+	if err := s.requireTask(ctx, projectID, a.TaskID, taskdom.AccessProgress, taskdom.ErrActivityNotFound); err != nil {
 		return nil, err
 	}
 	member, err := s.memberRepo.FindMemberByActor(ctx, projectID, actorID, agentID)
@@ -265,7 +299,7 @@ func (s *ActivitySvc) DeleteComment(ctx context.Context, id uuid.UUID, projectID
 	if a.ActivityType != taskdom.ActivityTypeComment {
 		return taskdom.ErrActivityNotAComment
 	}
-	if err := s.taskInProject(ctx, projectID, a.TaskID, taskdom.ErrActivityNotFound); err != nil {
+	if err := s.requireTask(ctx, projectID, a.TaskID, taskdom.AccessProgress, taskdom.ErrActivityNotFound); err != nil {
 		return err
 	}
 	// Resolve caller's actor UUID to their member UUID for ownership comparison.

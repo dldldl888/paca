@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -147,4 +148,40 @@ func (r *TaskActivityRepository) DeleteActivity(ctx context.Context, id uuid.UUI
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE task_activities SET deleted_at = $1 WHERE id = $2`, time.Now(), id.String())
 	return err
+}
+
+// ListActivitiesVisible keeps automatic related-task payloads behind current
+// target visibility. Human comments are not parsed or rewritten.
+func (r *TaskActivityRepository) ListActivitiesVisible(ctx context.Context, taskID uuid.UUID, scope taskdom.AccessScope) ([]*taskdom.Activity, error) {
+	b := &queryBuilder{idx: 2, args: []any{taskID.String()}}
+	applyTaskVisibility(b, []taskdom.AccessScope{scope})
+	visible := strings.Join(b.whereClauses, " AND ")
+	q := taskActivityJoinSQL + `
+ WHERE ta.task_id=$1 AND ta.deleted_at IS NULL
+ AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id=ta.task_id AND tasks.deleted_at IS NULL AND ` + visible + `)
+ AND (ta.activity_type <> 'task.link.added' OR (jsonb_typeof(ta.content->'target_task_id')='string' AND ta.content->>'target_task_id' <> ''))
+ AND (ta.activity_type <> 'task.updated' OR jsonb_typeof(ta.content->'changes')='array')
+ AND NOT EXISTS (
+  SELECT 1 FROM (
+   SELECT ta.content->>'target_task_id' AS id WHERE ta.activity_type='task.link.added'
+   UNION ALL
+   SELECT ta.content->>'parent_task_id' WHERE ta.activity_type='automation.applied'
+   UNION ALL
+   SELECT refs.value #>> '{}' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ta.content->'changes')='array' THEN ta.content->'changes' ELSE '[]'::jsonb END) change
+   CROSS JOIN LATERAL (VALUES (change->'old'),(change->'new')) refs(value)
+   WHERE ta.activity_type='task.updated' AND change->>'field' IN ('parent_task','parent_task_id')
+  ) related
+  WHERE related.id IS NOT NULL AND related.id <> '' AND NOT EXISTS (
+   SELECT 1 FROM tasks WHERE tasks.id::text=related.id AND tasks.deleted_at IS NULL AND ` + visible + `
+  )
+ ) ORDER BY ta.created_at ASC`
+	var records []taskActivityRecord
+	if err := r.db.SelectContext(ctx, &records, q, b.args...); err != nil {
+		return nil, err
+	}
+	out := make([]*taskdom.Activity, 0, len(records))
+	for _, rec := range records {
+		out = append(out, activityFromRecord(rec))
+	}
+	return out, nil
 }

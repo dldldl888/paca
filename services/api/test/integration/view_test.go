@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	sprintdom "github.com/Paca-AI/api/internal/domain/sprint"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 	authsvc "github.com/Paca-AI/api/internal/service/auth"
@@ -192,9 +193,10 @@ func buildViewTestRouter(viewRepo *fakeViewRepoIT, sprintRepo *fakeSprintRepoIT,
 	taskRepo := newFakeTaskRepoIT()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
 	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
-	sprintService := sprintsvc.New(sprintRepo, taskRepo, nil)
-	viewService := sprintsvc.NewViewService(viewRepo, sprintRepo, taskRepo, nil)
-	activityService := tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)
+	sprintRepo.taskRepo = taskRepo
+	sprintService := sprintsvc.New(sprintRepo, taskRepo, nil).WithTaskAccessChecker(taskService)
+	viewService := sprintsvc.NewViewService(viewRepo, sprintRepo, taskRepo, nil).WithTaskAccessChecker(taskService)
+	activityService := tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil).WithTaskAccessChecker(taskService)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	return router.New(router.Deps{
@@ -1777,4 +1779,11 @@ func TestIntegrationViews_UpdateConfig_PageSize(t *testing.T) {
 	if initialPageSize, _ := getCfg["initial_page_size"].(float64); initialPageSize != 10 {
 		t.Errorf("after GET, initial_page_size: want 10, got %v", getCfg["initial_page_size"])
 	}
+}
+
+func (r *fakeViewRepoIT) ListTaskPositionsVisible(ctx context.Context, id uuid.UUID, scope taskdom.AccessScope) ([]*sprintdom.ViewTaskPosition, error) {
+	if !scope.ReadAll {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	return r.ListTaskPositions(ctx, id)
 }

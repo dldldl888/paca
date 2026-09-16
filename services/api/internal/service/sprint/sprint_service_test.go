@@ -20,8 +20,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type fakeSprintRepo struct {
-	mu      sync.RWMutex
-	sprints map[uuid.UUID]*sprintdom.Sprint
+	taskRepo *fakeTaskRepo
+	mu       sync.RWMutex
+	sprints  map[uuid.UUID]*sprintdom.Sprint
 }
 
 func newFakeSprintRepo() *fakeSprintRepo {
@@ -86,6 +87,12 @@ type fakeTaskRepo struct {
 	mu       sync.RWMutex
 	tasks    map[uuid.UUID]*taskdom.Task
 	statuses map[uuid.UUID]*taskdom.TaskStatus
+}
+
+type allowTaskAccess struct{}
+
+func (allowTaskAccess) CheckTaskAccess(_ context.Context, projectID, taskID uuid.UUID, _ taskdom.AccessAction) (*taskdom.Task, error) {
+	return &taskdom.Task{ID: taskID, ProjectID: projectID}, nil
 }
 
 func newFakeTaskRepo() *fakeTaskRepo {
@@ -218,6 +225,20 @@ func (r *fakeTaskRepo) BulkMoveSprintTasks(_ context.Context, projectID, sourceS
 		t.SprintID = targetSprintID
 	}
 	return nil
+}
+
+func (r *fakeTaskRepo) ListOpenTaskIDsInSprint(_ context.Context, projectID, sprintID uuid.UUID) ([]uuid.UUID, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var ids []uuid.UUID
+	for id, t := range r.tasks {
+		if t.ProjectID == projectID && t.DeletedAt == nil && t.SprintID != nil && *t.SprintID == sprintID {
+			if t.StatusID == nil || r.statuses[*t.StatusID] == nil || r.statuses[*t.StatusID].Category != taskdom.StatusCategoryDone {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +435,7 @@ func TestUpdateSprint_ExplicitNullClearsGoal(t *testing.T) {
 
 func TestDeleteSprint_OK(t *testing.T) {
 	ctx := context.Background()
-	svc := sprintsvc.New(newFakeSprintRepo(), newFakeTaskRepo(), nil)
+	svc := sprintsvc.New(newFakeSprintRepo(), newFakeTaskRepo(), nil).WithTaskAccessChecker(allowTaskAccess{})
 
 	sp, _ := svc.CreateSprint(ctx, sprintdom.CreateSprintInput{
 		ProjectID: uuid.New(),
@@ -516,7 +537,9 @@ func TestListSprints_ReturnsProjectSprints(t *testing.T) {
 func TestCompleteSprint_MovesToBacklog(t *testing.T) {
 	ctx := context.Background()
 	taskRepo := newFakeTaskRepo()
-	svc := sprintsvc.New(newFakeSprintRepo(), taskRepo, nil)
+	repo := newFakeSprintRepo()
+	repo.taskRepo = taskRepo
+	svc := sprintsvc.New(repo, taskRepo, nil).WithTaskAccessChecker(allowTaskAccess{})
 	projectID := uuid.New()
 
 	sp, _ := svc.CreateSprint(ctx, sprintdom.CreateSprintInput{
@@ -559,7 +582,8 @@ func TestCompleteSprint_MovesToOtherSprint(t *testing.T) {
 	ctx := context.Background()
 	taskRepo := newFakeTaskRepo()
 	repo := newFakeSprintRepo()
-	svc := sprintsvc.New(repo, taskRepo, nil)
+	repo.taskRepo = taskRepo
+	svc := sprintsvc.New(repo, taskRepo, nil).WithTaskAccessChecker(allowTaskAccess{})
 	projectID := uuid.New()
 
 	source, _ := svc.CreateSprint(ctx, sprintdom.CreateSprintInput{
@@ -597,7 +621,9 @@ func TestCompleteSprint_MovesToOtherSprint(t *testing.T) {
 func TestCompleteSprint_SkipsDoneTasks(t *testing.T) {
 	ctx := context.Background()
 	taskRepo := newFakeTaskRepo()
-	svc := sprintsvc.New(newFakeSprintRepo(), taskRepo, nil)
+	repo := newFakeSprintRepo()
+	repo.taskRepo = taskRepo
+	svc := sprintsvc.New(repo, taskRepo, nil).WithTaskAccessChecker(allowTaskAccess{})
 	projectID := uuid.New()
 
 	sp, _ := svc.CreateSprint(ctx, sprintdom.CreateSprintInput{
@@ -723,4 +749,35 @@ func (*fakeTaskRepo) UpdateTaskFields(context.Context, *taskdom.Task, taskdom.Up
 }
 func (*fakeTaskRepo) DeleteTaskAuthorized(context.Context, uuid.UUID, uuid.UUID, taskdom.AccessScope) error {
 	return taskdom.ErrTaskForbidden
+}
+
+func (allowTaskAccess) ResolveTaskAccess(_ context.Context, pid uuid.UUID) (taskdom.AccessScope, error) {
+	return taskdom.AccessScope{ProjectID: pid, UserID: uuid.New(), ReadAll: true, Write: true, Manage: true}, nil
+}
+func (r *fakeSprintRepo) CompleteSprintAuthorized(ctx context.Context, pid, id uuid.UUID, target *uuid.UUID, ids []uuid.UUID) (*sprintdom.Sprint, error) {
+	if r.taskRepo == nil {
+		return nil, taskdom.ErrTaskForbidden
+	}
+	r.taskRepo.mu.Lock()
+	for _, tid := range ids {
+		task := r.taskRepo.tasks[tid]
+		if task == nil || task.ProjectID != pid {
+			r.taskRepo.mu.Unlock()
+			return nil, taskdom.ErrTaskNotFound
+		}
+	}
+	for _, tid := range ids {
+		r.taskRepo.tasks[tid].SprintID = target
+	}
+	r.taskRepo.mu.Unlock()
+	sp, err := r.FindSprintByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	sp.Status = sprintdom.SprintStatusCompleted
+	return sp, r.UpdateSprint(ctx, sp)
+}
+
+func (r *fakeSprintRepo) DeleteSprintAuthorized(ctx context.Context, pid, id uuid.UUID) error {
+	return r.DeleteSprint(ctx, id)
 }

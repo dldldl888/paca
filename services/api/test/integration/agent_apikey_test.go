@@ -62,15 +62,15 @@ func buildAgentKeyRouterWithBotID(taskRepo *fakeTaskRepo, apiKeyRepo *fakeAPIKey
 	projectRepo := newFakeProjectRepo()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
 	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
-	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil)
-	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil)
+	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil).WithTaskAccessChecker(taskService)
+	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil).WithTaskAccessChecker(taskService)
 	var activityRepo *fakeTaskActivityRepo
 	if len(activityRepos) > 0 && activityRepos[0] != nil {
 		activityRepo = activityRepos[0]
 	} else {
 		activityRepo = newFakeTaskActivityRepo()
 	}
-	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, &fakeActivityMemberRepo{}, nil)
+	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, &fakeActivityMemberRepo{}, nil).WithTaskAccessChecker(taskService)
 
 	apiKeyService := apikeysvc.New(apiKeyRepo).WithAgentKey(testAgentAPIKey, botUserID)
 	// None of these task/comment-focused tests exercise the X-Actor-User-ID
@@ -289,7 +289,7 @@ func TestAgentAPIKey_CreateTask_NoPermission_Returns403(t *testing.T) {
 // Agent Task Comment Tests
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_AddComment_Success(t *testing.T) {
+func TestAgentAPIKey_AddComment_UnboundDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	activityRepo := newFakeTaskActivityRepo()
 	apiKeyRepo := newFakeAPIKeyRepo()
@@ -337,32 +337,16 @@ func TestAgentAPIKey_AddComment_Success(t *testing.T) {
 		},
 	}))
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unbound agent comment expected 404, got %d: %s", w.Code, w.Body.String())
 	}
-
-	// Verify response
-	var env struct {
-		Data struct {
-			ActivityType string `json:"activity_type"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	if env.Data.ActivityType != "comment" {
-		t.Errorf("expected activity_type 'comment', got %q", env.Data.ActivityType)
+	if len(activityRepo.activities) != 0 {
+		t.Fatal("denied comment persisted")
 	}
 }
 
-// TestAgentAPIKey_AddComment_MissingAgentID_ReturnsClearError covers the
-// regression from GitHub issue #269: a request authenticated with the shared
-// agent API key but no X-Agent-ID header resolves to the system/agent-bot
-// identity (userdom.SystemActorUserID), which is never itself a project
-// member. Before the fix this surfaced a confusing 404
-// PROJECT_MEMBER_NOT_FOUND; it should now return a clear, actionable 400.
-func TestAgentAPIKey_AddComment_MissingAgentID_ReturnsClearError(t *testing.T) {
+// A shared key without a bound task delegation cannot post comments.
+func TestAgentAPIKey_AddComment_MissingAgentID_Denied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	activityRepo := newFakeTaskActivityRepo()
 	apiKeyRepo := newFakeAPIKeyRepo()
@@ -399,8 +383,8 @@ func TestAgentAPIKey_AddComment_MissingAgentID_ReturnsClearError(t *testing.T) {
 		},
 	}))
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var env struct {
@@ -409,12 +393,12 @@ func TestAgentAPIKey_AddComment_MissingAgentID_ReturnsClearError(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if env.ErrorCode != "ACTIVITY_COMMENT_ACTOR_UNIDENTIFIED" {
-		t.Errorf("expected error_code=ACTIVITY_COMMENT_ACTOR_UNIDENTIFIED, got %q", env.ErrorCode)
+	if env.ErrorCode != "TASK_NOT_FOUND" {
+		t.Errorf("expected error_code=TASK_NOT_FOUND, got %q", env.ErrorCode)
 	}
 }
 
-func TestAgentAPIKey_UpdateComment_Success(t *testing.T) {
+func TestAgentAPIKey_UpdateComment_UnboundDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	activityRepo := newFakeTaskActivityRepo()
 	apiKeyRepo := newFakeAPIKeyRepo()
@@ -475,8 +459,11 @@ func TestAgentAPIKey_UpdateComment_Success(t *testing.T) {
 		},
 	}))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+	if string(activityRepo.activities[commentID].Content) != string(commentContent) {
+		t.Fatal("denied edit persisted")
 	}
 }
 
@@ -731,7 +718,7 @@ func TestAgentAPIKey_DeleteTask_UnboundAgentDenied(t *testing.T) {
 // Agent Comments Complex Scenarios
 // ---------------------------------------------------------------------------
 
-func TestAgentAPIKey_CommentWorkflow(t *testing.T) {
+func TestAgentAPIKey_CommentWorkflow_UnboundDenied(t *testing.T) {
 	taskRepo := newFakeTaskRepoIT()
 	apiKeyRepo := newFakeAPIKeyRepo()
 	projectID := uuid.New()
@@ -774,63 +761,13 @@ func TestAgentAPIKey_CommentWorkflow(t *testing.T) {
 			},
 		},
 	}))
-	if commentW.Code != http.StatusCreated {
-		t.Fatalf("add comment: expected 201, got %d: %s", commentW.Code, commentW.Body.String())
+	if commentW.Code != http.StatusNotFound {
+		t.Fatalf("unbound add expected 404, got %d", commentW.Code)
 	}
-
-	var commentEnv struct {
-		Data struct {
-			ID           string `json:"id"`
-			ActivityType string `json:"activity_type"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(commentW.Body.Bytes(), &commentEnv); err != nil {
-		t.Fatalf("decode comment response: %v", err)
-	}
-
-	commentID := commentEnv.Data.ID
-	if commentEnv.Data.ActivityType != "comment" {
-		t.Errorf("expected activity_type 'comment', got %q", commentEnv.Data.ActivityType)
-	}
-
-	// Step 3: Agent updates the comment
-	updateCommentURL := fmt.Sprintf("/api/v1/projects/%s/tasks/%s/activities/comments/%s", projectID, taskID, commentID)
-	updateW := serve(r, agentKeyAuthReq(t.Context(), http.MethodPatch, updateCommentURL, agentID, map[string]any{
-		"content": []map[string]any{
-			{
-				"type":    "paragraph",
-				"content": []map[string]any{{"type": "text", "text": "Updated status: completed"}},
-			},
-		},
-	}))
-	if updateW.Code != http.StatusOK {
-		t.Fatalf("update comment: expected 200, got %d: %s", updateW.Code, updateW.Body.String())
-	}
-
-	// Step 4: Agent lists activities for the task
 	activitiesURL := fmt.Sprintf("/api/v1/projects/%s/tasks/%s/activities", projectID, taskID)
 	listW := serve(r, agentKeyAuthReq(t.Context(), http.MethodGet, activitiesURL, agentID, nil))
-	if listW.Code != http.StatusOK {
-		t.Fatalf("list activities: expected 200, got %d: %s", listW.Code, listW.Body.String())
-	}
-
-	var listEnv struct {
-		Data struct {
-			Items []map[string]any `json:"items"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(listW.Body.Bytes(), &listEnv); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-
-	// Should have 1 activity: the comment (task creation activity is not persisted in tests because Valkey is mocked)
-	if len(listEnv.Data.Items) != 1 {
-		t.Errorf("expected 1 activity, got %d", len(listEnv.Data.Items))
-	} else {
-		actType, _ := listEnv.Data.Items[0]["activity_type"].(string)
-		if actType != "comment" {
-			t.Errorf("expected activity type 'comment', got %q", actType)
-		}
+	if listW.Code != http.StatusNotFound {
+		t.Fatalf("unbound activity read expected 404, got %d", listW.Code)
 	}
 }
 
@@ -1151,10 +1088,10 @@ func buildAgentMCPKeyRouter(taskRepo *fakeTaskRepo, apiKeyRepo *fakeAPIKeyRepo, 
 	projectRepo := newFakeProjectRepo()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
 	taskService := tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store))
-	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil)
-	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil)
+	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil).WithTaskAccessChecker(taskService)
+	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil).WithTaskAccessChecker(taskService)
 	activityRepo := newFakeTaskActivityRepo()
-	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, &fakeActivityMemberRepo{}, nil)
+	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, &fakeActivityMemberRepo{}, nil).WithTaskAccessChecker(taskService)
 
 	apiKeyService := apikeysvc.New(apiKeyRepo).
 		WithAgentKey(testAgentAPIKey, uuid.MustParse(testAgentBotUserID)).

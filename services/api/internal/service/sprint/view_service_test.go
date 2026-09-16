@@ -613,7 +613,7 @@ func TestViewService_DeleteView_NotFound(t *testing.T) {
 func TestViewService_MoveTask_OK(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeViewRepo()
-	svc := sprintsvc.NewViewService(repo, permissiveSprintRepo{}, permissiveTaskRepo{}, nil)
+	svc := sprintsvc.NewViewService(repo, permissiveSprintRepo{}, permissiveTaskRepo{}, nil).WithTaskAccessChecker(allowTaskAccess{})
 
 	v, _ := svc.CreateView(ctx, sprintdom.CreateViewInput{
 		SprintID:    uuidPtr(uuid.New()),
@@ -1272,4 +1272,8 @@ func (permissiveTaskRepo) UpdateTaskFields(context.Context, *taskdom.Task, taskd
 }
 func (permissiveTaskRepo) DeleteTaskAuthorized(context.Context, uuid.UUID, uuid.UUID, taskdom.AccessScope) error {
 	return taskdom.ErrTaskForbidden
+}
+
+func (r *fakeViewRepo) ListTaskPositionsVisible(ctx context.Context, id uuid.UUID, _ taskdom.AccessScope) ([]*sprintdom.ViewTaskPosition, error) {
+	return r.ListTaskPositions(ctx, id)
 }

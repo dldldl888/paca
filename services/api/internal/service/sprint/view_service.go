@@ -20,6 +20,7 @@ type ViewService struct {
 	sprintRepo sprintdom.SprintRepository
 	taskRepo   taskdom.TaskRepository
 	publisher  *messaging.Publisher
+	access     taskdom.AccessChecker
 }
 
 // NewViewService returns a configured ViewService. sprintRepo and taskRepo
@@ -28,6 +29,19 @@ type ViewService struct {
 // publisher may be nil; real-time events are then skipped silently.
 func NewViewService(repo sprintdom.ViewRepository, sprintRepo sprintdom.SprintRepository, taskRepo taskdom.TaskRepository, publisher *messaging.Publisher) *ViewService {
 	return &ViewService{repo: repo, sprintRepo: sprintRepo, taskRepo: taskRepo, publisher: publisher}
+}
+
+func (s *ViewService) WithTaskAccessChecker(checker taskdom.AccessChecker) *ViewService {
+	s.access = checker
+	return s
+}
+
+func (s *ViewService) checkTask(ctx context.Context, projectID, taskID uuid.UUID, action taskdom.AccessAction) error {
+	if s.access == nil {
+		return taskdom.ErrTaskNotFound
+	}
+	_, err := s.access.CheckTaskAccess(ctx, projectID, taskID, action)
+	return err
 }
 
 // sprintInProject returns nil when sprintID resolves to a sprint that
@@ -246,12 +260,8 @@ func (s *ViewService) MoveTask(ctx context.Context, projectID, viewID uuid.UUID,
 	if v.ProjectID != projectID {
 		return sprintdom.ErrViewNotFound
 	}
-	t, err := s.taskRepo.FindTaskByID(ctx, in.TaskID)
-	if err != nil {
+	if err := s.checkTask(ctx, projectID, in.TaskID, taskdom.AccessManage); err != nil {
 		return err
-	}
-	if t.ProjectID != projectID {
-		return taskdom.ErrTaskNotFound
 	}
 	pos := &sprintdom.ViewTaskPosition{
 		ID:       uuid.New(),
@@ -275,12 +285,8 @@ func (s *ViewService) BulkMoveTasks(ctx context.Context, projectID, viewID uuid.
 		return sprintdom.ErrViewNotFound
 	}
 	for _, in := range items {
-		t, err := s.taskRepo.FindTaskByID(ctx, in.TaskID)
-		if err != nil {
+		if err := s.checkTask(ctx, projectID, in.TaskID, taskdom.AccessManage); err != nil {
 			return err
-		}
-		if t.ProjectID != projectID {
-			return taskdom.ErrTaskNotFound
 		}
 	}
 	positions := make([]*sprintdom.ViewTaskPosition, 0, len(items))
@@ -306,7 +312,21 @@ func (s *ViewService) ListTaskPositions(ctx context.Context, projectID, viewID u
 	if v.ProjectID != projectID {
 		return nil, sprintdom.ErrViewNotFound
 	}
-	return s.repo.ListTaskPositions(ctx, viewID)
+	policy, ok := s.access.(taskdom.AccessPolicy)
+	if !ok {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	scope, err := policy.ResolveTaskAccess(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	repo, ok := s.repo.(interface {
+		ListTaskPositionsVisible(context.Context, uuid.UUID, taskdom.AccessScope) ([]*sprintdom.ViewTaskPosition, error)
+	})
+	if !ok {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	return repo.ListTaskPositionsVisible(ctx, viewID, scope)
 }
 
 // ReorderViews reorders all views belonging to a sprint, verifying the
