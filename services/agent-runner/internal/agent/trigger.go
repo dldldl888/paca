@@ -34,6 +34,7 @@ const (
 // Service.publishTrigger/publishChatTrigger (AppendFlat — no JSON envelope,
 // see internal/messaging for the decode side).
 type Trigger struct {
+	Malformed      bool // internal decode failure; never populated from wire
 	ConversationID uuid.UUID
 	// ProjectID is the zero value (uuid.Nil) for a global-chat trigger — see
 	// agentdom.AgentConversation's own doc comment on the same convention.

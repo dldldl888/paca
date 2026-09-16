@@ -433,7 +433,9 @@ type AgentConversation struct {
 	// project_shared) — see ConversationAudience. Read-only on this entity:
 	// it is a generated column, never set by the repository on write.
 	Audience ConversationAudience
-	Status   string // queued | running | paused | finished | failed | stopped
+	// nil means legacy history with unprovable dependencies; empty is reliable.
+	ContextItems []ContextItemRef
+	Status       string // queued | running | paused | finished | failed | stopped
 	// EnvironmentID/EnvironmentFolderID are set only when this conversation
 	// is attached to a static environment (environmentdom.Environment)
 	// instead of getting a fresh ephemeral sandbox — see

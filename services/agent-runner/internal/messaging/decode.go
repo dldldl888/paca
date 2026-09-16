@@ -28,6 +28,19 @@ func decodeTrigger(values map[string]interface{}) (agent.Trigger, error) {
 		return agent.Trigger{}, err
 	}
 
+	for _, key := range []string{"project_id", "task_id", "comment_id", "chat_session_id", "actor_user_id", "actor_member_id", "environment_id"} {
+		if value, present := values[key]; present {
+			raw, ok := value.(string)
+			if !ok {
+				return agent.Trigger{}, fmt.Errorf("invalid trigger field %s", key)
+			}
+			if raw != "" {
+				if _, err := requiredUUID(values, key); err != nil {
+					return agent.Trigger{}, err
+				}
+			}
+		}
+	}
 	// project_id is absent entirely for a global-chat trigger — see
 	// publishGlobalChatTrigger — leaving ProjectID at its zero value
 	// (uuid.Nil), the same convention agentdom.AgentConversation uses for
@@ -64,16 +77,25 @@ func decodeTrigger(values map[string]interface{}) (agent.Trigger, error) {
 		t.Workdir = &workdir
 	}
 
-	// context_items is a JSON-encoded string (AppendFlat needs plain scalar
-	// field values — see Service.publishChatTrigger in services/api), not a
-	// native array, so it needs an extra decode step the other optional
-	// fields above don't. Malformed JSON is swallowed the same permissive
-	// way every other optional field here is: left at its zero value
-	// (nil) rather than failing the whole trigger decode.
-	if raw, ok := values["context_items"].(string); ok && raw != "" {
-		var items []agent.ContextItemRef
-		if err := json.Unmarshal([]byte(raw), &items); err == nil {
-			t.ContextItems = items
+	if value, present := values["context_items"]; present {
+		raw, ok := value.(string)
+		if !ok || json.Unmarshal([]byte(raw), &t.ContextItems) != nil || t.ContextItems == nil {
+			return agent.Trigger{}, fmt.Errorf("invalid context_items")
+		}
+		for _, item := range t.ContextItems {
+			if id, e := uuid.Parse(item.ID); e != nil || id == uuid.Nil {
+				return agent.Trigger{}, fmt.Errorf("invalid context id")
+			}
+			if item.ProjectID != nil {
+				if id, e := uuid.Parse(*item.ProjectID); e != nil || id == uuid.Nil {
+					return agent.Trigger{}, fmt.Errorf("invalid context project")
+				}
+			}
+			switch item.Type {
+			case "task", "doc", "conversation", "annotation", "automation":
+			default:
+				return agent.Trigger{}, fmt.Errorf("invalid context type")
+			}
 		}
 	}
 
@@ -86,7 +108,7 @@ func requiredUUID(values map[string]interface{}, key string) (uuid.UUID, error) 
 		return uuid.Nil, fmt.Errorf("messaging: trigger missing required field %q", key)
 	}
 	id, err := uuid.Parse(raw)
-	if err != nil {
+	if err != nil || id == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("messaging: trigger field %q is not a valid UUID: %w", key, err)
 	}
 	return id, nil

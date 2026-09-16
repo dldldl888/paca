@@ -270,7 +270,7 @@
           "when": "新建或续聊时引用 A 的任务，读取/控制 A 私聊",
           "then": "模型请求没有 A 任务内容，私聊各入口拒绝 B",
           "sut": "StartChatSession",
-          "test": "services/api/internal/service/agent/agent_service_test.go::TestUS008ContextAuthorization"
+          "test": "services/api/test/e2e/private_run_access_test.go::TestPrivateRunCurrentAuthorization"
         },
         {
           "id": "US-008-S2",
@@ -278,7 +278,7 @@
           "when": "访问 A 的私聊详情、事件、搜索和控制",
           "then": "保持主人私有语义",
           "sut": "GetConversation",
-          "test": "services/api/internal/service/agent/agent_service_test.go::TestUS008ManagerChatIsolation"
+          "test": "services/api/test/e2e/private_run_access_test.go::TestPrivateRunCurrentAuthorization"
         }
       ],
       "acceptanceCriteria": [
@@ -312,8 +312,8 @@
           "given": "持久会话属于 A，请求伪造 B 或缺少私人归属",
           "when": "后端派发并校验",
           "then": "使用可信身份或拒绝，不产生共享运行",
-          "sut": "DispatchTrigger",
-          "test": "services/agent-runner/internal/acpbridge/dispatch_test.go::TestUS009TrustedIdentity"
+          "sut": "Handle",
+          "test": "services/agent-runner/test/e2e/private_run_dispatch_test.go::TestPrivateRunTrustedDispatchAndQueueReauthorization"
         }
       ],
       "acceptanceCriteria": [
@@ -490,8 +490,8 @@
           "given": "A 排队的对话引用任务，随后失去任务或项目资格",
           "when": "出队派发、续聊或恢复",
           "then": "不启动或恢复模型，不读取受限任务，明确授权失败",
-          "sut": "DispatchTrigger",
-          "test": "services/agent-runner/internal/acpbridge/dispatch_test.go::TestUS014QueueReauthorization"
+          "sut": "Handle",
+          "test": "services/agent-runner/test/e2e/private_run_dispatch_test.go::TestPrivateRunTrustedDispatchAndQueueReauthorization"
         },
         {
           "id": "US-014-S2",

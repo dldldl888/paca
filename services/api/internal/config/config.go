@@ -20,6 +20,7 @@ type Config struct {
 	// internal-only routes (see services/ai-agent's _require_internal_key) —
 	// must match ai-agent's own INTERNAL_API_KEY.
 	AIAgentInternalKey string
+	InstanceID         string
 	// SSHBastionHost/PortForwardHost are purely descriptive, deployment-wide
 	// values this service never itself acts on — agent-runner is what
 	// actually relays SSH connections and port forwards (see

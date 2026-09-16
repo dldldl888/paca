@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"os"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 // Settings holds agent-runner's process configuration, loaded once from
 // the environment at startup.
 type Settings struct {
+	InstanceID  string
 	DatabaseURL string
 	ValkeyURL   string
 
@@ -177,6 +179,12 @@ type Settings struct {
 // Load reads Settings from the environment, applying defaults where the
 // environment doesn't set a value.
 func Load() (Settings, error) {
+	if value := os.Getenv("PACA_INSTANCE_ID"); value != "" {
+		id, err := uuid.Parse(value)
+		if err != nil || id == uuid.Nil {
+			return Settings{}, fmt.Errorf("PACA_INSTANCE_ID must be a nonzero UUID")
+		}
+	}
 	s := Settings{
 		DatabaseURL:                     os.Getenv("DATABASE_URL"),
 		ValkeyURL:                       os.Getenv("VALKEY_URL"),
@@ -184,6 +192,7 @@ func Load() (Settings, error) {
 		AgentServerImage:                os.Getenv("AGENT_SERVER_IMAGE"),
 		PacaAPIKey:                      os.Getenv("PACA_API_KEY"),
 		PacaAPIURL:                      os.Getenv("PACA_API_URL"),
+		InstanceID:                      os.Getenv("PACA_INSTANCE_ID"),
 		PacaGatewayURL:                  os.Getenv("PACA_GATEWAY_URL"),
 		PortPoolStart:                   envInt("PORT_POOL_START", 10000),
 		PortPoolSize:                    envInt("PORT_POOL_SIZE", 100),

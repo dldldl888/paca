@@ -232,12 +232,14 @@ func (c *Consumer) processControl(ctx context.Context, msg redis.XMessage, contr
 func (c *Consumer) processTrigger(ctx context.Context, msg redis.XMessage) {
 	trigger, err := decodeTrigger(msg.Values)
 	if err != nil {
-		// A malformed message can never become well-formed on redelivery —
-		// ack it so it doesn't block the stream forever, and log loudly
-		// since this indicates a real producer/consumer schema drift.
-		c.log.Error("consumer: dropping malformed trigger", "id", msg.ID, "error", err)
-		c.ack(ctx, msg)
-		return
+		c.log.Error("consumer: refusing malformed trigger", "id", msg.ID, "error", err)
+		id, e := requiredUUID(msg.Values, "conversation_id")
+		if e != nil {
+			c.ack(ctx, msg)
+			return
+		}
+		trigger = agent.Trigger{ConversationID: id, Malformed: true}
+
 	}
 
 	// Serializes trigger handling per conversation_id: two triggers for the

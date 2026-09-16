@@ -30,6 +30,7 @@ import (
 	"github.com/Paca-AI/agent-runner/internal/messaging"
 	"github.com/Paca-AI/agent-runner/internal/registry"
 	"github.com/Paca-AI/agent-runner/internal/repository/postgres"
+	"github.com/Paca-AI/agent-runner/internal/runauth"
 )
 
 // Handler is messaging.Handler and messaging.ControlHandler both — one
@@ -40,6 +41,7 @@ import (
 // test/e2e/trigger_orchestration_test.go for Handle driven against real
 // infrastructure.
 type Handler struct {
+	RunAuthorizer *runauth.Client
 	Gate          config.Gate
 	AgentRepo     *postgres.AgentRepository
 	ConvRepo      *postgres.ConversationRepository
@@ -97,6 +99,19 @@ func (h *Handler) resumeLock() *convlock.Locks {
 // Handle runs one conversation turn for trigger, dispatching to the ACP
 // bridge instead when the trigger's agent is an acp-type agent.
 func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
+	// Persisted conversation identity is resolved before gate/cfg selection.
+	resolved, resolveErr := h.ConvRepo.ResolveTrigger(ctx, trigger)
+	if resolveErr != nil || trigger.Malformed {
+		return h.failAuthorization(ctx, trigger.ConversationID)
+	}
+	trigger = resolved
+	if h.RunAuthorizer != nil {
+		authorization, e := h.RunAuthorizer.Authorize(ctx, trigger.ConversationID, trigger.AgentID, false)
+		if e != nil || authorization.Status != "running" {
+			return h.failAuthorization(ctx, trigger.ConversationID)
+		}
+		authorization.Apply(&trigger)
+	}
 	if !h.Gate.Allowed(trigger.AgentID) {
 		// Not ours to run — ack (via returning nil) and drop it. agent-runner
 		// is the only consumer of paca:agent:triggers now, so a
@@ -105,19 +120,6 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 		// for now that it's no longer coordinating against a second
 		// service. Applies uniformly to llm- and acp-type triggers alike.
 		return nil
-	}
-
-	// Chat conversations are owner-private: their realtime events must route
-	// to the owner's user room, not the project room. Resolve the owner user
-	// id once here (sessionless triggers have ChatSessionID == nil and keep a
-	// nil ActorUserID, staying project-shared) so both the llm path and the
-	// acp dispatch path below publish the right room.
-	if trigger.ChatSessionID != nil {
-		_, ownerUserID, err := h.ConvRepo.GetConversationRealtimeContext(ctx, trigger.ConversationID)
-		if err != nil {
-			return fmt.Errorf("resolve realtime owner for conversation %s: %w", trigger.ConversationID, err)
-		}
-		trigger.ActorUserID = ownerUserID
 	}
 
 	cfg, err := h.AgentRepo.FindByID(ctx, trigger.AgentID)
@@ -1020,4 +1022,14 @@ func (h *Handler) publishNonTerminalStatus(ctx context.Context, trigger agent.Tr
 		h.Log.Warn("agent-runner: failed to publish realtime status",
 			"conversation_id", trigger.ConversationID, "event_type", realtimeEventType, "error", err)
 	}
+}
+
+// Refusals release capacity without publishing untrusted owner attribution
+// into a realtime event. Task5 supplies current recipients for sensitive events.
+func (h *Handler) failAuthorization(ctx context.Context, id uuid.UUID) error {
+	_, err := h.ConvRepo.FailIfNotTerminal(ctx, id, "Private run authorization refused")
+	if err != nil {
+		return err
+	}
+	return h.Publisher.PublishConversationStatus(ctx, id, "failed")
 }

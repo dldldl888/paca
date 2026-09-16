@@ -21,6 +21,7 @@ import (
 
 // Deps holds all handler and middleware dependencies.
 type Deps struct {
+	AgentRun             *handler.AgentRunHandler
 	TokenManager         *jwttoken.Manager
 	APIKeyAuth           httpmw.APIKeyAuthenticator
 	Authorizer           *authz.Authorizer
@@ -66,6 +67,9 @@ func New(deps Deps) http.Handler {
 	r.Use(corsMiddleware(deps.CORSAllowedOrigins))
 
 	r.Route("/api", func(r chi.Router) {
+		if deps.AgentRun != nil {
+			r.Post("/internal/agent-runs/authorize", deps.AgentRun.Authorize)
+		}
 		// Public routes
 		r.Get("/healthz", deps.Health.Check)
 

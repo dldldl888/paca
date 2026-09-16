@@ -156,3 +156,14 @@ func TestDecodeTrigger_EmptyRepoPluginIDsStaysNil(t *testing.T) {
 		t.Errorf("RepoPluginIDs = %v, want nil", trigger.RepoPluginIDs)
 	}
 }
+
+func TestDecodeTriggerRejectsMalformedAuthorizationFields(t *testing.T) {
+	for _, field := range []string{"project_id", "task_id", "comment_id", "chat_session_id", "actor_user_id", "actor_member_id", "environment_id", "context_items"} {
+		t.Run(field, func(t *testing.T) {
+			values := map[string]interface{}{"conversation_id": uuid.NewString(), "agent_id": uuid.NewString(), field: "broken"}
+			if _, err := decodeTrigger(values); err == nil {
+				t.Fatalf("malformed %s silently accepted", field)
+			}
+		})
+	}
+}

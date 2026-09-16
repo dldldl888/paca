@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
@@ -147,6 +148,12 @@ func Load() (*Config, error) {
 		errs = append(errs, err)
 	}
 
+	if value := os.Getenv("PACA_INSTANCE_ID"); value != "" {
+		id, e := uuid.Parse(value)
+		if e != nil || id == uuid.Nil {
+			errs = append(errs, fmt.Errorf("PACA_INSTANCE_ID must be a nonzero UUID"))
+		}
+	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
@@ -226,6 +233,7 @@ func Load() (*Config, error) {
 		},
 		AIAgentURL:         env("AI_AGENT_URL", "http://ai-agent:8080"),
 		AIAgentInternalKey: aiAgentInternalKey,
+		InstanceID:         os.Getenv("PACA_INSTANCE_ID"),
 		SSHBastionHost:     env("SSH_BASTION_HOST", ""),
 		PortForwardHost:    env("PORT_FORWARD_HOST", ""),
 	}, nil

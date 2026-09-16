@@ -9,6 +9,7 @@ import (
 	"github.com/Paca-AI/agent-runner/internal/agent"
 	"github.com/Paca-AI/agent-runner/internal/messaging"
 	"github.com/Paca-AI/agent-runner/internal/repository/postgres"
+	"github.com/Paca-AI/agent-runner/internal/runauth"
 )
 
 const (
@@ -25,10 +26,11 @@ const (
 // through Registry/server.go. Auth, MCP servers, and skills are all the
 // user's own local responsibility — nothing is forwarded from Paca.
 type Dispatcher struct {
-	Registry  *Registry
-	ConvRepo  *postgres.ConversationRepository
-	Publisher *messaging.Publisher
-	Log       Logger
+	RunAuthorizer *runauth.Client
+	Registry      *Registry
+	ConvRepo      *postgres.ConversationRepository
+	Publisher     *messaging.Publisher
+	Log           Logger
 }
 
 // DispatchTrigger hands trigger off to cfg's connected local ACP bridge.
@@ -49,11 +51,21 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 		return d.failOffline(ctx, trigger)
 	}
 
-	if err := d.ConvRepo.UpdateStatus(ctx, trigger.ConversationID, "running", nil); err != nil {
+	var authorization *runauth.Authorization
+	if d.RunAuthorizer != nil {
+		authorization, err = d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, true)
+		if err != nil {
+			if _, e := d.ConvRepo.FailIfNotTerminal(ctx, trigger.ConversationID, "Private run authorization refused"); e != nil {
+				return e
+			}
+			return d.Publisher.PublishConversationStatus(ctx, trigger.ConversationID, "failed")
+		}
+		authorization.Apply(&trigger)
+	} else if err := d.ConvRepo.UpdateStatus(ctx, trigger.ConversationID, "running", nil); err != nil {
 		return err
 	}
 
-	dispatched, err := d.Registry.Dispatch(ctx, cfg.ID, map[string]any{
+	payload := map[string]any{
 		"type":            "start_turn",
 		"conversation_id": trigger.ConversationID.String(),
 		"project_id":      projectIDOrEmpty(trigger.ProjectID),
@@ -68,7 +80,15 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 		"task_id":         uuidPtrOrEmpty(trigger.TaskID),
 		"comment_id":      uuidPtrOrEmpty(trigger.CommentID),
 		"chat_session_id": uuidPtrOrEmpty(trigger.ChatSessionID),
-	})
+	}
+	if authorization != nil {
+		payload["agent_id"] = authorization.AgentID
+		payload["instance_id"] = authorization.InstanceID
+		payload["audience"] = authorization.Audience
+		payload["owner_user_id"] = authorization.OwnerUserID
+		payload["has_prior_turns"] = authorization.HasPriorTurns
+	}
+	dispatched, err := d.Registry.Dispatch(ctx, cfg.ID, payload)
 	if err != nil {
 		return err
 	}
@@ -98,7 +118,7 @@ func (d *Dispatcher) failOffline(ctx context.Context, trigger agent.Trigger) err
 		d.Log.Warn("acpbridge: failed to publish realtime status",
 			"conversation_id", trigger.ConversationID, "error", err)
 	}
-	return nil
+	return d.Publisher.PublishConversationStatus(ctx, trigger.ConversationID, "failed")
 }
 
 // watchdog fails a dispatched ACP turn that never reported a terminal

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Paca-AI/agent-runner/internal/runauth"
 	"log/slog"
 	"net/http"
 	"os"
@@ -124,15 +125,21 @@ func run(log *slog.Logger) error {
 	publisher := messaging.NewPublisher(redisClient)
 	agentRepo := postgres.NewAgentRepository(db)
 
+	var runAuthorizer *runauth.Client
+	if settings.InstanceID != "" {
+		runAuthorizer = runauth.New(settings.PacaAPIURL, settings.InternalAPIKey, settings.InstanceID)
+	}
 	acpRegistry := acpbridge.New(redisClient, publisher, log)
 	acpDispatcher := &acpbridge.Dispatcher{
-		Registry:  acpRegistry,
-		ConvRepo:  convRepo,
-		Publisher: publisher,
-		Log:       log,
+		RunAuthorizer: runAuthorizer,
+		Registry:      acpRegistry,
+		ConvRepo:      convRepo,
+		Publisher:     publisher,
+		Log:           log,
 	}
 
 	h := &handler.Handler{
+		RunAuthorizer:         runAuthorizer,
 		Gate:                  config.NewGate(settings.AllowedAgentIDs),
 		AgentRepo:             agentRepo,
 		ConvRepo:              convRepo,

@@ -106,6 +106,7 @@ type agentSkillRecord struct {
 }
 
 type agentConversationRecord struct {
+	ContextItems        []byte  `db:"context_items"`
 	ID                  string  `db:"id"`
 	AgentID             string  `db:"agent_id"`
 	ProjectID           *string `db:"project_id"` // NULL for a global-chat conversation
@@ -942,7 +943,7 @@ const conversationCols = `id, agent_id, project_id, trigger_type, task_id, comme
 	 ORDER BY e.event_index DESC LIMIT 1) AS cost_usd,
 	error_message,
 	repo_plugin_id, pr_url,
-	started_at, finished_at, created_at, updated_at`
+	started_at, finished_at, created_at, updated_at, context_items`
 
 // ListConversations returns a keyset-paginated page of conversations matching
 // the filter, ordered newest-first. It fetches one row beyond limit to detect
@@ -1087,12 +1088,12 @@ func (r *AgentRepository) CreateConversation(ctx context.Context, c *agentdom.Ag
 		INSERT INTO agent_conversations (id, agent_id, project_id, trigger_type, task_id, comment_id, chat_session_id,
 		  triggered_by_member_id, actor_user_id, status, environment_id, environment_folder_id, error_message,
 		  repo_plugin_id, pr_url,
-		  started_at, finished_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		  started_at, finished_at, created_at, updated_at, context_items)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 		rec.ID, rec.AgentID, rec.ProjectID, rec.TriggerType, rec.TaskID, rec.CommentID, rec.ChatSessionID,
 		rec.TriggeredByMemberID, rec.ActorUserID, rec.Status, rec.EnvironmentID, rec.EnvironmentFolderID, rec.ErrorMessage,
 		rec.RepoPluginID, rec.PRUrl,
-		rec.StartedAt, rec.FinishedAt, rec.CreatedAt, rec.UpdatedAt,
+		rec.StartedAt, rec.FinishedAt, rec.CreatedAt, rec.UpdatedAt, rec.ContextItems,
 	)
 	return err
 }
@@ -1211,20 +1212,12 @@ func (r *AgentRepository) ClaimQueuedForDispatch(ctx context.Context, conversati
 }
 
 // UpdateConversation saves the full conversation record.
+// UpdateConversation only writes mutable result fields. Identity, the first-dispatch
+// latch and cumulative dependencies have dedicated, monotonic writers.
 func (r *AgentRepository) UpdateConversation(ctx context.Context, c *agentdom.AgentConversation) error {
-	rec := conversationToRecord(c)
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE agent_conversations SET
-		  agent_id=$1, project_id=$2, trigger_type=$3, task_id=$4, comment_id=$5, chat_session_id=$6,
-		  triggered_by_member_id=$7, status=$8, environment_id=$9, environment_folder_id=$10,
-		  error_message=$11, repo_plugin_id=$12, pr_url=$13,
-		  started_at=$14, finished_at=$15, updated_at=$16
-		WHERE id=$17`,
-		rec.AgentID, rec.ProjectID, rec.TriggerType, rec.TaskID, rec.CommentID, rec.ChatSessionID,
-		rec.TriggeredByMemberID, rec.Status, rec.EnvironmentID, rec.EnvironmentFolderID,
-		rec.ErrorMessage, rec.RepoPluginID, rec.PRUrl,
-		rec.StartedAt, rec.FinishedAt, rec.UpdatedAt, rec.ID,
-	)
+	_, err := r.db.ExecContext(ctx, `UPDATE agent_conversations SET status=$1,
+ error_message=$2, repo_plugin_id=$3, pr_url=$4, finished_at=$5, updated_at=$6 WHERE id=$7`,
+		c.Status, c.ErrorMessage, c.RepoPluginID, c.PRUrl, c.FinishedAt, c.UpdatedAt, c.ID)
 	return err
 }
 
@@ -1604,12 +1597,8 @@ func (r *AgentRepository) CreateChatSession(ctx context.Context, s *agentdom.Age
 
 // UpdateChatSession saves the full chat session record.
 func (r *AgentRepository) UpdateChatSession(ctx context.Context, s *agentdom.AgentChatSession) error {
-	rec := chatSessionToRecord(s)
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE agent_chat_sessions SET agent_id=$1, project_id=$2, member_id=$3, title=$4, last_message_at=$5, updated_at=$6
-		WHERE id=$7`,
-		rec.AgentID, rec.ProjectID, rec.MemberID, rec.Title, rec.LastMessageAt, rec.UpdatedAt, rec.ID,
-	)
+	_, err := r.db.ExecContext(ctx, `UPDATE agent_chat_sessions SET title=$1,
+ last_message_at=GREATEST(last_message_at,$2),updated_at=now() WHERE id=$3`, s.Title, s.LastMessageAt, s.ID)
 	return err
 }
 
@@ -1916,11 +1905,21 @@ func conversationFromRecord(rec agentConversationRecord) *agentdom.AgentConversa
 		id := mustParseUUID(*rec.EnvironmentFolderID)
 		c.EnvironmentFolderID = &id
 	}
+	if len(rec.ContextItems) > 0 {
+		if err := json.Unmarshal(rec.ContextItems, &c.ContextItems); err != nil {
+			c.ContextItems = nil
+		}
+	}
 	return c
 }
 
 func conversationToRecord(c *agentdom.AgentConversation) agentConversationRecord {
+	var refs []byte
+	if c.ContextItems != nil {
+		refs, _ = json.Marshal(c.ContextItems)
+	}
 	rec := agentConversationRecord{
+		ContextItems: refs,
 		ID:           c.ID.String(),
 		AgentID:      c.AgentID.String(),
 		ProjectID:    nullableUUIDString(c.ProjectID),

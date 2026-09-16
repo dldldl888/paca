@@ -251,6 +251,15 @@ func New(cfg *config.Config) (*App, error) {
 	annotationService := annotationsvc.New(annotationRepo, environmentService, taskService, attachmentRepo, attachmentRepo, storageClient, cfg.Storage.Bucket).
 		WithTaskAccess(taskService, taskService).
 		WithPublicURL(cfg.Server.PublicURL)
+	instanceID := uuid.Nil
+	if cfg.InstanceID != "" {
+		var err error
+		instanceID, err = uuid.Parse(cfg.InstanceID)
+		if err != nil || instanceID == uuid.Nil {
+			return nil, fmt.Errorf("PACA_INSTANCE_ID must be a nonzero UUID")
+		}
+	}
+	agentService.WithPrivateRuns(instanceID, agentRepo, docService, annotationService, automationService)
 	userService = userService.WithAvatarService(attachmentService)
 	agentService = agentService.WithAvatarService(attachmentService)
 	// Unlike userService/agentService above, this return value isn't
@@ -458,6 +467,7 @@ func New(cfg *config.Config) (*App, error) {
 		Agent:              agentHandler,
 		Environment:        environmentHandler,
 		Annotation:         annotationHandler,
+		AgentRun:           &handler.AgentRunHandler{Service: agentService, InternalKey: cfg.AIAgentInternalKey},
 		Conversation:       convHandler,
 		Automation:         automationHandler,
 		Settings:           handler.NewSettingsHandler(settingsService).WithAvatarService(attachmentService),

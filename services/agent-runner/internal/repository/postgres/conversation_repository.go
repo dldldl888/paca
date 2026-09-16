@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"github.com/Paca-AI/agent-runner/internal/agent"
 	"time"
 
 	"github.com/google/uuid"
@@ -187,4 +189,52 @@ func (r *ConversationRepository) SetACPSessionID(ctx context.Context, conversati
 		return fmt.Errorf("postgres: set acp session id for conversation %s: %w", conversationID, err)
 	}
 	return nil
+}
+
+// ResolveTrigger derives identity/linkage from persistence. Private refs are
+// DB-only; explicit legacy shared runs retain API-validated per-turn attachments.
+func (r *ConversationRepository) ResolveTrigger(ctx context.Context, t agent.Trigger) (agent.Trigger, error) {
+	var row struct {
+		Audience      string        `db:"audience"`
+		AgentID       uuid.UUID     `db:"agent_id"`
+		ProjectID     uuid.NullUUID `db:"project_id"`
+		TaskID        *uuid.UUID    `db:"task_id"`
+		CommentID     *uuid.UUID    `db:"comment_id"`
+		ChatSessionID *uuid.UUID    `db:"chat_session_id"`
+		ActorMemberID *uuid.UUID    `db:"triggered_by_member_id"`
+		ActorUserID   *uuid.UUID    `db:"actor_user_id"`
+		TriggerType   string        `db:"trigger_type"`
+		EnvironmentID *uuid.UUID    `db:"environment_id"`
+		ContextItems  []byte        `db:"context_items"`
+	}
+	err := r.db.GetContext(ctx, &row, `SELECT agent_id,project_id,task_id,comment_id,chat_session_id,
+ triggered_by_member_id,actor_user_id,trigger_type,environment_id,context_items,audience FROM agent_conversations WHERE id=$1`, t.ConversationID)
+	if err != nil {
+		return agent.Trigger{}, err
+	}
+	expected := t.AgentID
+	t.AgentID = row.AgentID
+	t.ProjectID = row.ProjectID.UUID
+	t.TaskID = row.TaskID
+	t.CommentID = row.CommentID
+	t.ChatSessionID = row.ChatSessionID
+	t.ActorMemberID = row.ActorMemberID
+	t.ActorUserID = row.ActorUserID
+	t.TriggerType = agent.TriggerType(row.TriggerType)
+	t.EnvironmentID = row.EnvironmentID
+	if row.Audience != "project_shared" {
+		t.ContextItems = nil
+		if row.ContextItems != nil {
+			if err = json.Unmarshal(row.ContextItems, &t.ContextItems); err != nil {
+				return t, err
+			}
+		}
+	}
+	if expected != row.AgentID {
+		return t, fmt.Errorf("queue agent does not match conversation")
+	}
+	if t.ChatSessionID != nil {
+		_, t.ActorUserID, err = r.GetConversationRealtimeContext(ctx, t.ConversationID)
+	}
+	return t, err
 }
