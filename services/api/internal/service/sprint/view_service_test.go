@@ -1193,7 +1193,7 @@ func TestViewService_ReorderViews_WrongProject_ReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestViewService_MoveTask_WrongProject_ReturnsNotFound(t *testing.T) {
+func TestViewService_MoveTask_MissingAccessChecker_ReturnsNotFound(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeViewRepo()
 	taskID := uuid.New()
@@ -1213,18 +1213,17 @@ func TestViewService_MoveTask_WrongProject_ReturnsNotFound(t *testing.T) {
 		t.Fatalf("setup: unexpected error creating attacker's own view: %v", err)
 	}
 
-	// v belongs to attackerProjectID (the view check passes); taskID belongs
-	// to a different project — the position write must still be rejected.
+	// The view check passes, but a missing task checker must fail closed.
 	err = svc.MoveTask(ctx, attackerProjectID, v.ID, sprintdom.MoveTaskInput{TaskID: taskID, Position: 0})
 	if err != taskdom.ErrTaskNotFound {
-		t.Fatalf("expected ErrTaskNotFound for cross-project MoveTask, got %v", err)
+		t.Fatalf("expected ErrTaskNotFound without a task checker, got %v", err)
 	}
 	if len(repo.positions) != 0 {
 		t.Errorf("no task position should have been persisted, found %d", len(repo.positions))
 	}
 }
 
-func TestViewService_BulkMoveTasks_WrongProject_ReturnsNotFound(t *testing.T) {
+func TestViewService_BulkMoveTasks_MissingAccessChecker_ReturnsNotFound(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeViewRepo()
 	ownTaskID := uuid.New()
@@ -1246,14 +1245,13 @@ func TestViewService_BulkMoveTasks_WrongProject_ReturnsNotFound(t *testing.T) {
 		t.Fatalf("setup: unexpected error creating attacker's own view: %v", err)
 	}
 
-	// One legitimate task and one foreign-project task in the same batch —
-	// the whole batch must be rejected and nothing written.
+	// A missing checker must reject the entire batch before any position write.
 	err = svc.BulkMoveTasks(ctx, attackerProjectID, v.ID, []sprintdom.MoveTaskInput{
 		{TaskID: ownTaskID, Position: 0},
 		{TaskID: foreignTaskID, Position: 1},
 	})
 	if err != taskdom.ErrTaskNotFound {
-		t.Fatalf("expected ErrTaskNotFound for cross-project BulkMoveTasks, got %v", err)
+		t.Fatalf("expected ErrTaskNotFound without a task checker, got %v", err)
 	}
 	if len(repo.positions) != 0 {
 		t.Errorf("no task position should have been persisted, found %d", len(repo.positions))

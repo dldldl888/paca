@@ -76,54 +76,10 @@ type taskCounterRecord struct {
 	LastValue int64  `db:"last_value"`
 }
 
-// taskWithPositionRow is a flat struct for scanning the view_position LEFT JOIN result.
+// taskWithPositionRow adds the nullable view position to the common task scan.
 type taskWithPositionRow struct {
-	ID            string           `db:"id"`
-	ProjectID     string           `db:"project_id"`
-	TaskNumber    int64            `db:"task_number"`
-	TaskTypeID    *string          `db:"task_type_id"`
-	StatusID      *string          `db:"status_id"`
-	SprintID      *string          `db:"sprint_id"`
-	ParentTaskID  *string          `db:"parent_task_id"`
-	Title         string           `db:"title"`
-	Description   *json.RawMessage `db:"description"`
-	Importance    int              `db:"importance"`
-	StoryPoints   *int             `db:"story_points"`
-	ReporterID    *string          `db:"reporter_id"`
-	CreatorUserID *string          `db:"creator_user_id"`
-	CustomFields  []byte           `db:"custom_fields"`
-	StartDate     *time.Time       `db:"start_date"`
-	DueDate       *time.Time       `db:"due_date"`
-	Tags          []byte           `db:"tags"`
-	CreatedAt     time.Time        `db:"created_at"`
-	UpdatedAt     time.Time        `db:"updated_at"`
-	DeletedAt     *time.Time       `db:"deleted_at"`
-	VTPPosition   *float64         `db:"vtp_position"`
-}
-
-func (r *taskWithPositionRow) asTaskRecord() taskRecord {
-	return taskRecord{
-		ID:            r.ID,
-		ProjectID:     r.ProjectID,
-		TaskNumber:    r.TaskNumber,
-		TaskTypeID:    r.TaskTypeID,
-		StatusID:      r.StatusID,
-		SprintID:      r.SprintID,
-		ParentTaskID:  r.ParentTaskID,
-		Title:         r.Title,
-		Description:   r.Description,
-		Importance:    r.Importance,
-		StoryPoints:   r.StoryPoints,
-		ReporterID:    r.ReporterID,
-		CreatorUserID: r.CreatorUserID,
-		CustomFields:  r.CustomFields,
-		StartDate:     r.StartDate,
-		DueDate:       r.DueDate,
-		Tags:          r.Tags,
-		CreatedAt:     r.CreatedAt,
-		UpdatedAt:     r.UpdatedAt,
-		DeletedAt:     r.DeletedAt,
-	}
+	taskRecord
+	VTPPosition *float64 `db:"vtp_position"`
 }
 
 // --- Repository struct -------------------------------------------------------
@@ -1082,8 +1038,7 @@ func (r *TaskRepository) ListTasks(ctx context.Context, projectID uuid.UUID, fil
 		}
 		tasks := make([]*taskdom.Task, 0, len(rows))
 		for i := range rows {
-			rec := rows[i].asTaskRecord()
-			t, err := toTaskEntity(&rec)
+			t, err := toTaskEntity(&rows[i].taskRecord)
 			if err != nil {
 				return nil, false, err
 			}
