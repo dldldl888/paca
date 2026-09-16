@@ -9,17 +9,19 @@ import (
 	"github.com/google/uuid"
 
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/storage"
 )
 
 // fakeTaskChecker always reports that the task belongs to the project.
 type fakeTaskChecker struct{}
 
-func (fakeTaskChecker) TaskBelongsToProject(_ context.Context, _, _ uuid.UUID) error {
-	return nil
+func (fakeTaskChecker) CheckTaskAccess(_ context.Context, _, _ uuid.UUID, _ taskdom.AccessAction) (*taskdom.Task, error) {
+	return nil, nil
 }
 
-var _ attachmentdom.TaskOwnerChecker = fakeTaskChecker{}
+var _ taskdom.AccessChecker = fakeTaskChecker{}
 
 // fakeDocChecker always reports that the document belongs to the project.
 type fakeDocChecker struct{}
@@ -195,5 +197,28 @@ func TestGetAttachmentContent_RejectsDeclaredOversizedFile(t *testing.T) {
 	_, _, err := svc.GetAttachmentContent(context.Background(), uuid.New(), taskID, attachmentID)
 	if !errors.Is(err, attachmentdom.ErrAttachmentContentTooLarge) {
 		t.Fatalf("got err %v, want ErrAttachmentContentTooLarge", err)
+	}
+}
+
+func TestCompleteUploadRejectsForeignBinding(t *testing.T) {
+	actor, other, taskID, fileID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	for _, key := range []string{"tasks/" + uuid.New().String() + "/" + fileID.String() + "/x", "tasks/" + taskID.String() + "/" + uuid.New().String() + "/x", "docs/" + taskID.String() + "/" + fileID.String() + "/x", "tasks/" + taskID.String() + "/" + fileID.String() + "/x"} {
+		t.Run(key, func(t *testing.T) {
+			repo := &fakeRepo{files: map[uuid.UUID]*attachmentdom.File{fileID: {ID: fileID, StorageKey: key, UploadedBy: &other, UploadStatus: attachmentdom.UploadStatusPending}}, attachments: map[uuid.UUID]*attachmentdom.TaskAttachment{}}
+			svc := New(repo, fakeTaskChecker{}, fakeDocChecker{}, &fakeStore{}, "test")
+			_, err := svc.CompleteUpload(authz.WithActorID(context.Background(), actor), uuid.New(), attachmentdom.CompleteUploadInput{TaskID: taskID, FileID: fileID, CreatedBy: other})
+			if err == nil || len(repo.attachments) != 0 {
+				t.Fatalf("foreign binding accepted: err=%v attachments=%d", err, len(repo.attachments))
+			}
+		})
+	}
+}
+
+func TestCompleteDocUploadRejectsTaskFile(t *testing.T) {
+	actor, fileID := uuid.New(), uuid.New()
+	repo := &fakeRepo{files: map[uuid.UUID]*attachmentdom.File{fileID: {ID: fileID, StorageKey: "tasks/" + uuid.New().String() + "/" + fileID.String() + "/x", UploadedBy: &actor, UploadStatus: attachmentdom.UploadStatusPending}}}
+	svc := New(repo, fakeTaskChecker{}, fakeDocChecker{}, &fakeStore{}, "test")
+	if _, err := svc.CompleteDocUpload(authz.WithActorID(context.Background(), actor), attachmentdom.DocCompleteUploadInput{FileID: fileID}); err == nil {
+		t.Fatal("document completion accepted task file")
 	}
 }

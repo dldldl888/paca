@@ -16,6 +16,7 @@ import (
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/storage"
 )
 
@@ -29,14 +30,14 @@ const (
 // Service is the concrete implementation of attachmentdom.Service.
 type Service struct {
 	repo        attachmentdom.Repository
-	taskChecker attachmentdom.TaskOwnerChecker
+	taskChecker taskdom.AccessChecker
 	docChecker  attachmentdom.DocOwnerChecker
 	store       storage.Client
 	bucket      string
 }
 
 // New returns a configured attachment service.
-func New(repo attachmentdom.Repository, taskChecker attachmentdom.TaskOwnerChecker, docChecker attachmentdom.DocOwnerChecker, store storage.Client, bucket string) *Service {
+func New(repo attachmentdom.Repository, taskChecker taskdom.AccessChecker, docChecker attachmentdom.DocOwnerChecker, store storage.Client, bucket string) *Service {
 	return &Service{repo: repo, taskChecker: taskChecker, docChecker: docChecker, store: store, bucket: bucket}
 }
 
@@ -45,8 +46,12 @@ func New(repo attachmentdom.Repository, taskChecker attachmentdom.TaskOwnerCheck
 // with pre-signed URLs for each part; otherwise a single-part presigned PUT
 // URL is returned.
 func (s *Service) InitiateUpload(ctx context.Context, projectID uuid.UUID, in attachmentdom.InitiateUploadInput) (*attachmentdom.UploadSession, error) {
-	if err := s.taskChecker.TaskBelongsToProject(ctx, projectID, in.TaskID); err != nil {
+	if err := s.checkTask(ctx, projectID, in.TaskID, taskdom.AccessProgress); err != nil {
 		return nil, err
+	}
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, attachmentdom.ErrFileNotFound
 	}
 	if strings.TrimSpace(in.FileName) == "" {
 		return nil, attachmentdom.ErrFileNameEmpty
@@ -72,7 +77,7 @@ func (s *Service) InitiateUpload(ctx context.Context, projectID uuid.UUID, in at
 		ContentType:  in.ContentType,
 		FileSize:     in.FileSize,
 		UploadStatus: attachmentdom.UploadStatusPending,
-		UploadedBy:   &in.UploadedBy,
+		UploadedBy:   &actor,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -111,12 +116,19 @@ func (s *Service) InitiateUpload(ctx context.Context, projectID uuid.UUID, in at
 // join record.  For multipart uploads the caller must supply the completed
 // parts so the service can call CompleteMultipartUpload on the object store.
 func (s *Service) CompleteUpload(ctx context.Context, projectID uuid.UUID, in attachmentdom.CompleteUploadInput) (*attachmentdom.TaskAttachment, error) {
-	if err := s.taskChecker.TaskBelongsToProject(ctx, projectID, in.TaskID); err != nil {
+	if err := s.checkTask(ctx, projectID, in.TaskID, taskdom.AccessProgress); err != nil {
 		return nil, err
+	}
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, attachmentdom.ErrFileNotFound
 	}
 	f, err := s.repo.FindFileByID(ctx, in.FileID)
 	if err != nil {
 		return nil, err
+	}
+	if !uploadMatches(f, "tasks", in.TaskID, in.FileID, actor) {
+		return nil, attachmentdom.ErrFileNotFound
 	}
 	if f.UploadStatus != attachmentdom.UploadStatusPending {
 		return nil, attachmentdom.ErrUploadNotPending
@@ -161,7 +173,7 @@ func (s *Service) CompleteUpload(ctx context.Context, projectID uuid.UUID, in at
 		ID:        uuid.New(),
 		TaskID:    in.TaskID,
 		FileID:    in.FileID,
-		CreatedBy: &in.CreatedBy,
+		CreatedBy: &actor,
 		CreatedAt: now,
 	}
 	if err := s.repo.CreateTaskAttachment(ctx, a); err != nil {
@@ -179,7 +191,7 @@ func (s *Service) CompleteUpload(ctx context.Context, projectID uuid.UUID, in at
 // header so the browser downloads the file rather than previewing it inline.
 // Verifies the attachment belongs to taskID before generating the URL.
 func (s *Service) GetDownloadURL(ctx context.Context, projectID, taskID, attachmentID uuid.UUID, ttl time.Duration, forceDownload bool) (string, error) {
-	if err := s.taskChecker.TaskBelongsToProject(ctx, projectID, taskID); err != nil {
+	if err := s.checkTask(ctx, projectID, taskID, taskdom.AccessRead); err != nil {
 		return "", err
 	}
 	a, err := s.repo.FindTaskAttachmentByID(ctx, attachmentID)
@@ -233,7 +245,7 @@ func (s *Service) GetDownloadURL(ctx context.Context, projectID, taskID, attachm
 // store (bypassing the presigned-URL flow) and returns them along with the
 // file's content type. See the interface doc for why this exists.
 func (s *Service) GetAttachmentContent(ctx context.Context, projectID, taskID, attachmentID uuid.UUID) ([]byte, string, error) {
-	if err := s.taskChecker.TaskBelongsToProject(ctx, projectID, taskID); err != nil {
+	if err := s.checkTask(ctx, projectID, taskID, taskdom.AccessRead); err != nil {
 		return nil, "", err
 	}
 	a, err := s.repo.FindTaskAttachmentByID(ctx, attachmentID)
@@ -278,7 +290,7 @@ func (s *Service) GetAttachmentContent(ctx context.Context, projectID, taskID, a
 
 // ListTaskAttachments returns all confirmed attachments for the given task.
 func (s *Service) ListTaskAttachments(ctx context.Context, projectID, taskID uuid.UUID) ([]*attachmentdom.TaskAttachment, error) {
-	if err := s.taskChecker.TaskBelongsToProject(ctx, projectID, taskID); err != nil {
+	if err := s.checkTask(ctx, projectID, taskID, taskdom.AccessRead); err != nil {
 		return nil, err
 	}
 	return s.repo.ListTaskAttachments(ctx, taskID)
@@ -289,7 +301,7 @@ func (s *Service) ListTaskAttachments(ctx context.Context, projectID, taskID uui
 // so the file can be referenced by other tasks or restored later.
 // Verifies the attachment belongs to taskID before deleting.
 func (s *Service) DeleteTaskAttachment(ctx context.Context, projectID, taskID, attachmentID uuid.UUID) error {
-	if err := s.taskChecker.TaskBelongsToProject(ctx, projectID, taskID); err != nil {
+	if err := s.checkTask(ctx, projectID, taskID, taskdom.AccessProgress); err != nil {
 		return err
 	}
 	a, err := s.repo.FindTaskAttachmentByID(ctx, attachmentID)
@@ -370,4 +382,18 @@ func (c *docOwnerChecker) DocBelongsToProject(ctx context.Context, projectID, do
 		return attachmentdom.ErrDocNotInProject
 	}
 	return nil
+}
+
+func (s *Service) checkTask(ctx context.Context, projectID, taskID uuid.UUID, action taskdom.AccessAction) error {
+	if s.taskChecker == nil {
+		return taskdom.ErrTaskNotFound
+	}
+	_, err := s.taskChecker.CheckTaskAccess(ctx, projectID, taskID, action)
+	return err
+}
+
+// Pending uploads bind the namespace, object, file and authenticated uploader.
+// Completed annotation screenshots use their trusted task association for reads.
+func uploadMatches(f *attachmentdom.File, namespace string, objectID, fileID, actor uuid.UUID) bool {
+	return objectID != uuid.Nil && actor != uuid.Nil && f.ID == fileID && f.UploadedBy != nil && *f.UploadedBy == actor && strings.HasPrefix(f.StorageKey, fmt.Sprintf("%s/%s/%s/", namespace, objectID, fileID))
 }

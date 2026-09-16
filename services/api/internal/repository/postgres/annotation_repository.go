@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"strings"
 	"time"
 
@@ -89,13 +90,15 @@ func NewAnnotationRepository(db *sqlx.DB) *AnnotationRepository {
 
 // ListForPage returns every annotation on pagePath within portForwardID,
 // oldest first.
-func (r *AnnotationRepository) ListForPage(ctx context.Context, portForwardID uuid.UUID, pagePath string) ([]*annotationdom.PageAnnotation, error) {
+func (r *AnnotationRepository) ListForPage(ctx context.Context, portForwardID uuid.UUID, pagePath string, scope taskdom.AccessScope) ([]*annotationdom.PageAnnotation, error) {
 	var recs []pageAnnotationRecord
-	err := r.db.SelectContext(ctx, &recs, `
-		SELECT `+pageAnnotationCols+` FROM page_annotations pa
+	query := `
+		SELECT ` + pageAnnotationCols + ` FROM page_annotations pa
 		LEFT JOIN users u ON u.id = pa.created_by
 		WHERE pa.port_forward_id = $1 AND pa.page_path = $2 AND pa.deleted_at IS NULL
-		ORDER BY pa.created_at ASC`, portForwardID.String(), pagePath)
+		`
+	query, args := annotationTaskVisibility(query, []any{portForwardID.String(), pagePath}, &scope)
+	err := r.db.SelectContext(ctx, &recs, query+" ORDER BY pa.created_at ASC", args...)
 	if err != nil {
 		return nil, fmt.Errorf("annotation repo: list for page: %w", err)
 	}
@@ -104,13 +107,15 @@ func (r *AnnotationRepository) ListForPage(ctx context.Context, portForwardID uu
 
 // ListForPortForward returns every annotation across every page portForwardID
 // serves, newest first.
-func (r *AnnotationRepository) ListForPortForward(ctx context.Context, portForwardID uuid.UUID) ([]*annotationdom.PageAnnotation, error) {
+func (r *AnnotationRepository) ListForPortForward(ctx context.Context, portForwardID uuid.UUID, scope taskdom.AccessScope) ([]*annotationdom.PageAnnotation, error) {
 	var recs []pageAnnotationRecord
-	err := r.db.SelectContext(ctx, &recs, `
-		SELECT `+pageAnnotationCols+` FROM page_annotations pa
+	query := `
+		SELECT ` + pageAnnotationCols + ` FROM page_annotations pa
 		LEFT JOIN users u ON u.id = pa.created_by
 		WHERE pa.port_forward_id = $1 AND pa.deleted_at IS NULL
-		ORDER BY pa.created_at DESC`, portForwardID.String())
+		`
+	query, args := annotationTaskVisibility(query, []any{portForwardID.String()}, &scope)
+	err := r.db.SelectContext(ctx, &recs, query+" ORDER BY pa.created_at DESC", args...)
 	if err != nil {
 		return nil, fmt.Errorf("annotation repo: list for port forward: %w", err)
 	}
@@ -151,6 +156,7 @@ func (r *AnnotationRepository) SearchInProject(ctx context.Context, projectID uu
 		LEFT JOIN users u ON u.id = pa.created_by
 		WHERE pa.project_id = $1 AND pa.deleted_at IS NULL`
 	args := []any{projectID.String()}
+	query, args = annotationTaskVisibility(query, args, filter.Visibility)
 
 	if filter.EnvironmentID != nil {
 		args = append(args, filter.EnvironmentID.String())
@@ -573,4 +579,16 @@ func commentFromRecord(rec annotationCommentRecord) (*annotationdom.AnnotationCo
 		CreatedAt: rec.CreatedAt,
 		UpdatedAt: rec.UpdatedAt,
 	}, nil
+}
+
+// Nullable task references retain unbound annotations and filter bound rows
+// before ordering, pagination and comment hydration using the shared task SQL.
+func annotationTaskVisibility(query string, args []any, scope *taskdom.AccessScope) (string, []any) {
+	if scope == nil {
+		return query, args
+	}
+	b := &queryBuilder{idx: len(args) + 1, args: args}
+	applyTaskVisibility(b, []taskdom.AccessScope{*scope})
+	query += " AND (pa.task_id IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE tasks.id=pa.task_id AND tasks.deleted_at IS NULL AND " + strings.Join(b.whereClauses, " AND ") + "))"
+	return query, b.args
 }

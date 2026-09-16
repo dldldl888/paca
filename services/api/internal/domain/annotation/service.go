@@ -2,6 +2,7 @@ package annotationdom
 
 import (
 	"context"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 
 	"github.com/google/uuid"
 )
@@ -89,6 +90,7 @@ type CreateAnnotationInput struct {
 // unpaginated project scan is fine); a non-nil Limit switches on
 // cursor-based pagination and hasMore reporting.
 type SearchFilter struct {
+	Visibility    *taskdom.AccessScope `json:"-"`
 	EnvironmentID *uuid.UUID
 	PortForwardID *uuid.UUID
 	Status        *string

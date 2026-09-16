@@ -208,3 +208,31 @@ func TestGetAttachmentContent_TooLarge_Returns413(t *testing.T) {
 		t.Fatalf("expected 413, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// Document completion must bind the route document/project, never body IDs.
+type docCompletionCapture struct {
+	attachmentdom.DocFileService
+	input attachmentdom.DocCompleteUploadInput
+	calls int
+}
+
+func (s *docCompletionCapture) CompleteDocUpload(_ context.Context, in attachmentdom.DocCompleteUploadInput) (*attachmentdom.File, error) {
+	s.calls++
+	s.input = in
+	return &attachmentdom.File{ID: in.FileID}, nil
+}
+func TestDocCompleteUploadBindsRoute(t *testing.T) {
+	svc := &docCompletionCapture{}
+	r := chi.NewRouter()
+	r.Post("/projects/{projectId}/docs/{docId}/files/complete-upload", handler.NewDocFileHandler(svc).CompleteDocUpload)
+	project, doc, file := uuid.New(), uuid.New(), uuid.New()
+	path := "/projects/" + project.String() + "/docs/" + doc.String() + "/files/complete-upload"
+	result := doAttachRequest(t, r, http.MethodPost, path, map[string]any{"file_id": file, "doc_id": uuid.New(), "project_id": uuid.New()})
+	if result.Code != http.StatusCreated || svc.calls != 1 || svc.input.ProjectID != project || svc.input.DocID != doc || svc.input.FileID != file {
+		t.Fatalf("route binding lost: status=%d input=%+v", result.Code, svc.input)
+	}
+	result = doAttachRequest(t, r, http.MethodPost, "/projects/invalid/docs/"+doc.String()+"/files/complete-upload", map[string]any{"file_id": file})
+	if result.Code != http.StatusBadRequest || svc.calls != 1 {
+		t.Fatal("invalid route reached completion")
+	}
+}

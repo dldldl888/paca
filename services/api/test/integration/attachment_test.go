@@ -281,7 +281,7 @@ func buildAttachmentTestRouter(attachRepo *fakeAttachmentRepo, store *fakeStorag
 	sprintService := sprintsvc.New(newFakeSprintRepoIT(), taskRepo, nil)
 	viewService := sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil)
 	active := tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)
-	attachmentService := attachmentsvc.New(attachRepo, attachmentsvc.NewTaskOwnerChecker(taskRepo), fakeDocChecker{}, store, "test-bucket")
+	attachmentService := attachmentsvc.New(attachRepo, taskService, fakeDocChecker{}, store, "test-bucket")
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	return router.New(router.Deps{
@@ -310,8 +310,7 @@ func buildAvatarTestRouter(attachRepo *fakeAttachmentRepo, store *fakeStorageCli
 	refreshStore := &fakeRefreshStore{}
 	userRepo := newFakeUserRepo()
 	authService := authsvc.New(userRepo, tm, refreshStore, 168*time.Hour, 24*time.Hour)
-	taskRepo := newFakeTaskRepoIT()
-	attachmentService := attachmentsvc.New(attachRepo, attachmentsvc.NewTaskOwnerChecker(taskRepo), fakeDocChecker{}, store, "test-bucket")
+	attachmentService := attachmentsvc.New(attachRepo, nil, fakeDocChecker{}, store, "test-bucket")
 	userService := usersvc.New(userRepo).WithAvatarService(attachmentService)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -339,7 +338,7 @@ func buildProjectAvatarTestRouter(attachRepo *fakeAttachmentRepo, store *fakeSto
 	projectRepo := newFakeProjectRepo()
 	taskRepo := newFakeTaskRepoIT()
 	projectService := projectsvc.New(projectRepo, taskRepo, nil)
-	attachmentService := attachmentsvc.New(attachRepo, attachmentsvc.NewTaskOwnerChecker(taskRepo), fakeDocChecker{}, store, "test-bucket")
+	attachmentService := attachmentsvc.New(attachRepo, nil, fakeDocChecker{}, store, "test-bucket")
 	projectService.WithAvatarService(attachmentService)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -362,6 +361,8 @@ func fullPermStore(projectID uuid.UUID) *projectPermStore {
 		projectPerms: map[uuid.UUID][]authz.Permission{
 			projectID: {
 				authz.PermissionTasksRead,
+				authz.PermissionTasksReadAll,
+				authz.PermissionTasksManage,
 				authz.PermissionTasksWrite,
 			},
 		},

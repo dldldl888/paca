@@ -50,7 +50,9 @@ type DocUploadInput struct {
 
 // DocCompleteUploadInput carries parameters for finishing a doc file upload.
 type DocCompleteUploadInput struct {
-	FileID uuid.UUID
+	ProjectID uuid.UUID
+	DocID     uuid.UUID
+	FileID    uuid.UUID
 	// UploadID and Parts are required only for multipart uploads.
 	UploadID *string
 	Parts    []CompletedPart

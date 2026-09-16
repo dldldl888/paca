@@ -2,6 +2,7 @@ package annotationdom
 
 import (
 	"context"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,11 +14,11 @@ type Repository interface {
 	// whose PagePath equals pagePath, oldest first, each with Comments
 	// populated — the extension's own hot path, called on every preview
 	// page load.
-	ListForPage(ctx context.Context, portForwardID uuid.UUID, pagePath string) ([]*PageAnnotation, error)
+	ListForPage(ctx context.Context, portForwardID uuid.UUID, pagePath string, scope taskdom.AccessScope) ([]*PageAnnotation, error)
 	// ListForPortForward returns every non-deleted annotation for
 	// portForwardID across all pages it serves, newest first — backs the
 	// web app's port-forward-scoped Comments tab.
-	ListForPortForward(ctx context.Context, portForwardID uuid.UUID) ([]*PageAnnotation, error)
+	ListForPortForward(ctx context.Context, portForwardID uuid.UUID, scope taskdom.AccessScope) ([]*PageAnnotation, error)
 	// FindVisibleInProject returns a single annotation by ID, but only if
 	// it belongs to projectID — mirrors
 	// environmentdom.Repository.FindVisibleEnvironmentInProject. Returns

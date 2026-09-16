@@ -9,6 +9,7 @@ package annotationsvc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	environmentdom "github.com/Paca-AI/api/internal/domain/environment"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
 )
 
 // presignedUploadTTL bounds how long a screenshot upload URL stays valid —
@@ -113,6 +115,8 @@ func verifyAnnotationScreenshotFile(f *attachmentdom.File, uploadedBy uuid.UUID)
 // Service is the concrete PageAnnotation service.
 type Service struct {
 	repo      annotationdom.Repository
+	access    taskdom.AccessPolicy
+	checker   taskdom.AccessChecker
 	envSvc    environmentdom.Service
 	tasks     TaskCreator
 	attach    TaskAttachmentLinker
@@ -165,7 +169,11 @@ func (s *Service) ListForPage(ctx context.Context, projectID, environmentID, por
 	if err := s.checkPortForward(ctx, projectID, environmentID, portForwardID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListForPage(ctx, portForwardID, pagePath)
+	scope, err := s.taskScope(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListForPage(ctx, portForwardID, pagePath, scope)
 }
 
 // ListForPortForward returns every annotation across every page portForwardID
@@ -174,23 +182,37 @@ func (s *Service) ListForPortForward(ctx context.Context, projectID, environment
 	if err := s.checkPortForward(ctx, projectID, environmentID, portForwardID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListForPortForward(ctx, portForwardID)
+	scope, err := s.taskScope(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListForPortForward(ctx, portForwardID, scope)
 }
 
 // Get returns annotationID if it belongs to projectID.
 func (s *Service) Get(ctx context.Context, projectID, annotationID uuid.UUID) (*annotationdom.PageAnnotation, error) {
-	return s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	return s.get(ctx, projectID, annotationID, taskdom.AccessRead)
 }
 
 // SearchInProject returns annotations across the whole project matching
 // filter, project-wide (not scoped to one port forward) — see
 // annotationdom.SearchFilter.
 func (s *Service) SearchInProject(ctx context.Context, projectID uuid.UUID, filter annotationdom.SearchFilter) ([]*annotationdom.PageAnnotation, bool, error) {
+	scope, err := s.taskScope(ctx, projectID)
+	if err != nil {
+		return nil, false, err
+	}
+	filter.Visibility = &scope
 	return s.repo.SearchInProject(ctx, projectID, filter)
 }
 
 // Create adds a new page annotation.
 func (s *Service) Create(ctx context.Context, projectID, environmentID, portForwardID uuid.UUID, in annotationdom.CreateAnnotationInput) (*annotationdom.PageAnnotation, error) {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, annotationdom.ErrAnnotationNotFound
+	}
+	in.CreatedBy = actor
 	if err := s.checkPortForward(ctx, projectID, environmentID, portForwardID); err != nil {
 		return nil, err
 	}
@@ -257,33 +279,43 @@ func (s *Service) Create(ctx context.Context, projectID, environmentID, portForw
 
 // Resolve marks an annotation resolved.
 func (s *Service) Resolve(ctx context.Context, projectID, annotationID, resolvedBy uuid.UUID) (*annotationdom.PageAnnotation, error) {
-	if _, err := s.repo.FindVisibleInProject(ctx, projectID, annotationID); err != nil {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, annotationdom.ErrAnnotationNotFound
+	}
+	resolvedBy = actor
+	if _, err := s.get(ctx, projectID, annotationID, taskdom.AccessProgress); err != nil {
 		return nil, err
 	}
 	now := time.Now()
 	if err := s.repo.SetStatus(ctx, annotationID, annotationdom.StatusResolved, &resolvedBy, &now); err != nil {
 		return nil, err
 	}
-	return s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	return s.get(ctx, projectID, annotationID, taskdom.AccessRead)
 }
 
 // Reopen moves a resolved annotation back to open.
 func (s *Service) Reopen(ctx context.Context, projectID, annotationID uuid.UUID) (*annotationdom.PageAnnotation, error) {
-	if _, err := s.repo.FindVisibleInProject(ctx, projectID, annotationID); err != nil {
+	if _, err := s.get(ctx, projectID, annotationID, taskdom.AccessProgress); err != nil {
 		return nil, err
 	}
 	if err := s.repo.SetStatus(ctx, annotationID, annotationdom.StatusOpen, nil, nil); err != nil {
 		return nil, err
 	}
-	return s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	return s.get(ctx, projectID, annotationID, taskdom.AccessRead)
 }
 
 // AddComment appends a reply to an annotation's thread.
 func (s *Service) AddComment(ctx context.Context, projectID, annotationID, createdBy uuid.UUID, body string) (*annotationdom.AnnotationComment, error) {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, annotationdom.ErrAnnotationNotFound
+	}
+	createdBy = actor
 	if strings.TrimSpace(body) == "" {
 		return nil, annotationdom.ErrCommentBodyEmpty
 	}
-	if _, err := s.repo.FindVisibleInProject(ctx, projectID, annotationID); err != nil {
+	if _, err := s.get(ctx, projectID, annotationID, taskdom.AccessProgress); err != nil {
 		return nil, err
 	}
 	now := time.Now()
@@ -305,12 +337,20 @@ func (s *Service) AddComment(ctx context.Context, projectID, annotationID, creat
 // canonical link (see buildTaskDescription) and links the two together —
 // errors if the annotation already has one.
 func (s *Service) CreateTaskFromAnnotation(ctx context.Context, projectID, annotationID uuid.UUID, in annotationdom.CreateTaskFromAnnotationInput) (*annotationdom.PageAnnotation, error) {
-	a, err := s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	a, err := s.Get(ctx, projectID, annotationID)
 	if err != nil {
 		return nil, err
 	}
 	if a.TaskID != nil {
 		return nil, annotationdom.ErrAnnotationAlreadyHasTask
+	}
+
+	scope, err := s.taskScope(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !scope.CanCreate() {
+		return nil, taskdom.ErrTaskForbidden
 	}
 
 	// Claim before calling out to task creation — see
@@ -348,7 +388,7 @@ func (s *Service) CreateTaskFromAnnotation(ctx context.Context, projectID, annot
 			ID:        uuid.New(),
 			TaskID:    task.ID,
 			FileID:    *a.ScreenshotFileID,
-			CreatedBy: &in.ReporterID,
+			CreatedBy: &scope.UserID,
 			CreatedAt: time.Now(),
 		}); err != nil {
 			// The task already exists at this point — a failed screenshot
@@ -367,7 +407,7 @@ func (s *Service) CreateTaskFromAnnotation(ctx context.Context, projectID, annot
 	if err := s.setTaskIDWithRetry(ctx, annotationID, task.ID); err != nil {
 		return nil, fmt.Errorf("annotation svc: link created task %s to annotation: %w", task.ID, err)
 	}
-	return s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	return s.get(ctx, projectID, annotationID, taskdom.AccessRead)
 }
 
 // setTaskIDCreationLinkRetries and setTaskIDRetryDelay bound the
@@ -397,6 +437,11 @@ func (s *Service) setTaskIDWithRetry(ctx context.Context, annotationID, taskID u
 // InitiateScreenshotUpload creates a pending file record and returns a
 // presigned URL the client can PUT the screenshot bytes to directly.
 func (s *Service) InitiateScreenshotUpload(ctx context.Context, projectID, environmentID, portForwardID uuid.UUID, in annotationdom.InitiateScreenshotUploadInput) (*annotationdom.ScreenshotUploadSession, error) {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, annotationdom.ErrAnnotationNotFound
+	}
+	in.UploadedBy = actor
 	if err := s.checkPortForward(ctx, projectID, environmentID, portForwardID); err != nil {
 		return nil, err
 	}
@@ -422,14 +467,18 @@ func (s *Service) InitiateScreenshotUpload(ctx context.Context, projectID, envir
 // verifyAnnotationScreenshotFile) — rejects a caller passing someone else's
 // (or an unrelated) files.id here.
 func (s *Service) CompleteScreenshotUpload(ctx context.Context, projectID, annotationID, fileID, completedBy uuid.UUID) (*annotationdom.PageAnnotation, error) {
-	if _, err := s.repo.FindVisibleInProject(ctx, projectID, annotationID); err != nil {
+	if _, err := s.get(ctx, projectID, annotationID, taskdom.AccessProgress); err != nil {
 		return nil, err
 	}
 	f, err := s.files.FindFileByID(ctx, fileID)
 	if err != nil {
 		return nil, fmt.Errorf("annotation svc: find screenshot file: %w", err)
 	}
-	if err := verifyAnnotationScreenshotFile(f, completedBy); err != nil {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok || actor != completedBy {
+		return nil, annotationdom.ErrAnnotationScreenshotMismatch
+	}
+	if err := verifyAnnotationScreenshotFile(f, actor); err != nil {
 		return nil, err
 	}
 	if err := s.repo.MarkScreenshotFileUploaded(ctx, fileID); err != nil {
@@ -438,7 +487,7 @@ func (s *Service) CompleteScreenshotUpload(ctx context.Context, projectID, annot
 	if err := s.repo.SetScreenshotFileID(ctx, annotationID, fileID); err != nil {
 		return nil, err
 	}
-	return s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	return s.get(ctx, projectID, annotationID, taskdom.AccessRead)
 }
 
 // ResolvePortForward looks up which project/environment/port-forward
@@ -450,7 +499,7 @@ func (s *Service) ResolvePortForward(ctx context.Context, userID uuid.UUID, host
 // GetScreenshotURL returns a presigned GET URL for an annotation's uploaded
 // screenshot.
 func (s *Service) GetScreenshotURL(ctx context.Context, projectID, annotationID uuid.UUID) (string, error) {
-	a, err := s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	a, err := s.Get(ctx, projectID, annotationID)
 	if err != nil {
 		return "", err
 	}
@@ -508,4 +557,41 @@ func sanitizeFileName(name string) string {
 		return "screenshot.png"
 	}
 	return name
+}
+
+// WithTaskAccess reuses the current task policy for both object checks and SQL lists.
+func (s *Service) WithTaskAccess(policy taskdom.AccessPolicy, checker taskdom.AccessChecker) *Service {
+	s.access, s.checker = policy, checker
+	return s
+}
+
+func (s *Service) taskScope(ctx context.Context, projectID uuid.UUID) (taskdom.AccessScope, error) {
+	if s.access == nil {
+		return taskdom.AccessScope{}, nil
+	}
+	scope, err := s.access.ResolveTaskAccess(ctx, projectID)
+	// Existing unbound annotations retain their project/environment permissions.
+	if errors.Is(err, taskdom.ErrTaskNotFound) {
+		return taskdom.AccessScope{}, nil
+	}
+	return scope, err
+}
+
+func (s *Service) get(ctx context.Context, projectID, annotationID uuid.UUID, action taskdom.AccessAction) (*annotationdom.PageAnnotation, error) {
+	a, err := s.repo.FindVisibleInProject(ctx, projectID, annotationID)
+	if err != nil {
+		return nil, err
+	}
+	if a.TaskID != nil {
+		if s.checker == nil {
+			return nil, annotationdom.ErrAnnotationNotFound
+		}
+		if _, err := s.checker.CheckTaskAccess(ctx, projectID, *a.TaskID, action); err != nil {
+			if errors.Is(err, taskdom.ErrTaskNotFound) {
+				return nil, annotationdom.ErrAnnotationNotFound
+			}
+			return nil, err
+		}
+	}
+	return a, nil
 }

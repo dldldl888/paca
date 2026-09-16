@@ -67,6 +67,16 @@ func (h *DocFileHandler) InitiateDocUpload(w http.ResponseWriter, r *http.Reques
 // CompleteDocUpload handles POST /projects/:projectId/docs/:docId/files/complete-upload.
 // Marks the file as uploaded and returns the file metadata.
 func (h *DocFileHandler) CompleteDocUpload(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseProjectID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	docID, err := parseDocID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
 	var req dto.CompleteUploadRequest
 	if !middleware.BindJSON(w, r, &req) {
 		return
@@ -81,6 +91,7 @@ func (h *DocFileHandler) CompleteDocUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	f, err := h.svc.CompleteDocUpload(r.Context(), attachmentdom.DocCompleteUploadInput{
+		ProjectID: projectID, DocID: docID,
 		FileID:   req.FileID,
 		UploadID: req.UploadID,
 		Parts:    parts,

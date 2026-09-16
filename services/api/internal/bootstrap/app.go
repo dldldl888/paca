@@ -242,13 +242,14 @@ func New(cfg *config.Config) (*App, error) {
 		}
 	}
 
-	attachmentService := attachmentsvc.New(attachmentRepo, attachmentsvc.NewTaskOwnerChecker(taskRepo), attachmentsvc.NewDocOwnerChecker(docRepo), storageClient, cfg.Storage.Bucket)
+	attachmentService := attachmentsvc.New(attachmentRepo, taskService, attachmentsvc.NewDocOwnerChecker(docRepo), storageClient, cfg.Storage.Bucket)
 	// annotationService backs the Paca browser extension's on-page comments
 	// (apps/extension) — attachmentRepo satisfies TaskAttachmentLinker
 	// directly (its own CreateTaskAttachment), and taskService/
 	// environmentService/storageClient are the same instances already
 	// wired above, not new ones.
 	annotationService := annotationsvc.New(annotationRepo, environmentService, taskService, attachmentRepo, attachmentRepo, storageClient, cfg.Storage.Bucket).
+		WithTaskAccess(taskService, taskService).
 		WithPublicURL(cfg.Server.PublicURL)
 	userService = userService.WithAvatarService(attachmentService)
 	agentService = agentService.WithAvatarService(attachmentService)

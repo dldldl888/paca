@@ -3,6 +3,7 @@ package annotationsvc
 import (
 	"context"
 	"errors"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"testing"
 	"time"
 
@@ -90,10 +91,10 @@ type fakeAnnotationRepo struct {
 	setTaskIDCalls    int
 }
 
-func (r *fakeAnnotationRepo) ListForPage(context.Context, uuid.UUID, string) ([]*annotationdom.PageAnnotation, error) {
+func (r *fakeAnnotationRepo) ListForPage(context.Context, uuid.UUID, string, taskdom.AccessScope) ([]*annotationdom.PageAnnotation, error) {
 	return nil, nil
 }
-func (r *fakeAnnotationRepo) ListForPortForward(context.Context, uuid.UUID) ([]*annotationdom.PageAnnotation, error) {
+func (r *fakeAnnotationRepo) ListForPortForward(context.Context, uuid.UUID, taskdom.AccessScope) ([]*annotationdom.PageAnnotation, error) {
 	return nil, nil
 }
 func (r *fakeAnnotationRepo) FindVisibleInProject(_ context.Context, projectID, annotationID uuid.UUID) (*annotationdom.PageAnnotation, error) {
@@ -215,7 +216,7 @@ func TestCompleteScreenshotUpload_OwnFile_Succeeds(t *testing.T) {
 	}}
 	svc := New(repo, nil, nil, nil, files, nil, "test-bucket")
 
-	if _, err := svc.CompleteScreenshotUpload(context.Background(), projectID, annotationID, fileID, uploader); err != nil {
+	if _, err := svc.CompleteScreenshotUpload(authz.WithActorID(context.Background(), uploader), projectID, annotationID, fileID, uploader); err != nil {
 		t.Fatalf("expected the uploader's own screenshot to be accepted, got %v", err)
 	}
 	if repo.annotations[annotationID].ScreenshotFileID == nil || *repo.annotations[annotationID].ScreenshotFileID != fileID {
@@ -336,9 +337,12 @@ func TestCreateTaskFromAnnotation_AlreadyHasTask_Rejected(t *testing.T) {
 		annotationID: {ID: annotationID, ProjectID: projectID, Body: "fix this", TaskID: &existingTaskID},
 	}}
 	tasks := &fakeTaskCreator{}
-	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket")
+	actor := uuid.New()
+	ctx := authz.WithActorID(context.Background(), actor)
+	policy := annotationTestPolicy{actor: actor, project: projectID}
+	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket").WithTaskAccess(policy, policy)
 
-	_, err := svc.CreateTaskFromAnnotation(context.Background(), projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
+	_, err := svc.CreateTaskFromAnnotation(ctx, projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
 	if !errors.Is(err, annotationdom.ErrAnnotationAlreadyHasTask) {
 		t.Fatalf("expected ErrAnnotationAlreadyHasTask, got %v", err)
 	}
@@ -363,9 +367,12 @@ func TestCreateTaskFromAnnotation_ClaimConflict_Rejected(t *testing.T) {
 		claimTaskCreationOverride: func() (bool, error) { return false, nil },
 	}
 	tasks := &fakeTaskCreator{}
-	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket")
+	actor := uuid.New()
+	ctx := authz.WithActorID(context.Background(), actor)
+	policy := annotationTestPolicy{actor: actor, project: projectID}
+	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket").WithTaskAccess(policy, policy)
 
-	_, err := svc.CreateTaskFromAnnotation(context.Background(), projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
+	_, err := svc.CreateTaskFromAnnotation(ctx, projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
 	if !errors.Is(err, annotationdom.ErrAnnotationTaskCreationInProgress) {
 		t.Fatalf("expected ErrAnnotationTaskCreationInProgress, got %v", err)
 	}
@@ -381,9 +388,12 @@ func TestCreateTaskFromAnnotation_Succeeds(t *testing.T) {
 		annotationID: {ID: annotationID, ProjectID: projectID, Body: "fix this"},
 	}}
 	tasks := &fakeTaskCreator{}
-	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket")
+	actor := uuid.New()
+	ctx := authz.WithActorID(context.Background(), actor)
+	policy := annotationTestPolicy{actor: actor, project: projectID}
+	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket").WithTaskAccess(policy, policy)
 
-	a, err := svc.CreateTaskFromAnnotation(context.Background(), projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
+	a, err := svc.CreateTaskFromAnnotation(ctx, projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -410,9 +420,12 @@ func TestCreateTaskFromAnnotation_TransientSetTaskIDFailure_RecoversWithoutDupli
 		setTaskIDFailures: setTaskIDCreationLinkRetries - 1, // fails until the last allowed attempt
 	}
 	tasks := &fakeTaskCreator{}
-	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket")
+	actor := uuid.New()
+	ctx := authz.WithActorID(context.Background(), actor)
+	policy := annotationTestPolicy{actor: actor, project: projectID}
+	svc := New(repo, nil, tasks, nil, nil, nil, "test-bucket").WithTaskAccess(policy, policy)
 
-	a, err := svc.CreateTaskFromAnnotation(context.Background(), projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
+	a, err := svc.CreateTaskFromAnnotation(ctx, projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{ReporterID: uuid.New()})
 	if err != nil {
 		t.Fatalf("expected the retry to recover, got %v", err)
 	}
@@ -425,4 +438,50 @@ func TestCreateTaskFromAnnotation_TransientSetTaskIDFailure_RecoversWithoutDupli
 	if repo.setTaskIDCalls != setTaskIDCreationLinkRetries {
 		t.Errorf("expected %d SetTaskID attempts, got %d", setTaskIDCreationLinkRetries, repo.setTaskIDCalls)
 	}
+}
+
+func TestTaskBoundAnnotationFailsClosed(t *testing.T) {
+	projectID, annotationID, taskID := uuid.New(), uuid.New(), uuid.New()
+	repo := &fakeAnnotationRepo{annotations: map[uuid.UUID]*annotationdom.PageAnnotation{annotationID: {ID: annotationID, ProjectID: projectID, TaskID: &taskID, Body: "secret"}}}
+	svc := New(repo, nil, nil, nil, nil, nil, "")
+	if a, err := svc.Get(context.Background(), projectID, annotationID); err == nil {
+		t.Fatalf("hidden annotation returned: %+v", a)
+	}
+	if _, err := svc.Resolve(context.Background(), projectID, annotationID, uuid.New()); err == nil {
+		t.Error("resolved hidden annotation")
+	}
+	if _, err := svc.Reopen(context.Background(), projectID, annotationID); err == nil {
+		t.Error("reopened hidden annotation")
+	}
+	if _, err := svc.AddComment(context.Background(), projectID, annotationID, uuid.New(), "reply"); err == nil {
+		t.Error("commented on hidden annotation")
+	}
+}
+func TestCreateTaskRefusesBeforeClaimWithoutPolicy(t *testing.T) {
+	projectID, annotationID := uuid.New(), uuid.New()
+	claims := 0
+	repo := &fakeAnnotationRepo{annotations: map[uuid.UUID]*annotationdom.PageAnnotation{annotationID: {ID: annotationID, ProjectID: projectID}}, claimTaskCreationOverride: func() (bool, error) { claims++; return false, nil }}
+	svc := New(repo, nil, nil, nil, nil, nil, "")
+	_, err := svc.CreateTaskFromAnnotation(context.Background(), projectID, annotationID, annotationdom.CreateTaskFromAnnotationInput{})
+	if err == nil || claims != 0 {
+		t.Fatalf("claim made without authority: claims=%d err=%v", claims, err)
+	}
+}
+
+type annotationTestPolicy struct{ actor, project uuid.UUID }
+
+func (p annotationTestPolicy) ResolveTaskAccess(ctx context.Context, pid uuid.UUID) (taskdom.AccessScope, error) {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok || actor != p.actor || pid != p.project {
+		return taskdom.AccessScope{}, taskdom.ErrTaskNotFound
+	}
+	return taskdom.AccessScope{ProjectID: pid, UserID: actor, ReadAll: true, Write: true, Manage: true}, nil
+}
+func (p annotationTestPolicy) CheckTaskAccess(ctx context.Context, pid, id uuid.UUID, action taskdom.AccessAction) (*taskdom.Task, error) {
+	scope, err := p.ResolveTaskAccess(ctx, pid)
+	if err != nil {
+		return nil, err
+	}
+	task := &taskdom.Task{ID: id, ProjectID: pid}
+	return task, scope.Require(task, action)
 }

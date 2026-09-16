@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/storage"
 )
 
@@ -16,6 +17,10 @@ import (
 // presigned upload session.  The storage key is organised under docs/{docId}/
 // to keep document files separate from task files.
 func (s *Service) InitiateDocUpload(ctx context.Context, in attachmentdom.DocUploadInput) (*attachmentdom.UploadSession, error) {
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, attachmentdom.ErrFileNotFound
+	}
 	if strings.TrimSpace(in.FileName) == "" {
 		return nil, attachmentdom.ErrFileNameEmpty
 	}
@@ -39,7 +44,7 @@ func (s *Service) InitiateDocUpload(ctx context.Context, in attachmentdom.DocUpl
 		ContentType:  in.ContentType,
 		FileSize:     in.FileSize,
 		UploadStatus: attachmentdom.UploadStatusPending,
-		UploadedBy:   &in.UploadedBy,
+		UploadedBy:   &actor,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -73,9 +78,22 @@ func (s *Service) InitiateDocUpload(ctx context.Context, in attachmentdom.DocUpl
 
 // CompleteDocUpload marks the file as uploaded and returns the updated file record.
 func (s *Service) CompleteDocUpload(ctx context.Context, in attachmentdom.DocCompleteUploadInput) (*attachmentdom.File, error) {
+	if s.docChecker == nil {
+		return nil, attachmentdom.ErrDocNotInProject
+	}
+	if err := s.docChecker.DocBelongsToProject(ctx, in.ProjectID, in.DocID); err != nil {
+		return nil, err
+	}
+	actor, ok := authz.ActorIDFromContext(ctx)
+	if !ok {
+		return nil, attachmentdom.ErrFileNotFound
+	}
 	f, err := s.repo.FindFileByID(ctx, in.FileID)
 	if err != nil {
 		return nil, err
+	}
+	if !uploadMatches(f, "docs", in.DocID, in.FileID, actor) {
+		return nil, attachmentdom.ErrFileNotFound
 	}
 	if f.UploadStatus != attachmentdom.UploadStatusPending {
 		return nil, attachmentdom.ErrUploadNotPending

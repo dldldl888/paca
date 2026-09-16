@@ -249,7 +249,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 			t.Fatalf("ensure bucket: %v", err)
 		}
 		docRepoForAttachments := pgRepo.NewDocumentRepository(db)
-		attachmentService = attachmentsvc.New(attachmentRepo, attachmentsvc.NewTaskOwnerChecker(taskRepo), attachmentsvc.NewDocOwnerChecker(docRepoForAttachments), storageClient, attachBucket)
+		attachmentService = attachmentsvc.New(attachmentRepo, taskService, attachmentsvc.NewDocOwnerChecker(docRepoForAttachments), storageClient, attachBucket)
 	}
 
 	cookieCfg := handler.CookieConfig{
