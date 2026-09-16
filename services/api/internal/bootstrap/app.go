@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"log/slog"
 	"net/http"
 	"time"
@@ -74,6 +75,8 @@ type App struct {
 	dueDateScheduler     *worker.DueDateScheduler
 	cronScheduler        *worker.CronScheduler
 	waitScheduler        *worker.WaitScheduler
+	deliveryStop         func(context.Context) error
+	deliveryCoordinator  *pgRepo.AuthorizationDelivery
 	log                  *slog.Logger
 }
 
@@ -260,6 +263,23 @@ func New(cfg *config.Config) (*App, error) {
 		}
 	}
 	agentService.WithPrivateRuns(instanceID, agentRepo, docService, annotationService, automationService)
+	var coordinator *pgRepo.AuthorizationDelivery
+	var deliveryStop func(context.Context) error
+	if instanceID != uuid.Nil {
+		gate := delivery.NewGate()
+		coordinator = pgRepo.NewAuthorizationDelivery(db, redisClient, instanceID.String())
+		coordinator.Reconcile = agentService.ReconcilePrivateRuns
+		agentService.WithDeliveryGate(gate)
+		notificationService.WithCurrentDelivery(gate, taskService)
+		bootCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		deliveryStop, err = coordinator.StartParticipant(bootCtx, gate)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("delivery enrollment: %w", err)
+		}
+		coordinator.Install()
+	}
+
 	userService = userService.WithAvatarService(attachmentService)
 	agentService = agentService.WithAvatarService(attachmentService)
 	// Unlike userService/agentService above, this return value isn't
@@ -467,7 +487,7 @@ func New(cfg *config.Config) (*App, error) {
 		Agent:              agentHandler,
 		Environment:        environmentHandler,
 		Annotation:         annotationHandler,
-		AgentRun:           &handler.AgentRunHandler{Service: agentService, InternalKey: cfg.AIAgentInternalKey},
+		AgentRun:           &handler.AgentRunHandler{Service: agentService, InternalKey: cfg.AIAgentInternalKey, Delivery: coordinator},
 		Conversation:       convHandler,
 		Automation:         automationHandler,
 		Settings:           handler.NewSettingsHandler(settingsService).WithAvatarService(attachmentService),
@@ -485,13 +505,22 @@ func New(cfg *config.Config) (*App, error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	return &App{server: srv, publisher: publisher, activityConsumer: activityConsumer, docActivityConsumer: docActivityConsumer, notificationConsumer: notificationConsumer, pluginEventConsumer: pluginEventConsumer, environmentConsumer: environmentConsumer, automationConsumer: automationConsumer, agentQueueConsumer: agentQueueConsumer, dueDateScheduler: dueDateScheduler, cronScheduler: cronScheduler, waitScheduler: waitScheduler, log: log}, nil
+	return &App{deliveryStop: deliveryStop, deliveryCoordinator: coordinator, server: srv, publisher: publisher, activityConsumer: activityConsumer, docActivityConsumer: docActivityConsumer, notificationConsumer: notificationConsumer, pluginEventConsumer: pluginEventConsumer, environmentConsumer: environmentConsumer, automationConsumer: automationConsumer, agentQueueConsumer: agentQueueConsumer, dueDateScheduler: dueDateScheduler, cronScheduler: cronScheduler, waitScheduler: waitScheduler, log: log}, nil
 }
 
 // Run starts the activity consumers and the HTTP server.
 // It returns when the server stops.
 func (a *App) Run() error {
 	a.log.Info("starting server", "addr", a.server.Addr)
+	if a.deliveryCoordinator != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := a.deliveryCoordinator.Mutate(ctx, nil); err != nil {
+				a.log.Error("authorization recovery remains closed", "error", err)
+			}
+		}()
+	}
 	a.activityConsumer.Start(context.Background())
 	a.docActivityConsumer.Start(context.Background())
 	a.notificationConsumer.Start(context.Background())
@@ -518,6 +547,11 @@ func (a *App) Shutdown(ctx context.Context) error {
 	a.dueDateScheduler.Stop()
 	a.cronScheduler.Stop()
 	a.waitScheduler.Stop()
+	if a.deliveryStop != nil {
+		if err := a.deliveryStop(ctx); err != nil {
+			return err
+		}
+	}
 	if a.publisher != nil {
 		a.publisher.Close()
 	}

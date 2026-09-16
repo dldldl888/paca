@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/Paca-AI/api/internal/apierr"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,7 +75,7 @@ func (r *UserRepository) List(ctx context.Context, offset, limit int) ([]*userdo
 	}
 
 	var rows []userReadRow
-	if err := r.db.SelectContext(ctx, &rows, `
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, `
 		SELECT `+userReadCols+`
 		FROM users
 		`+userReadJoin+`
@@ -95,7 +97,7 @@ func (r *UserRepository) List(ctx context.Context, offset, limit int) ([]*userdo
 // identity, not a real user — matching List's filter.
 func (r *UserRepository) CountUsers(ctx context.Context) (int64, error) {
 	var total int64
-	if err := r.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND username != '_paca_agent_bot'`); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &total, `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND username != '_paca_agent_bot'`); err != nil {
 		return 0, fmt.Errorf("user repo: count users: %w", err)
 	}
 	return total, nil
@@ -104,7 +106,7 @@ func (r *UserRepository) CountUsers(ctx context.Context) (int64, error) {
 // FindByID returns the user with the given primary key, or userdom.ErrNotFound.
 func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (*userdom.User, error) {
 	var row userReadRow
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+userReadCols+`
 		FROM users
 		`+userReadJoin+`
@@ -121,7 +123,7 @@ func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (*userdom.U
 // FindByUsername returns the user with the given username, or userdom.ErrNotFound.
 func (r *UserRepository) FindByUsername(ctx context.Context, username string) (*userdom.User, error) {
 	var row userReadRow
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+userReadCols+`
 		FROM users
 		`+userReadJoin+`
@@ -140,7 +142,7 @@ func (r *UserRepository) FindByUsername(ctx context.Context, username string) (*
 // soft-deleted user's email is freed up for reuse, same as username.
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*userdom.User, error) {
 	var row userReadRow
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+userReadCols+`
 		FROM users
 		`+userReadJoin+`
@@ -158,7 +160,7 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*userdo
 // including rows that were soft-deleted.
 func (r *UserRepository) FindByUsernameIncludingDeleted(ctx context.Context, username string) (*userdom.User, error) {
 	var row userReadRow
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+userReadCols+`
 		FROM users
 		`+userReadJoin+`
@@ -178,7 +180,7 @@ func (r *UserRepository) FindByUsernameIncludingDeleted(ctx context.Context, use
 // a race to a concurrent request — see userRepoErr) rather than a raw
 // constraint-violation error.
 func (r *UserRepository) Create(ctx context.Context, u *userdom.User) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO users (id, username, password_hash, full_name, email, role_id, must_change_password, created_at, updated_at, deleted_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		u.ID.String(), u.Username, u.PasswordHash, u.FullName, u.Email,
@@ -193,17 +195,39 @@ func (r *UserRepository) Create(ctx context.Context, u *userdom.User) error {
 // Update saves changes to an existing user record. See Create's doc comment
 // re: username/email uniqueness errors.
 func (r *UserRepository) Update(ctx context.Context, u *userdom.User) error {
-	_, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		// Self-service profile/password/avatar writes must not restore a role copied
+		// before another transaction demoted this user. Only a current admin may
+		// change the persisted role; deletion has its own narrow writer below.
+		if _, installed := deliveryCoordinators.Load(r.db); installed {
+			var currentRole uuid.UUID
+			if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &currentRole, `SELECT role_id FROM users WHERE id=$1 AND deleted_at IS NULL`, u.ID); err != nil {
+				return err
+			}
+			if currentRole != u.RoleID {
+				actor, _ := authz.ActorIDFromContext(ctx)
+				allowed, err := authz.NewAuthorizer(NewAuthzPermissionStore(r.db)).HasPermissions(ctx, actor, nil, "", authz.PermissionUsersWrite)
+				if err != nil {
+					return err
+				}
+				if !allowed {
+					return apierr.New(apierr.CodeForbidden, "insufficient permissions")
+				}
+			}
+		}
+
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE users SET username = $1, password_hash = $2, full_name = $3, email = $4, role_id = $5,
-		  must_change_password = $6, avatar_key = $7, avatar_thumb_key = $8, updated_at = $9, deleted_at = $10
-		WHERE id = $11`,
-		u.Username, u.PasswordHash, u.FullName, u.Email, u.RoleID.String(),
-		u.MustChangePassword, u.AvatarKey, u.AvatarThumbKey, u.UpdatedAt, u.DeletedAt, u.ID.String(),
-	)
-	if err != nil {
-		return userRepoErr("update", err)
-	}
-	return nil
+		  must_change_password = $6, avatar_key = $7, avatar_thumb_key = $8, updated_at = $9
+		WHERE id = $10 AND deleted_at IS NULL`,
+			u.Username, u.PasswordHash, u.FullName, u.Email, u.RoleID.String(),
+			u.MustChangePassword, u.AvatarKey, u.AvatarThumbKey, u.UpdatedAt, u.ID.String(),
+		)
+		if err != nil {
+			return userRepoErr("update", err)
+		}
+		return nil
+	})
 }
 
 // userRepoErr maps a users-table write error to the matching userdom
@@ -230,12 +254,14 @@ func userRepoErr(op string, err error) error {
 
 // Delete soft-deletes the user by setting deleted_at.
 func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, id.String())
-	if err != nil {
-		return fmt.Errorf("user repo: delete: %w", err)
-	}
-	return nil
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		now := time.Now().UTC()
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, id.String())
+		if err != nil {
+			return fmt.Errorf("user repo: delete: %w", err)
+		}
+		return nil
+	})
 }
 
 // -- mapping helpers ---------------------------------------------------------

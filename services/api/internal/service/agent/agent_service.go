@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,17 +55,18 @@ const (
 
 // Service is the concrete AI Agent service.
 type Service struct {
-	instanceID  uuid.UUID
-	runRepo     runRepository
-	docs        docdom.DocumentService
-	annotations annotationdom.Service
-	automations automationdom.Service
-	repo        agentdom.Repository
-	projRepo    projectMemberWriter
-	publisher   *messaging.Publisher
-	pluginRepo  pluginFinder
-	encryptor   *secret.Encryptor
-	avatarSvc   attachmentdom.AvatarService
+	instanceID   uuid.UUID
+	runRepo      runRepository
+	deliveryGate *delivery.Gate
+	docs         docdom.DocumentService
+	annotations  annotationdom.Service
+	automations  automationdom.Service
+	repo         agentdom.Repository
+	projRepo     projectMemberWriter
+	publisher    *messaging.Publisher
+	pluginRepo   pluginFinder
+	encryptor    *secret.Encryptor
+	avatarSvc    attachmentdom.AvatarService
 	// environmentSvc resolves/validates static environments — used by
 	// CreateAgent/UpdateAgent to validate default_environment_id (see
 	// validateDefaultEnvironment) and by StartChatSession/
@@ -1764,6 +1766,11 @@ func (s *Service) Heartbeat(ctx context.Context, projectID, conversationID, memb
 // the plain running-conversation branch below never has a capacity
 // decision to make (it requires the conversation to already be running).
 func (s *Service) SendConversationMessage(ctx context.Context, projectID, conversationID uuid.UUID, message string, memberID uuid.UUID, contextItems []agentdom.ContextItemRef, onBusy string) error {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer leave()
 	if err := validateOnBusy(onBusy); err != nil {
 		return err
 	}
@@ -2003,6 +2010,11 @@ func (s *Service) GlobalHeartbeat(ctx context.Context, conversationID, actorUser
 
 // SendGlobalConversationMessage publishes a chat message to an active global conversation.
 func (s *Service) SendGlobalConversationMessage(ctx context.Context, conversationID uuid.UUID, message string, actorUserID uuid.UUID, contextItems []agentdom.ContextItemRef, onBusy string) error {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer leave()
 	if err := validateOnBusy(onBusy); err != nil {
 		return err
 	}
@@ -2113,6 +2125,11 @@ func (s *Service) ListChatSessions(ctx context.Context, projectID, agentID, memb
 // folder, or fails with ErrFolderNotFound if that's ambiguous — the caller
 // must ask the user to pick.
 func (s *Service) StartChatSession(ctx context.Context, projectID, agentID, memberID uuid.UUID, message string, environmentID, folderID *uuid.UUID, contextItems []agentdom.ContextItemRef, onBusy string) (*agentdom.AgentChatSession, *agentdom.AgentConversation, error) {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return nil, nil, gateErr
+	}
+	defer leave()
 	if err := validateOnBusy(onBusy); err != nil {
 		return nil, nil, err
 	}
@@ -2304,6 +2321,11 @@ func (s *Service) resolveWorkdirForConversation(ctx context.Context, projectID u
 // conversation going terminal still falls through to a brand-new
 // conversation_id below — its ephemeral sandbox really is gone for good.
 func (s *Service) SendChatMessage(ctx context.Context, projectID, sessionID, memberID uuid.UUID, message string, contextItems []agentdom.ContextItemRef, onBusy string) (*agentdom.AgentConversation, error) {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer leave()
 	if err := validateOnBusy(onBusy); err != nil {
 		return nil, err
 	}
@@ -2494,6 +2516,11 @@ func (s *Service) ListGlobalChatSessions(ctx context.Context, agentID, actorUser
 // StartGlobalChatSession creates a new global chat session and publishes
 // the initial message trigger.
 func (s *Service) StartGlobalChatSession(ctx context.Context, agentID, actorUserID uuid.UUID, message string, contextItems []agentdom.ContextItemRef, onBusy string) (*agentdom.AgentChatSession, *agentdom.AgentConversation, error) {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return nil, nil, gateErr
+	}
+	defer leave()
 	if err := validateOnBusy(onBusy); err != nil {
 		return nil, nil, err
 	}
@@ -2545,6 +2572,11 @@ func (s *Service) StartGlobalChatSession(ctx context.Context, agentID, actorUser
 // and publishes the trigger. Mirrors SendChatMessage's resume/terminal
 // handling — see its doc comment for the pause/resume rationale.
 func (s *Service) SendGlobalChatMessage(ctx context.Context, sessionID, actorUserID uuid.UUID, message string, contextItems []agentdom.ContextItemRef, onBusy string) (*agentdom.AgentConversation, error) {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer leave()
 	if err := validateOnBusy(onBusy); err != nil {
 		return nil, err
 	}
@@ -3461,6 +3493,11 @@ func (s *Service) dispatchPendingTrigger(ctx context.Context, pending *agentdom.
 			_, e = s.AuthorizeRun(ctx, conv.ID, conv.AgentID, false)
 		}
 		if e != nil {
+			if !RunDenied(e) {
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				return false, false, errors.Join(e, s.repo.CreatePendingTrigger(cleanup, pending))
+			}
 			return false, false, s.failQueuedRun(ctx, conv)
 		}
 	}
@@ -3561,6 +3598,11 @@ func (s *Service) requeueSkipped(ctx context.Context, skipped []*agentdom.Pendin
 // than dispatched; AdvanceFolderQueue is what re-tries those once that
 // folder actually frees up, from whichever agent's queue they're sitting in.
 func (s *Service) AdvanceQueue(ctx context.Context, agentID uuid.UUID, maxDispatch int) (dispatched int, err error) {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return 0, gateErr
+	}
+	defer leave()
 	if maxDispatch <= 0 {
 		return 0, nil
 	}
@@ -3641,6 +3683,11 @@ func (s *Service) AdvanceQueue(ctx context.Context, agentID uuid.UUID, maxDispat
 // meaningful regardless of how many terminal events arrive. Returns whether
 // it actually dispatched something.
 func (s *Service) AdvanceFolderQueue(ctx context.Context, environmentID uuid.UUID, folderID *uuid.UUID) (dispatchedOne bool, err error) {
+	ctx, _, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return false, gateErr
+	}
+	defer leave()
 	var skipped []*agentdom.PendingTrigger
 	// Wrapped in a closure, not `defer s.requeueSkipped(ctx, skipped, &err)`
 	// directly: a bare defer call evaluates its arguments immediately, which

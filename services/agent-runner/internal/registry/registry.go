@@ -8,6 +8,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/google/uuid"
@@ -32,6 +33,8 @@ const (
 // it, plus the reason it was last interrupted (if any). token identifies
 // which specific Register call created this entry — see Register/Unregister.
 type entry struct {
+	done      chan struct{}
+	stopErr   error
 	token     uint64
 	cancel    context.CancelFunc
 	reason    InterruptReason
@@ -47,14 +50,15 @@ type entry struct {
 // conversation. Routing a control message to the right replica isn't
 // solved here.
 type Conversations struct {
-	mu      sync.Mutex
-	entries map[uuid.UUID]*entry
-	lastTok uint64
+	mu           sync.Mutex
+	entries      map[uuid.UUID]*entry
+	lastTok      uint64
+	stopFailures map[uuid.UUID]error
 }
 
 // New builds an empty Conversations registry.
 func New() *Conversations {
-	return &Conversations{entries: make(map[uuid.UUID]*entry)}
+	return &Conversations{entries: make(map[uuid.UUID]*entry), stopFailures: make(map[uuid.UUID]error)}
 }
 
 // Register records cancel as the way to interrupt conversationID's
@@ -76,7 +80,7 @@ func (c *Conversations) Register(conversationID uuid.UUID, cancel context.Cancel
 	defer c.mu.Unlock()
 	c.lastTok++
 	tok := c.lastTok
-	c.entries[conversationID] = &entry{token: tok, cancel: cancel}
+	c.entries[conversationID] = &entry{token: tok, cancel: cancel, done: make(chan struct{})}
 	return tok
 }
 
@@ -88,6 +92,7 @@ func (c *Conversations) Unregister(conversationID uuid.UUID, token uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.entries[conversationID]; ok && e.token == token {
+		close(e.done)
 		delete(c.entries, conversationID)
 	}
 }
@@ -144,4 +149,51 @@ func (c *Conversations) TakeReason(conversationID uuid.UUID) (InterruptReason, b
 		return "", false
 	}
 	return e.reason, true
+}
+
+// InterruptAndWait acknowledges actual handler cleanup, not merely cancellation delivery.
+func (c *Conversations) InterruptAndWait(ctx context.Context, id uuid.UUID) error {
+	c.mu.Lock()
+	e := c.entries[id]
+	if e != nil {
+		e.reason = ReasonStop
+		e.hasReason = true
+	}
+	c.mu.Unlock()
+	if e == nil {
+		c.mu.Lock()
+		err := c.stopFailures[id]
+		c.mu.Unlock()
+		return err
+	}
+	e.cancel()
+	select {
+	case <-e.done:
+		return e.stopErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Conversations) RecordStopError(id uuid.UUID, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopFailures == nil {
+		c.stopFailures = make(map[uuid.UUID]error)
+	}
+	c.stopFailures[id] = err
+	if e := c.entries[id]; e != nil {
+		e.stopErr = err
+	}
+}
+
+// StopFailure remains non-nil until an operator has fenced the failed native process.
+func (c *Conversations) StopFailure() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var failures []error
+	for _, err := range c.stopFailures {
+		failures = append(failures, err)
+	}
+	return errors.Join(failures...)
 }

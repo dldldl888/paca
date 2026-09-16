@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Paca-AI/api/internal/platform/database"
 	"strings"
 	"time"
 
@@ -276,14 +277,15 @@ func decodeWalkContext(raw []byte) (automationdom.WalkContext, error) {
 }
 
 type pendingAgentWaitRecord struct {
-	ID             string    `db:"id"`
-	RunID          string    `db:"run_id"`
-	NodeID         string    `db:"node_id"`
-	AutomationID   string    `db:"automation_id"`
-	ConversationID string    `db:"conversation_id"`
-	ProjectID      string    `db:"project_id"`
-	Context        []byte    `db:"context"`
-	CreatedAt      time.Time `db:"created_at"`
+	ID             string `db:"id"`
+	RunID          string `db:"run_id"`
+	NodeID         string `db:"node_id"`
+	AutomationID   string `db:"automation_id"`
+	ConversationID string `db:"conversation_id"`
+	ProjectID      string `db:"project_id"`
+	Context        []byte `db:"context"
+ "github.com/Paca-AI/api/internal/platform/database"`
+	CreatedAt time.Time `db:"created_at"`
 }
 
 func (rec *pendingAgentWaitRecord) toDomain() (*automationdom.PendingAgentWait, error) {
@@ -328,14 +330,15 @@ func (rec *pendingAgentWaitRecord) toDomain() (*automationdom.PendingAgentWait, 
 }
 
 type pendingDelayRecord struct {
-	ID           string    `db:"id"`
-	RunID        string    `db:"run_id"`
-	NodeID       string    `db:"node_id"`
-	AutomationID string    `db:"automation_id"`
-	ProjectID    string    `db:"project_id"`
-	Context      []byte    `db:"context"`
-	ResumeAt     time.Time `db:"resume_at"`
-	CreatedAt    time.Time `db:"created_at"`
+	ID           string `db:"id"`
+	RunID        string `db:"run_id"`
+	NodeID       string `db:"node_id"`
+	AutomationID string `db:"automation_id"`
+	ProjectID    string `db:"project_id"`
+	Context      []byte `db:"context"
+ "github.com/Paca-AI/api/internal/platform/database"`
+	ResumeAt  time.Time `db:"resume_at"`
+	CreatedAt time.Time `db:"created_at"`
 }
 
 func (rec *pendingDelayRecord) toDomain() (*automationdom.PendingDelay, error) {
@@ -398,7 +401,7 @@ func (r *AutomationRepository) CreateAutomation(ctx context.Context, a *automati
 	if a.Description != "" {
 		description = &a.Description
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automations (id, project_id, name, description, status, created_by, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		a.ID.String(), a.ProjectID.String(), a.Name, description, string(a.Status), createdBy, a.CreatedAt, a.UpdatedAt,
@@ -415,7 +418,7 @@ func (r *AutomationRepository) FindAutomationByID(ctx context.Context, id uuid.U
 		SELECT id, project_id, name, description, status, created_by, created_at, updated_at, deleted_at, graph_revision
 		FROM automations WHERE id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE projects.id=automations.project_id AND projects.deleted_at IS NULL)`
 	var rec automationRecord
-	if err := r.db.GetContext(ctx, &rec, q, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, automationdom.ErrNotFound
 		}
@@ -456,7 +459,7 @@ func (r *AutomationRepository) ListAutomations(ctx context.Context, projectID uu
 	}
 
 	var recs []automationRecord
-	if err := r.db.SelectContext(ctx, &recs, q, args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, args...); err != nil {
 		return nil, false, err
 	}
 
@@ -483,7 +486,7 @@ func (r *AutomationRepository) UpdateAutomation(ctx context.Context, a *automati
 	if a.Description != "" {
 		description = &a.Description
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE automations SET name = $1, description = $2, status = $3, updated_at = $4
 		WHERE id = $5 AND deleted_at IS NULL`,
 		a.Name, description, string(a.Status), a.UpdatedAt, a.ID.String(),
@@ -493,8 +496,10 @@ func (r *AutomationRepository) UpdateAutomation(ctx context.Context, a *automati
 
 // DeleteAutomation implements automationdom.Repository.DeleteAutomation.
 func (r *AutomationRepository) DeleteAutomation(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE automations SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, id.String())
-	return err
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE automations SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, id.String())
+		return err
+	})
 }
 
 // --- Graph ----------------------------------------------------------------
@@ -503,11 +508,18 @@ func (r *AutomationRepository) DeleteAutomation(ctx context.Context, id uuid.UUI
 func (r *AutomationRepository) LoadGraph(ctx context.Context, automationID uuid.UUID) (*automationdom.Graph, error) {
 	// Read metadata/revision, nodes and edges from one database snapshot. A later
 	// edit cannot lend a newer revision to this older graph when CreateRun persists it.
-	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	tx := database.Transaction(ctx)
+	own := tx == nil
+	var err error
+	if own {
+		tx, err = r.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	if own {
+		defer tx.Rollback()
+	}
 	var a automationRecord
 	if err := tx.GetContext(ctx, &a, `SELECT id,project_id,name,description,status,created_by,created_at,updated_at,deleted_at,graph_revision FROM automations WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM projects WHERE projects.id=automations.project_id AND projects.deleted_at IS NULL)`, automationID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -542,8 +554,10 @@ func (r *AutomationRepository) LoadGraph(ctx context.Context, automationID uuid.
 		}
 		graph.Edges = append(graph.Edges, e)
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
+	if own {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
 	}
 	return graph, nil
 }
@@ -552,12 +566,14 @@ func (r *AutomationRepository) LoadGraph(ctx context.Context, automationID uuid.
 
 // CreateNode implements automationdom.Repository.CreateNode.
 func (r *AutomationRepository) CreateNode(ctx context.Context, n *automationdom.Node) error {
-	_, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_nodes (id, automation_id, kind, type, config, pos_x, pos_y, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		n.ID.String(), n.AutomationID.String(), string(n.Kind), n.Type, []byte(n.Config), n.PosX, n.PosY, n.CreatedAt, n.UpdatedAt,
-	)
-	return err
+			n.ID.String(), n.AutomationID.String(), string(n.Kind), n.Type, []byte(n.Config), n.PosX, n.PosY, n.CreatedAt, n.UpdatedAt,
+		)
+		return err
+	})
 }
 
 // FindNodeByID implements automationdom.Repository.FindNodeByID.
@@ -566,7 +582,7 @@ func (r *AutomationRepository) FindNodeByID(ctx context.Context, id uuid.UUID) (
 		SELECT id, automation_id, kind, type, config, pos_x, pos_y, created_at, updated_at
 		FROM automation_nodes WHERE id = $1`
 	var rec nodeRecord
-	if err := r.db.GetContext(ctx, &rec, q, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, automationdom.ErrNodeNotFound
 		}
@@ -581,7 +597,7 @@ func (r *AutomationRepository) ListNodesByAutomation(ctx context.Context, automa
 		SELECT id, automation_id, kind, type, config, pos_x, pos_y, created_at, updated_at
 		FROM automation_nodes WHERE automation_id = $1 ORDER BY created_at ASC`
 	var recs []nodeRecord
-	if err := r.db.SelectContext(ctx, &recs, q, automationID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, automationID.String()); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.Node, 0, len(recs))
@@ -597,29 +613,35 @@ func (r *AutomationRepository) ListNodesByAutomation(ctx context.Context, automa
 
 // UpdateNode implements automationdom.Repository.UpdateNode.
 func (r *AutomationRepository) UpdateNode(ctx context.Context, n *automationdom.Node) error {
-	_, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE automation_nodes SET config = $1, pos_x = $2, pos_y = $3, updated_at = $4 WHERE id = $5`,
-		[]byte(n.Config), n.PosX, n.PosY, n.UpdatedAt, n.ID.String(),
-	)
-	return err
+			[]byte(n.Config), n.PosX, n.PosY, n.UpdatedAt, n.ID.String(),
+		)
+		return err
+	})
 }
 
 // DeleteNode implements automationdom.Repository.DeleteNode.
 func (r *AutomationRepository) DeleteNode(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM automation_nodes WHERE id = $1`, id.String())
-	return err
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM automation_nodes WHERE id = $1`, id.String())
+		return err
+	})
 }
 
 // --- Edges ------------------------------------------------------------------
 
 // CreateEdge implements automationdom.Repository.CreateEdge.
 func (r *AutomationRepository) CreateEdge(ctx context.Context, e *automationdom.Edge) error {
-	_, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_edges (id, automation_id, source_node_id, source_handle, target_node_id, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
-		e.ID.String(), e.AutomationID.String(), e.SourceNodeID.String(), e.SourceHandle, e.TargetNodeID.String(), e.CreatedAt,
-	)
-	return err
+			e.ID.String(), e.AutomationID.String(), e.SourceNodeID.String(), e.SourceHandle, e.TargetNodeID.String(), e.CreatedAt,
+		)
+		return err
+	})
 }
 
 // FindEdgeByID implements automationdom.Repository.FindEdgeByID.
@@ -628,7 +650,7 @@ func (r *AutomationRepository) FindEdgeByID(ctx context.Context, id uuid.UUID) (
 		SELECT id, automation_id, source_node_id, source_handle, target_node_id, created_at
 		FROM automation_edges WHERE id = $1`
 	var rec edgeRecord
-	if err := r.db.GetContext(ctx, &rec, q, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, automationdom.ErrEdgeNotFound
 		}
@@ -643,7 +665,7 @@ func (r *AutomationRepository) ListEdgesByAutomation(ctx context.Context, automa
 		SELECT id, automation_id, source_node_id, source_handle, target_node_id, created_at
 		FROM automation_edges WHERE automation_id = $1`
 	var recs []edgeRecord
-	if err := r.db.SelectContext(ctx, &recs, q, automationID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, automationID.String()); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.Edge, 0, len(recs))
@@ -659,8 +681,10 @@ func (r *AutomationRepository) ListEdgesByAutomation(ctx context.Context, automa
 
 // DeleteEdge implements automationdom.Repository.DeleteEdge.
 func (r *AutomationRepository) DeleteEdge(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM automation_edges WHERE id = $1`, id.String())
-	return err
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM automation_edges WHERE id = $1`, id.String())
+		return err
+	})
 }
 
 // --- Execution-engine read paths ---------------------------------------------
@@ -674,7 +698,7 @@ func (r *AutomationRepository) ListEnabledTriggerNodesByType(ctx context.Context
 		WHERE a.project_id = $1 AND a.status = 'active' AND a.deleted_at IS NULL
 		  AND n.kind = 'trigger' AND n.type = $2`
 	var recs []nodeRecord
-	if err := r.db.SelectContext(ctx, &recs, q, projectID.String(), string(triggerType)); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, projectID.String(), string(triggerType)); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.Node, 0, len(recs))
@@ -699,7 +723,7 @@ func (r *AutomationRepository) ListPredecessorTriggersWatching(ctx context.Conte
 		  AND n.config->'watched_task_ids' @> $1::jsonb`
 	needle := fmt.Sprintf(`["%s"]`, taskID.String())
 	var recs []nodeRecord
-	if err := r.db.SelectContext(ctx, &recs, q, needle); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, needle); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.Node, 0, len(recs))
@@ -719,7 +743,7 @@ func (r *AutomationRepository) ListOutgoingEdges(ctx context.Context, sourceNode
 		SELECT id, automation_id, source_node_id, source_handle, target_node_id, created_at
 		FROM automation_edges WHERE source_node_id = $1`
 	var recs []edgeRecord
-	if err := r.db.SelectContext(ctx, &recs, q, sourceNodeID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, sourceNodeID.String()); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.Edge, 0, len(recs))
@@ -741,7 +765,7 @@ func (r *AutomationRepository) FindAutomationByNodeID(ctx context.Context, nodeI
 		JOIN automation_nodes n ON n.automation_id = a.id
 		WHERE n.id = $1 AND a.deleted_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE projects.id=a.project_id AND projects.deleted_at IS NULL)`
 	var rec automationRecord
-	if err := r.db.GetContext(ctx, &rec, q, nodeID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, nodeID.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, automationdom.ErrNotFound
 		}
@@ -758,7 +782,7 @@ func (r *AutomationRepository) CreateRun(ctx context.Context, run *automationdom
 	if run.TaskID != nil {
 		taskID = run.TaskID.String()
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_runs (id, automation_id, trigger_node_id, task_id, status, started_at, finished_at, graph_revision, sprint_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		run.ID.String(), run.AutomationID.String(), run.TriggerNodeID.String(), taskID, string(run.Status), run.StartedAt, run.FinishedAt, run.GraphRevision, run.SprintID,
@@ -768,7 +792,7 @@ func (r *AutomationRepository) CreateRun(ctx context.Context, run *automationdom
 
 // UpdateRun preserves failure atomically, including concurrent finalization attempts.
 func (r *AutomationRepository) UpdateRun(ctx context.Context, run *automationdom.Run) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE automation_runs SET status = $1, finished_at = $2
 		WHERE id = $3 AND status <> 'failed'`,
 		string(run.Status), run.FinishedAt, run.ID.String(),
@@ -782,7 +806,7 @@ func (r *AutomationRepository) FindRunByID(ctx context.Context, id uuid.UUID) (*
 		SELECT id, automation_id, trigger_node_id, task_id, status, started_at, finished_at, graph_revision, sprint_id
 		FROM automation_runs WHERE id = $1`
 	var rec runRecord
-	if err := r.db.GetContext(ctx, &rec, q, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, automationdom.ErrRunNotFound
 		}
@@ -800,7 +824,7 @@ func (r *AutomationRepository) ListRunsByAutomation(ctx context.Context, automat
 		SELECT id, automation_id, trigger_node_id, task_id, status, started_at, finished_at, graph_revision, sprint_id
 		FROM automation_runs WHERE automation_id = $1 ORDER BY started_at DESC LIMIT $2`
 	var recs []runRecord
-	if err := r.db.SelectContext(ctx, &recs, q, automationID.String(), limit); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, automationID.String(), limit); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.Run, 0, len(recs))
@@ -820,7 +844,7 @@ func (r *AutomationRepository) CreateRunStep(ctx context.Context, s *automationd
 	if s.Error != "" {
 		errText = &s.Error
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_run_steps (id, run_id, node_id, status, input_snapshot, output_snapshot, error, executed_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		s.ID.String(), s.RunID.String(), s.NodeID.String(), string(s.Status), []byte(s.InputSnapshot), []byte(s.OutputSnapshot), errText, s.ExecutedAt,
@@ -834,7 +858,7 @@ func (r *AutomationRepository) ListRunStepsByRun(ctx context.Context, runID uuid
 		SELECT id, run_id, node_id, status, input_snapshot, output_snapshot, error, executed_at
 		FROM automation_run_steps WHERE run_id = $1 ORDER BY executed_at ASC`
 	var recs []runStepRecord
-	if err := r.db.SelectContext(ctx, &recs, q, runID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q, runID.String()); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.RunStep, 0, len(recs))
@@ -856,7 +880,7 @@ func (r *AutomationRepository) CreatePendingAgentWait(ctx context.Context, w *au
 	if err != nil {
 		return fmt.Errorf("encode walk context: %w", err)
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_pending_agent_waits (id, run_id, node_id, automation_id, conversation_id, project_id, context, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		w.ID.String(), w.RunID.String(), w.NodeID.String(), w.AutomationID.String(), w.ConversationID.String(), w.ProjectID.String(), ctxJSON, w.CreatedAt,
@@ -870,7 +894,7 @@ func (r *AutomationRepository) FindPendingAgentWait(ctx context.Context, convers
 		SELECT id, run_id, node_id, automation_id, conversation_id, project_id, context, created_at
 		FROM automation_pending_agent_waits WHERE conversation_id = $1`
 	var rec pendingAgentWaitRecord
-	if err := r.db.GetContext(ctx, &rec, q, conversationID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, conversationID.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -881,14 +905,14 @@ func (r *AutomationRepository) FindPendingAgentWait(ctx context.Context, convers
 
 // DeletePendingAgentWait implements automationdom.Repository.DeletePendingAgentWait.
 func (r *AutomationRepository) DeletePendingAgentWait(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM automation_pending_agent_waits WHERE id = $1`, id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM automation_pending_agent_waits WHERE id = $1`, id.String())
 	return err
 }
 
 // CountPendingAgentWaits implements automationdom.Repository.CountPendingAgentWaits.
 func (r *AutomationRepository) CountPendingAgentWaits(ctx context.Context, runID uuid.UUID) (int, error) {
 	var count int
-	if err := r.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM automation_pending_agent_waits WHERE run_id = $1`, runID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, `SELECT COUNT(*) FROM automation_pending_agent_waits WHERE run_id = $1`, runID.String()); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -945,7 +969,7 @@ func (r *AutomationRepository) CreatePendingDelay(ctx context.Context, d *automa
 	if err != nil {
 		return fmt.Errorf("encode walk context: %w", err)
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_pending_delays (id, run_id, node_id, automation_id, project_id, context, resume_at, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		d.ID.String(), d.RunID.String(), d.NodeID.String(), d.AutomationID.String(), d.ProjectID.String(), ctxJSON, d.ResumeAt, d.CreatedAt,
@@ -959,7 +983,7 @@ func (r *AutomationRepository) ListDueDelays(ctx context.Context) ([]*automation
 		SELECT id, run_id, node_id, automation_id, project_id, context, resume_at, created_at
 		FROM automation_pending_delays WHERE resume_at <= NOW()`
 	var recs []pendingDelayRecord
-	if err := r.db.SelectContext(ctx, &recs, q); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, q); err != nil {
 		return nil, err
 	}
 	out := make([]*automationdom.PendingDelay, 0, len(recs))
@@ -975,14 +999,14 @@ func (r *AutomationRepository) ListDueDelays(ctx context.Context) ([]*automation
 
 // DeletePendingDelay implements automationdom.Repository.DeletePendingDelay.
 func (r *AutomationRepository) DeletePendingDelay(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM automation_pending_delays WHERE id = $1`, id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM automation_pending_delays WHERE id = $1`, id.String())
 	return err
 }
 
 // CountPendingDelays implements automationdom.Repository.CountPendingDelays.
 func (r *AutomationRepository) CountPendingDelays(ctx context.Context, runID uuid.UUID) (int, error) {
 	var count int
-	if err := r.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM automation_pending_delays WHERE run_id = $1`, runID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, `SELECT COUNT(*) FROM automation_pending_delays WHERE run_id = $1`, runID.String()); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -1010,7 +1034,7 @@ func (r *AutomationRepository) ListDueDateCandidates(ctx context.Context) ([]aut
 		TaskID string `db:"task_id"`
 	}
 	var rows []row
-	if err := r.db.SelectContext(ctx, &rows, q); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, q); err != nil {
 		return nil, err
 	}
 	out := make([]automationdom.DueDateCandidate, 0, len(rows))
@@ -1032,7 +1056,7 @@ func (r *AutomationRepository) ListDueDateCandidates(ctx context.Context) ([]aut
 func (r *AutomationRepository) HasDueDateFired(ctx context.Context, nodeID, taskID uuid.UUID) (bool, error) {
 	const q = `SELECT EXISTS(SELECT 1 FROM automation_due_date_fires WHERE node_id = $1 AND task_id = $2)`
 	var exists bool
-	if err := r.db.GetContext(ctx, &exists, q, nodeID.String(), taskID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &exists, q, nodeID.String(), taskID.String()); err != nil {
 		return false, err
 	}
 	return exists, nil
@@ -1040,7 +1064,7 @@ func (r *AutomationRepository) HasDueDateFired(ctx context.Context, nodeID, task
 
 // RecordDueDateFire implements automationdom.Repository.RecordDueDateFire.
 func (r *AutomationRepository) RecordDueDateFire(ctx context.Context, automationID, nodeID, taskID uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_due_date_fires (automation_id, node_id, task_id, fired_at)
 		VALUES ($1, $2, $3, NOW()) ON CONFLICT (node_id, task_id) DO NOTHING`,
 		automationID.String(), nodeID.String(), taskID.String(),
@@ -1065,7 +1089,7 @@ func (r *AutomationRepository) ListCronCandidates(ctx context.Context) ([]automa
 		LastFiredAt *time.Time `db:"last_fired_at"`
 	}
 	var rows []row
-	if err := r.db.SelectContext(ctx, &rows, q); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, q); err != nil {
 		return nil, err
 	}
 	out := make([]automationdom.CronCandidate, 0, len(rows))
@@ -1081,7 +1105,7 @@ func (r *AutomationRepository) ListCronCandidates(ctx context.Context) ([]automa
 
 // RecordCronFire implements automationdom.Repository.RecordCronFire.
 func (r *AutomationRepository) RecordCronFire(ctx context.Context, automationID, nodeID uuid.UUID, firedAt time.Time) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO automation_cron_fires (node_id, automation_id, last_fired_at, updated_at)
 		VALUES ($1, $2, $3, NOW())
 		ON CONFLICT (node_id) DO UPDATE SET last_fired_at = EXCLUDED.last_fired_at, updated_at = NOW()`,
@@ -1129,7 +1153,7 @@ func (r *AutomationRepository) FindActiveWebhookTokenByNodeID(ctx context.Contex
 		SELECT id, node_id, automation_id, token_prefix, created_by, created_at, last_used_at, revoked_at
 		FROM automation_webhook_tokens WHERE node_id = $1 AND revoked_at IS NULL`
 	var rec webhookTokenRecord
-	if err := r.db.GetContext(ctx, &rec, q, nodeID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, nodeID.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, automationdom.ErrNotFound
 		}
@@ -1146,7 +1170,7 @@ func (r *AutomationRepository) VerifyWebhookToken(ctx context.Context, nodeID uu
 		SELECT id, node_id, automation_id, token_prefix, created_by, created_at, last_used_at, revoked_at
 		FROM automation_webhook_tokens WHERE node_id = $1 AND token_hash = $2 AND revoked_at IS NULL`
 	var rec webhookTokenRecord
-	if err := r.db.GetContext(ctx, &rec, q, nodeID.String(), tokenHash); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, q, nodeID.String(), tokenHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, automationdom.ErrWebhookTokenInvalid
 		}
@@ -1157,7 +1181,7 @@ func (r *AutomationRepository) VerifyWebhookToken(ctx context.Context, nodeID uu
 
 // RecordWebhookTokenUsed implements automationdom.Repository.RecordWebhookTokenUsed.
 func (r *AutomationRepository) RecordWebhookTokenUsed(ctx context.Context, tokenID uuid.UUID, at time.Time) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE automation_webhook_tokens SET last_used_at = $1 WHERE id = $2`,
 		at, tokenID.String(),
 	)
@@ -1179,7 +1203,7 @@ func (r *AutomationRepository) StatusUsedByAutomation(ctx context.Context, statu
 			WHERE a.deleted_at IS NULL AND n.config::text LIKE '%' || $1 || '%'
 		)`
 	var exists bool
-	if err := r.db.GetContext(ctx, &exists, q, statusID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &exists, q, statusID.String()); err != nil {
 		return false, err
 	}
 	return exists, nil
@@ -1189,6 +1213,6 @@ func (r *AutomationRepository) StatusUsedByAutomation(ctx context.Context, statu
 // may hide a later target that must be validated before the first side effect.
 func (r *TaskRepository) ListChildTaskIDs(ctx context.Context, parentID uuid.UUID) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
-	err := r.db.SelectContext(ctx, &ids, `SELECT id FROM tasks WHERE parent_task_id=$1 AND deleted_at IS NULL ORDER BY id`, parentID)
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &ids, `SELECT id FROM tasks WHERE parent_task_id=$1 AND deleted_at IS NULL ORDER BY id`, parentID)
 	return ids, err
 }

@@ -12,7 +12,7 @@ import (
 
 func TestAuthorizeStrictResponseAndTrustedIdentity(t *testing.T) {
 	cid, aid, instance, owner, pid := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	valid := map[string]any{"conversation_id": cid, "agent_id": aid, "instance_id": instance, "owner_user_id": owner, "project_id": pid, "audience": "owner_private", "has_prior_turns": false, "status": "running", "task_id": "", "comment_id": "", "chat_session_id": ""}
+	valid := map[string]any{"authorization_epoch": "1", "conversation_id": cid, "agent_id": aid, "instance_id": instance, "owner_user_id": owner, "project_id": pid, "audience": "owner_private", "has_prior_turns": false, "status": "running", "task_id": "", "comment_id": "", "chat_session_id": ""}
 	cases := []struct {
 		name   string
 		mutate func(map[string]any)

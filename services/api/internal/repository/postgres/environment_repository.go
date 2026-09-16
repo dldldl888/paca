@@ -111,7 +111,7 @@ const environmentCols = `id, project_id, name, slug, ssh_port, ports_pending_res
 // duplicating it.
 func (r *EnvironmentRepository) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]*environmentdom.Environment, error) {
 	var recs []environmentRecord
-	err := r.db.SelectContext(ctx, &recs, `
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `
 		SELECT `+environmentCols+` FROM environments
 		WHERE project_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC`, projectID.String())
@@ -135,7 +135,7 @@ func (r *EnvironmentRepository) ListEnvironments(ctx context.Context, projectID 
 // which project it belongs to.
 func (r *EnvironmentRepository) FindEnvironmentByID(ctx context.Context, id uuid.UUID) (*environmentdom.Environment, error) {
 	var rec environmentRecord
-	err := r.db.GetContext(ctx, &rec, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `
 		SELECT `+environmentCols+` FROM environments
 		WHERE id = $1 AND deleted_at IS NULL`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
@@ -151,7 +151,7 @@ func (r *EnvironmentRepository) FindEnvironmentByID(ctx context.Context, id uuid
 // only if it belongs to projectID — see the interface doc comment.
 func (r *EnvironmentRepository) FindVisibleEnvironmentInProject(ctx context.Context, projectID, environmentID uuid.UUID) (*environmentdom.Environment, error) {
 	var rec environmentRecord
-	err := r.db.GetContext(ctx, &rec, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `
 		SELECT `+environmentCols+` FROM environments
 		WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL`, environmentID.String(), projectID.String())
 	if errors.Is(err, sql.ErrNoRows) {
@@ -166,7 +166,7 @@ func (r *EnvironmentRepository) FindVisibleEnvironmentInProject(ctx context.Cont
 // CreateEnvironment inserts a new environment record.
 func (r *EnvironmentRepository) CreateEnvironment(ctx context.Context, e *environmentdom.Environment) error {
 	rec := environmentToRecord(e)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO environments (id, project_id, name, slug, status, backend, backend_ref, image,
 		  cpu_limit, memory_limit, disk_limit_gb, docker_enabled, volume_ref, secret_key_encrypted, idle_timeout_minutes,
 		  last_active_at, error_message, created_by, created_at, updated_at)
@@ -182,7 +182,7 @@ func (r *EnvironmentRepository) CreateEnvironment(ctx context.Context, e *enviro
 // see UpdateEnvironmentInput).
 func (r *EnvironmentRepository) UpdateEnvironment(ctx context.Context, e *environmentdom.Environment) error {
 	rec := environmentToRecord(e)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE environments SET
 		  name=$1, idle_timeout_minutes=$2, updated_at=$3
 		WHERE id=$4`,
@@ -196,7 +196,7 @@ func (r *EnvironmentRepository) UpdateEnvironment(ctx context.Context, e *enviro
 // given (COALESCE), since most status transitions (e.g. stopping a running
 // environment) don't have a new backend_ref to report.
 func (r *EnvironmentRepository) UpdateEnvironmentStatus(ctx context.Context, id uuid.UUID, status string, backendRef, errMsg *string) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE environments
 		SET status=$1, backend_ref=COALESCE($2, backend_ref), error_message=$3, updated_at=$4
 		WHERE id=$5`,
@@ -213,7 +213,7 @@ func (r *EnvironmentRepository) UpdateEnvironmentStatus(ctx context.Context, id 
 // other status transition (Start/Stop/error) never needs to report either
 // of those; only the very first successful provisioning call does.
 func (r *EnvironmentRepository) UpdateEnvironmentProvisioning(ctx context.Context, id uuid.UUID, status, backend, backendRef, volumeRef string) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE environments
 		SET status=$1, backend=$2, backend_ref=$3, volume_ref=$4, updated_at=$5
 		WHERE id=$6`,
@@ -224,7 +224,7 @@ func (r *EnvironmentRepository) UpdateEnvironmentProvisioning(ctx context.Contex
 
 // TouchEnvironment bumps last_active_at to now.
 func (r *EnvironmentRepository) TouchEnvironment(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE environments SET last_active_at=$1 WHERE id=$2`, time.Now(), id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE environments SET last_active_at=$1 WHERE id=$2`, time.Now(), id.String())
 	return err
 }
 
@@ -259,7 +259,7 @@ func (r *EnvironmentRepository) SoftDeleteEnvironment(ctx context.Context, id uu
 // environment in projectID.
 func (r *EnvironmentRepository) SlugTaken(ctx context.Context, projectID uuid.UUID, slug string) (bool, error) {
 	var taken bool
-	err := r.db.GetContext(ctx, &taken,
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &taken,
 		`SELECT EXISTS(SELECT 1 FROM environments WHERE project_id = $1 AND slug = $2 AND deleted_at IS NULL)`,
 		projectID.String(), slug)
 	return taken, err
@@ -268,7 +268,7 @@ func (r *EnvironmentRepository) SlugTaken(ctx context.Context, projectID uuid.UU
 // SetPortsPendingRestart writes Environment.PortsPendingRestart — see that
 // field's own doc comment.
 func (r *EnvironmentRepository) SetPortsPendingRestart(ctx context.Context, id uuid.UUID, pending bool) error {
-	_, err := r.db.ExecContext(ctx,
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx,
 		`UPDATE environments SET ports_pending_restart = $1, updated_at = $2 WHERE id = $3`,
 		pending, time.Now(), id.String())
 	return err
@@ -285,7 +285,7 @@ const environmentFolderCols = `id, environment_id, path, created_by, created_at,
 // this package).
 func (r *EnvironmentRepository) ListFolders(ctx context.Context, environmentID uuid.UUID) ([]*environmentdom.EnvironmentFolder, error) {
 	var recs []environmentFolderRecord
-	err := r.db.SelectContext(ctx, &recs, `
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `
 		SELECT `+environmentFolderCols+` FROM environment_folders
 		WHERE environment_id = $1
 		ORDER BY created_at ASC`, environmentID.String())
@@ -302,7 +302,7 @@ func (r *EnvironmentRepository) ListFolders(ctx context.Context, environmentID u
 // FindFolderByID returns a single folder by ID.
 func (r *EnvironmentRepository) FindFolderByID(ctx context.Context, id uuid.UUID) (*environmentdom.EnvironmentFolder, error) {
 	var rec environmentFolderRecord
-	err := r.db.GetContext(ctx, &rec, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `
 		SELECT `+environmentFolderCols+` FROM environment_folders WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, environmentdom.ErrFolderNotFound
@@ -316,7 +316,7 @@ func (r *EnvironmentRepository) FindFolderByID(ctx context.Context, id uuid.UUID
 // CreateFolder inserts a new folder record.
 func (r *EnvironmentRepository) CreateFolder(ctx context.Context, f *environmentdom.EnvironmentFolder) error {
 	rec := envFolderToRecord(f)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO environment_folders (id, environment_id, path, created_by, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
 		rec.ID, rec.EnvironmentID, rec.Path, rec.CreatedBy, rec.CreatedAt, rec.UpdatedAt,
@@ -341,7 +341,7 @@ func (r *EnvironmentRepository) CreateFolder(ctx context.Context, f *environment
 // is a plain per-environment unique index, not a partial one, so a deleted
 // folder's path must actually be gone for the same path to be re-added.
 func (r *EnvironmentRepository) DeleteFolder(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM environment_folders WHERE id = $1`, id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM environment_folders WHERE id = $1`, id.String())
 	return err
 }
 
@@ -354,7 +354,7 @@ const environmentSSHKeyCols = `id, environment_id, label, public_key, fingerprin
 // ListSSHKeys returns every SSH key registered on an environment, oldest first.
 func (r *EnvironmentRepository) ListSSHKeys(ctx context.Context, environmentID uuid.UUID) ([]*environmentdom.EnvironmentSSHKey, error) {
 	var recs []environmentSSHKeyRecord
-	err := r.db.SelectContext(ctx, &recs, `
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `
 		SELECT `+environmentSSHKeyCols+` FROM environment_ssh_keys
 		WHERE environment_id = $1
 		ORDER BY created_at ASC`, environmentID.String())
@@ -371,7 +371,7 @@ func (r *EnvironmentRepository) ListSSHKeys(ctx context.Context, environmentID u
 // FindSSHKeyByID returns a single SSH key by ID.
 func (r *EnvironmentRepository) FindSSHKeyByID(ctx context.Context, id uuid.UUID) (*environmentdom.EnvironmentSSHKey, error) {
 	var rec environmentSSHKeyRecord
-	err := r.db.GetContext(ctx, &rec, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `
 		SELECT `+environmentSSHKeyCols+` FROM environment_ssh_keys WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, environmentdom.ErrSSHKeyNotFound
@@ -385,7 +385,7 @@ func (r *EnvironmentRepository) FindSSHKeyByID(ctx context.Context, id uuid.UUID
 // CreateSSHKey inserts a new SSH key record.
 func (r *EnvironmentRepository) CreateSSHKey(ctx context.Context, k *environmentdom.EnvironmentSSHKey) error {
 	rec := sshKeyToRecord(k)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO environment_ssh_keys (id, environment_id, label, public_key, fingerprint, created_by, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 		rec.ID, rec.EnvironmentID, rec.Label, rec.PublicKey, rec.Fingerprint, rec.CreatedBy, rec.CreatedAt,
@@ -407,7 +407,7 @@ func (r *EnvironmentRepository) CreateSSHKey(ctx context.Context, k *environment
 // must stop authenticating immediately and permanently, with no "undelete"
 // path, matching how a revoked deploy key behaves.
 func (r *EnvironmentRepository) DeleteSSHKey(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM environment_ssh_keys WHERE id = $1`, id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM environment_ssh_keys WHERE id = $1`, id.String())
 	return err
 }
 
@@ -415,7 +415,7 @@ func (r *EnvironmentRepository) DeleteSSHKey(ctx context.Context, id uuid.UUID) 
 // connection is authorized for, by the public key fingerprint it presented.
 func (r *EnvironmentRepository) FindSSHKeyByFingerprint(ctx context.Context, environmentID uuid.UUID, fingerprint string) (*environmentdom.EnvironmentSSHKey, error) {
 	var rec environmentSSHKeyRecord
-	err := r.db.GetContext(ctx, &rec, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `
 		SELECT `+environmentSSHKeyCols+` FROM environment_ssh_keys
 		WHERE environment_id = $1 AND fingerprint = $2`, environmentID.String(), fingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -436,7 +436,7 @@ const environmentPortForwardCols = `id, environment_id, label, container_port, h
 // ListPortForwards returns every port forward on an environment, oldest first.
 func (r *EnvironmentRepository) ListPortForwards(ctx context.Context, environmentID uuid.UUID) ([]*environmentdom.EnvironmentPortForward, error) {
 	var recs []environmentPortForwardRecord
-	err := r.db.SelectContext(ctx, &recs, `
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `
 		SELECT `+environmentPortForwardCols+` FROM environment_port_forwards
 		WHERE environment_id = $1
 		ORDER BY created_at ASC`, environmentID.String())
@@ -453,7 +453,7 @@ func (r *EnvironmentRepository) ListPortForwards(ctx context.Context, environmen
 // FindPortForwardByID returns a single port forward by ID.
 func (r *EnvironmentRepository) FindPortForwardByID(ctx context.Context, id uuid.UUID) (*environmentdom.EnvironmentPortForward, error) {
 	var rec environmentPortForwardRecord
-	err := r.db.GetContext(ctx, &rec, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `
 		SELECT `+environmentPortForwardCols+` FROM environment_port_forwards WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, environmentdom.ErrPortForwardNotFound
@@ -470,7 +470,7 @@ func (r *EnvironmentRepository) FindPortForwardByID(ctx context.Context, id uuid
 // Environment.SSHPort (see that field's doc comment).
 func (r *EnvironmentRepository) CreatePortForward(ctx context.Context, pf *environmentdom.EnvironmentPortForward) error {
 	rec := envPortForwardToRecord(pf)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO environment_port_forwards (id, environment_id, label, container_port, created_by, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
 		rec.ID, rec.EnvironmentID, rec.Label, rec.ContainerPort, rec.CreatedBy, rec.CreatedAt,
@@ -492,8 +492,10 @@ func (r *EnvironmentRepository) CreatePortForward(ctx context.Context, pf *envir
 // host_port must be immediately free for reuse (uq_environment_port_forwards_host_port
 // has no partial-on-deleted_at clause, unlike uq_environments_ssh_port).
 func (r *EnvironmentRepository) DeletePortForward(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM environment_port_forwards WHERE id = $1`, id.String())
-	return err
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM environment_port_forwards WHERE id = $1`, id.String())
+		return err
+	})
 }
 
 // -------------------------------------------------------------------------

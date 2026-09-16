@@ -173,7 +173,7 @@ const taskTypeCols = `id, project_id, name, icon, color, description, is_default
 // ListTaskTypes returns all task types for a project.
 func (r *TaskRepository) ListTaskTypes(ctx context.Context, projectID uuid.UUID) ([]*taskdom.TaskType, error) {
 	var records []taskTypeRecord
-	if err := r.db.SelectContext(ctx, &records, `SELECT `+taskTypeCols+` FROM task_types WHERE project_id = $1 ORDER BY name ASC`, projectID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+taskTypeCols+` FROM task_types WHERE project_id = $1 ORDER BY name ASC`, projectID.String()); err != nil {
 		return nil, fmt.Errorf("task type repo: list: %w", err)
 	}
 	out := make([]*taskdom.TaskType, 0, len(records))
@@ -186,7 +186,7 @@ func (r *TaskRepository) ListTaskTypes(ctx context.Context, projectID uuid.UUID)
 // FindTaskTypeByID returns the task type with the given ID.
 func (r *TaskRepository) FindTaskTypeByID(ctx context.Context, id uuid.UUID) (*taskdom.TaskType, error) {
 	var rec taskTypeRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+taskTypeCols+` FROM task_types WHERE id = $1`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+taskTypeCols+` FROM task_types WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, taskdom.ErrTypeNotFound
 	}
@@ -198,7 +198,7 @@ func (r *TaskRepository) FindTaskTypeByID(ctx context.Context, id uuid.UUID) (*t
 
 // CreateTaskType persists a new task type.
 func (r *TaskRepository) CreateTaskType(ctx context.Context, t *taskdom.TaskType) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO task_types (id, project_id, name, icon, color, description, is_default, is_system, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		t.ID.String(), t.ProjectID.String(), t.Name, t.Icon, t.Color,
@@ -281,7 +281,7 @@ const taskStatusCols = `id, project_id, name, color, position, category, is_defa
 // ListTaskStatuses returns all task statuses for a project ordered by position.
 func (r *TaskRepository) ListTaskStatuses(ctx context.Context, projectID uuid.UUID) ([]*taskdom.TaskStatus, error) {
 	var records []taskStatusRecord
-	if err := r.db.SelectContext(ctx, &records, `SELECT `+taskStatusCols+` FROM task_statuses WHERE project_id = $1 ORDER BY position ASC`, projectID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+taskStatusCols+` FROM task_statuses WHERE project_id = $1 ORDER BY position ASC`, projectID.String()); err != nil {
 		return nil, fmt.Errorf("task status repo: list: %w", err)
 	}
 	out := make([]*taskdom.TaskStatus, 0, len(records))
@@ -294,7 +294,7 @@ func (r *TaskRepository) ListTaskStatuses(ctx context.Context, projectID uuid.UU
 // FindTaskStatusByID returns the task status with the given ID.
 func (r *TaskRepository) FindTaskStatusByID(ctx context.Context, id uuid.UUID) (*taskdom.TaskStatus, error) {
 	var rec taskStatusRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+taskStatusCols+` FROM task_statuses WHERE id = $1`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+taskStatusCols+` FROM task_statuses WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, taskdom.ErrStatusNotFound
 	}
@@ -306,7 +306,7 @@ func (r *TaskRepository) FindTaskStatusByID(ctx context.Context, id uuid.UUID) (
 
 // CreateTaskStatus persists a new task status.
 func (r *TaskRepository) CreateTaskStatus(ctx context.Context, s *taskdom.TaskStatus) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO task_statuses (id, project_id, name, color, position, category, is_default, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		s.ID.String(), s.ProjectID.String(), s.Name, s.Color, s.Position,
@@ -418,7 +418,7 @@ func (r *TaskRepository) ReorderTaskStatuses(ctx context.Context, projectID uuid
 // FindDefaultTaskType returns the project's default task type, or nil if none is set.
 func (r *TaskRepository) FindDefaultTaskType(ctx context.Context, projectID uuid.UUID) (*taskdom.TaskType, error) {
 	var rec taskTypeRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+taskTypeCols+` FROM task_types WHERE project_id = $1 AND is_default = true`, projectID.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+taskTypeCols+` FROM task_types WHERE project_id = $1 AND is_default = true`, projectID.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -431,7 +431,7 @@ func (r *TaskRepository) FindDefaultTaskType(ctx context.Context, projectID uuid
 // FindDefaultTaskStatus returns the project's default task status, or nil if none is set.
 func (r *TaskRepository) FindDefaultTaskStatus(ctx context.Context, projectID uuid.UUID) (*taskdom.TaskStatus, error) {
 	var rec taskStatusRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+taskStatusCols+` FROM task_statuses WHERE project_id = $1 AND is_default = true`, projectID.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+taskStatusCols+` FROM task_statuses WHERE project_id = $1 AND is_default = true`, projectID.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1029,7 +1029,7 @@ func (r *TaskRepository) ListTasks(ctx context.Context, projectID uuid.UUID, fil
 
 	if sort.By == "view_position" && sort.ViewID != nil {
 		var rows []taskWithPositionRow
-		if err := r.db.SelectContext(ctx, &rows, query, b.args...); err != nil {
+		if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, query, b.args...); err != nil {
 			return nil, false, fmt.Errorf("task repo: list (view_position): %w", err)
 		}
 		hasMore := len(rows) > limit
@@ -1052,7 +1052,7 @@ func (r *TaskRepository) ListTasks(ctx context.Context, projectID uuid.UUID, fil
 	}
 
 	var records []taskRecord
-	if err := r.db.SelectContext(ctx, &records, query, b.args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, query, b.args...); err != nil {
 		return nil, false, fmt.Errorf("task repo: list: %w", err)
 	}
 
@@ -1120,7 +1120,7 @@ func (r *TaskRepository) ListAssignedTasks(ctx context.Context, memberIDs []uuid
 	query := fmt.Sprintf(`SELECT %s %s WHERE %s ORDER BY %s LIMIT %s`, selectCols, fromClause, whereSQL, orderByClause, limitP)
 
 	var records []taskRecord
-	if err := r.db.SelectContext(ctx, &records, query, b.args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, query, b.args...); err != nil {
 		return nil, false, fmt.Errorf("task repo: list assigned: %w", err)
 	}
 
@@ -1159,7 +1159,7 @@ func (r *TaskRepository) CountTasks(ctx context.Context, projectID uuid.UUID, fi
 	}
 
 	var count int64
-	if err := r.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM tasks WHERE `+whereSQL, b.args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, `SELECT COUNT(*) FROM tasks WHERE `+whereSQL, b.args...); err != nil {
 		return 0, fmt.Errorf("task repo: count: %w", err)
 	}
 	return count, nil
@@ -1186,7 +1186,7 @@ func (r *TaskRepository) CountOpenTasksByProjects(ctx context.Context, scopes []
 		strings.Join(b.whereClauses, " AND ")
 
 	var count int64
-	if err := r.db.GetContext(ctx, &count, query, b.args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, query, b.args...); err != nil {
 		return 0, fmt.Errorf("task repo: count open tasks by projects: %w", err)
 	}
 	return count, nil
@@ -1210,11 +1210,11 @@ func (r *TaskRepository) SumTaskField(ctx context.Context, projectID uuid.UUID, 
 	var sum float64
 	var err error
 	if fieldKey == "story_points" {
-		err = r.db.GetContext(ctx, &sum, `SELECT COALESCE(SUM(story_points), 0) FROM tasks WHERE `+whereSQL, b.args...)
+		err = DeliveryQuery(ctx, r.db).GetContext(ctx, &sum, `SELECT COALESCE(SUM(story_points), 0) FROM tasks WHERE `+whereSQL, b.args...)
 	} else {
 		keyP := b.placeholder()
 		b.args = append(b.args, fieldKey)
-		err = r.db.GetContext(ctx, &sum, `SELECT COALESCE(SUM(`+customFieldNumericExpr(keyP)+`), 0) FROM tasks WHERE `+whereSQL, b.args...)
+		err = DeliveryQuery(ctx, r.db).GetContext(ctx, &sum, `SELECT COALESCE(SUM(`+customFieldNumericExpr(keyP)+`), 0) FROM tasks WHERE `+whereSQL, b.args...)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("task repo: sum field %q: %w", fieldKey, err)
@@ -1225,7 +1225,7 @@ func (r *TaskRepository) SumTaskField(ctx context.Context, projectID uuid.UUID, 
 // FindTaskByID returns the task with the given ID (non-deleted).
 func (r *TaskRepository) FindTaskByID(ctx context.Context, id uuid.UUID) (*taskdom.Task, error) {
 	var rec taskRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+taskCols+` FROM tasks WHERE id = $1 AND deleted_at IS NULL`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+taskCols+` FROM tasks WHERE id = $1 AND deleted_at IS NULL`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, taskdom.ErrTaskNotFound
 	}
@@ -1245,7 +1245,7 @@ func (r *TaskRepository) FindTaskByID(ctx context.Context, id uuid.UUID) (*taskd
 // FindTaskByNumber returns the task with the given project-scoped task number (non-deleted).
 func (r *TaskRepository) FindTaskByNumber(ctx context.Context, projectID uuid.UUID, taskNumber int64) (*taskdom.Task, error) {
 	var rec taskRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+taskCols+` FROM tasks WHERE project_id = $1 AND task_number = $2 AND deleted_at IS NULL`, projectID.String(), taskNumber)
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+taskCols+` FROM tasks WHERE project_id = $1 AND task_number = $2 AND deleted_at IS NULL`, projectID.String(), taskNumber)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, taskdom.ErrTaskNotFound
 	}
@@ -1348,7 +1348,9 @@ func createTaskTx(ctx context.Context, tx *sqlx.Tx, t *taskdom.Task) error {
 
 // UpdateTask persists changes to an existing task.
 func (r *TaskRepository) UpdateTask(ctx context.Context, t *taskdom.Task) error {
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error { return updateTaskTx(ctx, tx, t, true) })
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		return WithTx(ctx, r.db, func(tx *sqlx.Tx) error { return updateTaskTx(ctx, tx, t, true) })
+	})
 }
 
 func updateTaskTx(ctx context.Context, tx *sqlx.Tx, t *taskdom.Task, syncAssignees bool) error {
@@ -1489,7 +1491,7 @@ func (r *TaskRepository) attachAssigneeIDs(ctx context.Context, tasks []*taskdom
 	var rows []assigneeRow
 	query := `SELECT task_id, member_id FROM task_assignees WHERE task_id IN (` +
 		strings.Join(placeholders, ",") + `) ORDER BY assigned_at ASC`
-	if err := r.db.SelectContext(ctx, &rows, query, args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, query, args...); err != nil {
 		return fmt.Errorf("task repo: attach assignees: %w", err)
 	}
 	for _, row := range rows {
@@ -1508,15 +1510,17 @@ func (r *TaskRepository) attachAssigneeIDs(ctx context.Context, tasks []*taskdom
 
 // DeleteTask soft-deletes a task by setting deleted_at.
 func (r *TaskRepository) DeleteTask(ctx context.Context, id uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE tasks SET deleted_at=$1 WHERE id=$2 AND deleted_at IS NULL`, time.Now(), id.String())
-	if err != nil {
-		return fmt.Errorf("task repo: delete: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return taskdom.ErrTaskNotFound
-	}
-	return nil
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE tasks SET deleted_at=$1 WHERE id=$2 AND deleted_at IS NULL`, time.Now(), id.String())
+		if err != nil {
+			return fmt.Errorf("task repo: delete: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return taskdom.ErrTaskNotFound
+		}
+		return nil
+	})
 }
 
 // BulkMoveSprintTasks reassigns all non-done tasks that belong to sourceSprintID
@@ -1527,7 +1531,7 @@ func (r *TaskRepository) BulkMoveSprintTasks(ctx context.Context, projectID, sou
 		s := targetSprintID.String()
 		targetSprintStr = &s
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE tasks SET sprint_id=$1, updated_at=$2
 		WHERE project_id=$3 AND sprint_id=$4
 		  AND (status_id IS NULL OR status_id NOT IN (
@@ -1545,7 +1549,7 @@ func (r *TaskRepository) BulkMoveSprintTasks(ctx context.Context, projectID, sou
 // bulk operations. Callers must authorize every returned ID before mutation.
 func (r *TaskRepository) ListOpenTaskIDsInSprint(ctx context.Context, projectID, sprintID uuid.UUID) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
-	err := r.db.SelectContext(ctx, &ids, `
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &ids, `
 		SELECT t.id FROM tasks t
 		WHERE t.project_id=$1 AND t.sprint_id=$2 AND t.deleted_at IS NULL
 		  AND (t.status_id IS NULL OR t.status_id NOT IN (
@@ -1661,7 +1665,7 @@ const customFieldCols = `id, project_id, field_key, display_name, field_type, op
 // ListCustomFieldDefinitions returns all custom field definitions for a project ordered by display_name.
 func (r *TaskRepository) ListCustomFieldDefinitions(ctx context.Context, projectID uuid.UUID) ([]*taskdom.CustomFieldDefinition, error) {
 	var records []customFieldDefinitionRecord
-	if err := r.db.SelectContext(ctx, &records, `SELECT `+customFieldCols+` FROM custom_field_definitions WHERE project_id = $1 ORDER BY display_name ASC`, projectID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+customFieldCols+` FROM custom_field_definitions WHERE project_id = $1 ORDER BY display_name ASC`, projectID.String()); err != nil {
 		return nil, fmt.Errorf("custom field repo: list: %w", err)
 	}
 	out := make([]*taskdom.CustomFieldDefinition, 0, len(records))
@@ -1678,7 +1682,7 @@ func (r *TaskRepository) ListCustomFieldDefinitions(ctx context.Context, project
 // FindCustomFieldDefinitionByID returns the custom field definition with the given ID.
 func (r *TaskRepository) FindCustomFieldDefinitionByID(ctx context.Context, id uuid.UUID) (*taskdom.CustomFieldDefinition, error) {
 	var rec customFieldDefinitionRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+customFieldCols+` FROM custom_field_definitions WHERE id = $1`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+customFieldCols+` FROM custom_field_definitions WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, taskdom.ErrCustomFieldNotFound
 	}
@@ -1694,7 +1698,7 @@ func (r *TaskRepository) CreateCustomFieldDefinition(ctx context.Context, f *tas
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO custom_field_definitions (id, project_id, field_key, display_name, field_type, options, is_required, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		f.ID.String(), f.ProjectID.String(), f.FieldKey, f.DisplayName,
@@ -1715,7 +1719,7 @@ func (r *TaskRepository) UpdateCustomFieldDefinition(ctx context.Context, f *tas
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE custom_field_definitions SET display_name=$1, field_type=$2, options=$3, is_required=$4, updated_at=$5
 		WHERE id=$6`,
 		f.DisplayName, string(f.FieldType), opts, f.IsRequired, f.UpdatedAt, f.ID.String(),
@@ -1979,38 +1983,42 @@ func (r *TaskRepository) CreateTaskAuthorized(ctx context.Context, t *taskdom.Ta
 // UpdateTaskFields merges the explicit patch into the current locked row, never
 // into the earlier service snapshot. Assignment reconciliation is explicit-only.
 func (r *TaskRepository) UpdateTaskFields(ctx context.Context, t *taskdom.Task, in taskdom.UpdateTaskInput, prechecked taskdom.AccessScope) error {
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		current, err := lockAuthorizedTask(ctx, tx, t.ProjectID, t.ID, prechecked, taskdom.AccessManage)
-		if err != nil {
-			return err
-		}
-		in.ApplyTo(current)
-		// The service validated an earlier snapshot; recheck the merged pair.
-		if current.ParentTaskID != nil && current.TaskTypeID != nil {
-			var isEpic bool
-			if err := tx.GetContext(ctx, &isEpic, `SELECT is_system AND name='Epic' FROM task_types WHERE id=$1 FOR SHARE`, *current.TaskTypeID); err != nil {
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+			current, err := lockAuthorizedTask(ctx, tx, t.ProjectID, t.ID, prechecked, taskdom.AccessManage)
+			if err != nil {
 				return err
 			}
-			if isEpic {
-				return taskdom.ErrEpicCannotHaveParent
+			in.ApplyTo(current)
+			// The service validated an earlier snapshot; recheck the merged pair.
+			if current.ParentTaskID != nil && current.TaskTypeID != nil {
+				var isEpic bool
+				if err := tx.GetContext(ctx, &isEpic, `SELECT is_system AND name='Epic' FROM task_types WHERE id=$1 FOR SHARE`, *current.TaskTypeID); err != nil {
+					return err
+				}
+				if isEpic {
+					return taskdom.ErrEpicCannotHaveParent
+				}
 			}
-		}
-		current.UpdatedAt = time.Now()
-		if err := updateTaskTx(ctx, tx, current, in.AssigneeIDs != nil); err != nil {
-			return err
-		}
-		*t = *current
-		return nil
+			current.UpdatedAt = time.Now()
+			if err := updateTaskTx(ctx, tx, current, in.AssigneeIDs != nil); err != nil {
+				return err
+			}
+			*t = *current
+			return nil
+		})
 	})
 }
 
 func (r *TaskRepository) DeleteTaskAuthorized(ctx context.Context, projectID, id uuid.UUID, prechecked taskdom.AccessScope) error {
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		if _, err := lockAuthorizedTask(ctx, tx, projectID, id, prechecked, taskdom.AccessManage); err != nil {
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+			if _, err := lockAuthorizedTask(ctx, tx, projectID, id, prechecked, taskdom.AccessManage); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `UPDATE tasks SET deleted_at=$1 WHERE id=$2 AND project_id=$3`, time.Now(), id, projectID)
 			return err
-		}
-		_, err := tx.ExecContext(ctx, `UPDATE tasks SET deleted_at=$1 WHERE id=$2 AND project_id=$3`, time.Now(), id, projectID)
-		return err
+		})
 	})
 }
 

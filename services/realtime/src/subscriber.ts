@@ -1,43 +1,8 @@
-// Valkey Pub/Sub subscriber.
-//
-// The API publishes every real-time event to the "paca.events" channel as
-// JSON-serialised messages with the shape:
-//
-//   { "type": "<event-type>", "payload": { ...event-specific fields... } }
-//
-// Routing
-// -------
-// Events are routed to namespace-scoped Socket.IO rooms:
-//
-//   task.*     events  →  project:<projectId>:tasks
-//   doc.*      events  →  project:<projectId>:docs
-//   workflow.* events  →  project:<projectId>:workflows (except
-//                          workflow.assigned, which is task-scoped)
-//   sprint.*   events  →  project:<projectId>:sprints
-//   environment.* events → project:<projectId>:environments
-//   agent.*    events  →  project:<projectId>:tasks, OR — when the event has
-//                          no project_id (a global agent's home-page / admin
-//                          chat, see services/ai-agent's
-//                          core.streams.publish_realtime) —
-//                          user:<actorUserId>:agent-chat instead.
-//
-// Sockets are pre-placed in the correct rooms at join time based on their
-// project permissions (project:* rooms) or simply their own identity
-// (user:<userId>:notifications and user:<userId>:agent-chat, auto-joined on
-// connect — see server.ts).  No per-message permission checks are needed
-// here — if a socket is in the room it is authorised to receive the event.
-//
-// Events without a project_id and (for agent.* events) without an
-// actor_user_id, or with an unrecognised type prefix, are dropped.
-
 import Redis from "ioredis";
 import type { Logger } from "pino";
 import type { Server } from "socket.io";
-import {
-	agentChatRoomName,
-	eventNamespace,
-	projectRoomName,
-} from "./permissions.ts";
+import { agentChatRoomName } from "./permissions.ts";
+import { ApiRequestError } from "./api-client.ts";
 
 // CHANNEL is the Valkey Pub/Sub channel the API publishes to.
 // Must stay in sync with events.ChannelRealtime in services/api.
@@ -56,6 +21,8 @@ export function createSubscriber(
 	valkeyUrl: string,
 	io: Server,
 	logger: Logger,
+ gate: DeliveryGate,
+ recipients: (scope: Record<string, unknown>) => Promise<Recipients>,
 ): Redis {
 	// A separate client is required because ioredis clients in subscriber mode
 	// cannot issue regular commands.
@@ -89,80 +56,83 @@ export function createSubscriber(
 	});
 
 	client.on("message", (_channel: string, raw: string) => {
+ if(_channel!==CHANNEL)return;
 		let msg: RealtimeMessage;
 		try {
 			msg = JSON.parse(raw) as RealtimeMessage;
 		} catch (err) {
-			logger.warn({ err, raw }, "failed to parse valkey message — skipping");
+			logger.warn({ err }, "failed to parse valkey message — skipping");
 			return;
 		}
 
-		routeEvent(io, msg, logger);
+		void routeEvent(io, msg, logger, gate, recipients);
 	});
 
 	return client;
 }
 
-function routeEvent(io: Server, msg: RealtimeMessage, logger: Logger): void {
-	const { type } = msg;
-	const payload = eventPayload(msg);
-	if (!payload) {
-		logger.debug({ type }, "event has no payload — skipped");
-		return;
-	}
+export class DeliveryGate {
+ epoch = "0";
+ blocked = true;
+ private pending = new Set<() => void>();
+ afterOpen(action: () => void): void { this.pending.add(action); }
+ update(epoch: string, blocked: boolean): void {
+  if (!/^(0|[1-9][0-9]*)$/.test(epoch) || BigInt(epoch) < BigInt(this.epoch)) return;
+  this.epoch = epoch;
+  this.blocked = blocked;
+  if (!blocked) { const pending = [...this.pending]; this.pending.clear(); for (const action of pending) action(); }
+ }
+ disconnect(): void { this.blocked = true; }
+}
 
-	// notification.* events are routed to a user-specific room.
-	if (type.startsWith("notification.")) {
-		const recipientUserId = payload.recipient_user_id;
-		if (typeof recipientUserId !== "string" || !recipientUserId) {
-			logger.debug(
-				{ type },
-				"notification event has no recipient_user_id — skipped",
-			);
-			return;
-		}
-		const room = `user:${recipientUserId}:notifications`;
-		logger.debug({ type, room }, "routing notification to user room");
-		io.to(room).emit("notification", { type, payload });
-		return;
-	}
-
-	// An owner-private agent.* event carries actor_user_id (the owning user)
-	// and routes to that user's own per-user room — this covers both global
-	// chat and a project's owner-private chat conversations. Checked before
-	// project_id so a private conversation is never also broadcast into the
-	// project room; a project-shared conversation has no actor_user_id and
-	// falls through to the project-scoped branch below.
-	if (type.startsWith("agent.")) {
-		const actorUserId = payload.actor_user_id;
-		if (typeof actorUserId === "string" && actorUserId) {
-			const room = agentChatRoomName(actorUserId);
-			logger.debug(
-				{ type, room },
-				"routing owner-private agent event to user room",
-			);
-			io.to(room).emit("event", { type, payload });
-			return;
-		}
-	}
-
-	// Project-scoped events (project-shared conversations, tasks, docs, ...).
-	const projectId = payload.project_id;
-	if (typeof projectId === "string" && projectId) {
-		// Resolve the namespace room from the event type prefix.
-		const ns = eventNamespace(type);
-		if (!ns) {
-			logger.debug({ type }, "unknown event namespace — skipped");
-			return;
-		}
-
-		const room = projectRoomName(projectId, ns);
-		logger.debug({ type, room }, "routing event to room");
-		io.to(room).emit("event", { type, payload });
-		return;
-	}
-
-	logger.debug({ type }, "event has no project or actor scope — skipped");
+export interface Recipients { epoch: string; user_ids: string[] }
+export async function routeEvent(io: Server, msg: RealtimeMessage, logger: Logger,
+ gate: DeliveryGate, recipients: (scope: Record<string, unknown>) => Promise<Recipients>): Promise<void> {
+ const { type } = msg;
+ let payload = eventPayload(msg);
+ if (!payload || typeof type !== "string") return;
+ if(type==="agent.authorization_revoked") {
+  payload={conversation_id:payload.conversation_id,status:"failed"};
+ }
+ // OPEN is verified asynchronously. Keep the original event until that check
+ // completes, then resolve current recipients rather than retaining an allow.
+ const deferUntilOpen = () => gate.afterOpen(() => {
+  void routeEvent(io, {type, payload}, logger, gate, recipients);
+ });
+ if (gate.blocked) { deferUntilOpen(); return; }
+ const scope: Record<string, unknown> = {event_type:type};
+ for (const key of ["project_id", "task_id", "conversation_id", "recipient_user_id", "activity_id", "activity_type", "content"]) {
+  if (payload[key] !== undefined) scope[key] = payload[key];
+ }
+ // Activity publication can precede persistence; typed metadata is checked by the API.
+ if (type === "task.activity.created") {
+  scope.activity_id = payload.id ?? payload.activity_id;
+  scope.activity_type = payload.type ?? payload.activity_type;
+ }
+ for (;;) {
+  if (gate.blocked) { deferUntilOpen(); return; }
+  try {
+  const allow = await recipients(scope);
+  if (gate.blocked) { deferUntilOpen(); return; }
+  if (allow.epoch !== gate.epoch || !Array.isArray(allow.user_ids)) return;
+  const users = [...new Set(allow.user_ids)];
+  if (!users.length || users.some(id => typeof id !== "string" || !id)) return;
+  const notification = type.startsWith("notification.");
+  const rooms = users.map(id => notification ? `user:${id}:notifications` : agentChatRoomName(id));
+  // The installed synchronous adapter hands off in this JS turn: no await here.
+  io.to(rooms).emit(notification ? "notification" : "event", {type,payload});
+  return;
+ } catch (err) {
+  // The API participant can observe OPEN after realtime. Retry this event;
+  // ordinary authorization/dependency failures retain their fail-closed path.
+  if (err instanceof ApiRequestError && err.status === 409) {
+   await new Promise<void>(resolve => setTimeout(resolve, 25));
+   continue;
+  }
+  logger.warn({type}, "current event authorization unavailable");
+  return;
+ }
+ }
 }
 
 function eventPayload(msg: RealtimeMessage): Record<string, unknown> | null {

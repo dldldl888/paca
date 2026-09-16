@@ -139,3 +139,20 @@ function decodePayload(token: string): JwtPayload {
 
 	return { sub, username, role };
 }
+
+export async function internalRequest(apiUrl: string, key: string, path: string, body?: unknown, method = "POST"): Promise<any> {
+ if (!key) throw new Error("internal authorization unavailable");
+ const response = await fetch(`${apiUrl}/api/internal/${path}`, {
+  method,headers:{"X-Internal-Token":key,"Content-Type":"application/json"},
+  ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:AbortSignal.timeout(8_000),redirect:"error",
+ });
+ if(!response.ok)throw new ApiRequestError("internal authorization unavailable",response.status);
+ const envelope=await response.json() as ApiEnvelope<any>;
+ if(envelope.success!==true||!envelope.data)throw new Error("invalid internal authorization");
+ return envelope.data;
+}
+export async function fetchCurrentRecipients(apiUrl:string,key:string,scope:Record<string,unknown>):Promise<{epoch:string,user_ids:string[]}>{
+ const data=await internalRequest(apiUrl,key,"realtime/recipients",scope);
+ if(typeof data.epoch!=="string"||!/^(0|[1-9][0-9]*)$/.test(data.epoch)||!Array.isArray(data.user_ids)||data.user_ids.some((id:unknown)=>typeof id!=="string"||!/^[0-9a-f-]{36}$/i.test(id)))throw new Error("invalid recipient response");
+ return data;
+}

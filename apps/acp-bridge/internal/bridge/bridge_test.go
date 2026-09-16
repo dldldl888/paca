@@ -265,3 +265,83 @@ func TestReconnectsAfterConnectionDrop(t *testing.T) {
 		t.Fatal("timed out waiting for a reconnect attempt")
 	}
 }
+
+type authorizationHandler struct {
+	fakeHandler
+	closing chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *authorizationHandler) AuthorizationBarrier(context.Context, string, string, []string) error {
+	return nil
+}
+func (h *authorizationHandler) AuthorizationDisconnected() {}
+func (h *authorizationHandler) Close()                     { h.once.Do(func() { close(h.closing); <-h.release }) }
+
+func TestAuthorizationControlBypassesOutboxAndGracefulShutdownWaitsForNative(t *testing.T) {
+	var previousBoot string
+	for attempt := 0; attempt < 3; attempt++ {
+		ts := newTestServer(t)
+		handler := &authorizationHandler{closing: make(chan struct{}), release: make(chan struct{})}
+		client := New(ts.srv.URL, "agent", "token", "/workspace", testLogger(), func(SendFunc) Handler { return handler })
+		// connectOnce has no sender: a full business outbox cannot help this ACK.
+		for i := 0; i < cap(client.outbox); i++ {
+			client.outbox <- map[string]any{"type": "event"}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- client.connectOnce(ctx) }()
+		conn := ts.accept(t)
+		hello := handshake(t, conn)
+		boot, _ := hello["boot_id"].(string)
+		if boot == "" || boot == previousBoot {
+			t.Fatal("boot identity reused", boot)
+		}
+		previousBoot = boot
+		readCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := wsjson.Write(readCtx, conn, map[string]string{"type": "authorization_barrier", "phase": "close", "authorization_epoch": "2"}); err != nil {
+			t.Fatal(err)
+		}
+		var ack map[string]any
+		if err := wsjson.Read(readCtx, conn, &ack); err != nil {
+			t.Fatal("ACK behind business outbox", err)
+		}
+		if ack["type"] != "authorization_barrier_ack" {
+			t.Fatal(ack)
+		}
+		cancel()
+		select {
+		case <-handler.closing:
+		case <-readCtx.Done():
+			t.Fatal("native close not started")
+		}
+		select {
+		case err := <-done:
+			t.Fatal("returned before native close", err)
+		default:
+		}
+		close(handler.release)
+		if err := wsjson.Read(readCtx, conn, &ack); err != nil {
+			t.Fatal("graceful shutdown lost socket before native ACK", err)
+		}
+		if ack["type"] != "authorization_shutdown" {
+			t.Fatal(ack)
+		}
+		select {
+		case err := <-done:
+			t.Fatal("unregister accepted without server ACK", err)
+		default:
+		}
+		if err := wsjson.Write(readCtx, conn, map[string]string{"type": "authorization_shutdown_ack"}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-done:
+		case <-readCtx.Done():
+			t.Fatal("shutdown did not finish after unregister ACK")
+		}
+		stop()
+		conn.CloseNow()
+	}
+}

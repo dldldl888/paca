@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/database"
 	"strings"
 
 	"github.com/google/uuid"
@@ -30,7 +31,7 @@ func (s *AuthzPermissionStore) ListGlobalPermissions(ctx context.Context, userID
 	var rows []struct {
 		Permissions []byte `db:"permissions"`
 	}
-	err := sqlx.SelectContext(ctx, s.db, &rows, `
+	err := sqlx.SelectContext(ctx, authorizationQuery(ctx, s.db), &rows, `
 		SELECT gr.permissions
 		FROM global_roles gr
 		JOIN users u ON u.role_id = gr.id
@@ -48,7 +49,7 @@ func (s *AuthzPermissionStore) ListProjectPermissions(ctx context.Context, userI
 	var rows []struct {
 		Permissions []byte `db:"permissions"`
 	}
-	err := sqlx.SelectContext(ctx, s.db, &rows, `
+	err := sqlx.SelectContext(ctx, authorizationQuery(ctx, s.db), &rows, `
 		SELECT pr.permissions
 		FROM project_roles pr
 		JOIN project_members pm ON pm.project_role_id = pr.id
@@ -142,7 +143,7 @@ func (s *AuthzPermissionStore) FindTaskActorAccess(ctx context.Context, userID, 
 		Global   []byte     `db:"global_permissions"`
 		Project  []byte     `db:"project_permissions"`
 	}
-	err := sqlx.GetContext(ctx, s.db, &row, `SELECT u.id AS user_id, pm.id AS member_id,
+	err := sqlx.GetContext(ctx, authorizationQuery(ctx, s.db), &row, `SELECT u.id AS user_id, pm.id AS member_id,
  gr.permissions AS global_permissions, COALESCE(pr.permissions, '{}'::jsonb) AS project_permissions
  FROM users u JOIN global_roles gr ON gr.id = u.role_id
  JOIN projects p ON p.id = $2 AND p.deleted_at IS NULL
@@ -157,4 +158,11 @@ func (s *AuthzPermissionStore) FindTaskActorAccess(ctx context.Context, userID, 
 		return authz.TaskActorAccess{}, fmt.Errorf("authz store: task access: %w", err)
 	}
 	return authz.TaskActorAccess{UserID: row.UserID, MemberID: row.MemberID, GlobalPermissions: permissionsFromJSON(row.Global), ProjectPermissions: permissionsFromJSON(row.Project)}, nil
+}
+
+func authorizationQuery(ctx context.Context, q sqlx.QueryerContext) sqlx.QueryerContext {
+	if tx := database.Transaction(ctx); tx != nil {
+		return tx
+	}
+	return q
 }

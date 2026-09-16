@@ -1,13 +1,17 @@
 package acp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -653,11 +657,17 @@ func TestPrompt_MaxToolCallsExceeded(t *testing.T) {
 	srv := newACPMockServer(t)
 	srv.onInitialize = initializeOK
 	newSession := standardSessionNew(sessionID)
+	var promptID atomic.Int64
 	srv.onPost = func(s *acpMockServer, req rpcRequest, hdrSessionID string) {
 		newSession(s, req, hdrSessionID)
+		if req.Method == "session/cancel" {
+			s.enqueueSession(sessionID, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"stopReason":"cancelled"}}`, promptID.Load()))
+			return
+		}
 		if req.Method != "session/prompt" {
 			return
 		}
+		promptID.Store(req.ID)
 		// Never sends a terminal response — same shape as the spike's
 		// non-converging loop. The client must give up on its own.
 		for range 50 {
@@ -738,8 +748,11 @@ func TestPrompt_RespectsContextDeadlineOnAHungServer(t *testing.T) {
 	if err == nil {
 		t.Fatal("Prompt: want a context-deadline error against a server that never responds, got nil")
 	}
-	if elapsed > 2*time.Second {
-		t.Errorf("Prompt took %s to return after a 300ms context deadline — it isn't actually bounded by the context", elapsed)
+	if !errors.Is(err, ErrCancellationUnconfirmed) {
+		t.Fatalf("missing terminal accepted as stopped: %v", err)
+	}
+	if elapsed > 7*time.Second {
+		t.Errorf("cancellation exceeded its five-second acknowledgement bound: %s", elapsed)
 	}
 }
 
@@ -760,11 +773,17 @@ func TestPrompt_CancelledMidBacklogReturnsPromptly(t *testing.T) {
 	srv := newACPMockServer(t)
 	srv.onInitialize = initializeOK
 	newSession := standardSessionNew(sessionID)
+	var promptID atomic.Int64
 	srv.onPost = func(s *acpMockServer, req rpcRequest, hdrSessionID string) {
 		newSession(s, req, hdrSessionID)
+		if req.Method == "session/cancel" {
+			s.enqueueSession(sessionID, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"stopReason":"cancelled"}}`, promptID.Load()))
+			return
+		}
 		if req.Method != "session/prompt" {
 			return
 		}
+		promptID.Store(req.ID)
 		// Enqueued as fast as this handler can push them — by the time a
 		// slow-consuming client reads its first frame, most or all of this
 		// is already sitting in the client's own channel buffer, not
@@ -809,5 +828,131 @@ func TestPrompt_CancelledMidBacklogReturnsPromptly(t *testing.T) {
 	if elapsed > 2*time.Second {
 		t.Errorf("Prompt took %s to return after cancelling 20ms in — wants roughly one onEvent call's worth of delay, not the whole %d-frame backlog (%s worth at 20ms/frame)",
 			elapsed, backlogSize, time.Duration(backlogSize)*20*time.Millisecond)
+	}
+}
+
+// The HTTP acceptance is not a cancellation acknowledgement: only the original
+// prompt response proves the native active run has completed.
+func TestPromptCancellationWaitsForMatchingTerminal(t *testing.T) {
+	const sessionID = "cancel-session"
+	srv := newACPMockServer(t)
+	srv.onInitialize = initializeOK
+	started := make(chan int64, 1)
+	cancelled := make(chan struct{})
+	terminal := make(chan struct{})
+	newSession := standardSessionNew(sessionID)
+	var promptID atomic.Int64
+	srv.onPost = func(s *acpMockServer, req rpcRequest, session string) {
+		newSession(s, req, session)
+		switch req.Method {
+		case "session/prompt":
+			promptID.Store(req.ID)
+			started <- req.ID
+		case "session/cancel":
+			if session != sessionID {
+				t.Errorf("cancel session header = %q", session)
+			}
+			close(cancelled)
+			s.enqueueSession(sessionID, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"stopReason":"cancelled"}}`, promptID.Load()+10))
+			s.enqueueSession(sessionID, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"cancel-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"LATE_SECRET"}}}}`)
+			go func() {
+				<-terminal
+				s.enqueueSession(sessionID, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"stopReason":"cancelled"}}`, promptID.Load()))
+			}()
+		}
+	}
+	handler := srv.handler()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			data, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(data))
+			var body map[string]json.RawMessage
+			_ = json.Unmarshal(data, &body)
+			if string(body["method"]) == `"session/cancel"` {
+				if _, ok := body["id"]; ok {
+					t.Error("cancel notification contains id")
+				}
+				if string(body["params"]) != `{"sessionId":"cancel-session"}` {
+					t.Errorf("cancel params = %s", body["params"])
+				}
+			}
+		}
+		handler(w, r)
+	}))
+	defer ts.Close()
+	c := NewClient(ts.URL, testSecret, nil)
+	defer c.Close()
+	if err := c.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.NewSession(context.Background(), "/home/goose", nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var fenceCalls atomic.Int32
+	ctx = WithRequestFence(ctx, func(ctx context.Context) (context.Context, func(), error) {
+		if fenceCalls.Add(1) > 1 {
+			return ctx, func() {}, errors.New("closed fence")
+		}
+		return ctx, func() {}, nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := c.Prompt(ctx, sessionID, []ContentBlock{TextBlock("hello")}, 0, func(Event) { t.Error("delivered post-cancel update") })
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("cancel notification not sent")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("returned before original terminal: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(terminal)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || errors.Is(err, ErrCancellationUnconfirmed) {
+			t.Fatalf("cancel result: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no result after native terminal")
+	}
+	if fenceCalls.Load() != 1 {
+		t.Errorf("cancel used admission fence %d times", fenceCalls.Load())
+	}
+}
+
+func TestPromptCancelledBeforeAdmissionDoesNotWaitForUnsentRequest(t *testing.T) {
+	srv := newACPMockServer(t)
+	srv.onInitialize = initializeOK
+	newSession := standardSessionNew("s")
+	srv.onPost = func(s *acpMockServer, req rpcRequest, session string) {
+		if req.Method == "session/prompt" || req.Method == "session/cancel" {
+			t.Error("unadmitted prompt wrote native request")
+		}
+		newSession(s, req, session)
+	}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+	c := NewClient(ts.URL, testSecret, nil)
+	defer c.Close()
+	if err := c.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.NewSession(context.Background(), "/home/goose", nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = WithRequestFence(ctx, func(ctx context.Context) (context.Context, func(), error) { return ctx, func() {}, ctx.Err() })
+	_, _, err := c.Prompt(ctx, "s", []ContentBlock{TextBlock("denied")}, 0, nil)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrCancellationUnconfirmed) {
+		t.Fatal("unsent prompt demanded native terminal acknowledgement", err)
 	}
 }

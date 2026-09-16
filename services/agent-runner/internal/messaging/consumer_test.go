@@ -297,3 +297,33 @@ func waitOrFail(t *testing.T, ch <-chan struct{}, what string) {
 		t.Fatalf("timed out waiting for %s to run", what)
 	}
 }
+
+func TestConsumerShutdownJoinsNativeCleanup(t *testing.T) {
+	client, cleanup := newTestRedisClient(t)
+	defer cleanup()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	c := NewConsumer(client, 1, func(ctx context.Context, _ agent.Trigger) error {
+		close(entered)
+		<-ctx.Done()
+		<-release
+		return ctx.Err()
+	}, nil, testLogger())
+	c.dispatch(ctx, redis.XMessage{ID: "1-0", Values: map[string]any{"conversation_id": uuid.NewString(), "agent_id": uuid.NewString(), "project_id": uuid.NewString(), "trigger_type": "chat_message"}})
+	<-entered
+	cancel()
+	done := make(chan struct{})
+	go func() { c.Run(ctx); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("consumer returned before native cleanup")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("consumer did not join cleanup")
+	}
+}

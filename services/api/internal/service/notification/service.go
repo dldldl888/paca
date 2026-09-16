@@ -4,6 +4,9 @@ package notificationsvc
 import (
 	"context"
 	"fmt"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"regexp"
 	"strings"
 	"time"
@@ -43,11 +46,13 @@ type memberLookup interface {
 
 // Svc implements notificationdom.Service.
 type Svc struct {
-	repo       notificationdom.Repository
-	memberRepo memberLookup
-	publisher  *messaging.Publisher
-	userRepo   userLookup
-	publicURL  string
+	repo        notificationdom.Repository
+	memberRepo  memberLookup
+	publisher   *messaging.Publisher
+	userRepo    userLookup
+	publicURL   string
+	gate        *delivery.Gate
+	taskChecker taskdom.AccessChecker
 }
 
 // New returns a configured Svc.
@@ -131,6 +136,11 @@ func (s *Svc) docURL(projectID, docID uuid.UUID) string {
 // NotifyAssigned creates a notification for the new assignee when a task is
 // assigned to them, unless the new assignee is the actor themselves.
 func (s *Svc) NotifyAssigned(ctx context.Context, in notificationdom.NotifyAssignedInput) error {
+	ctx, leave, gateErr := s.enter(ctx)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer leave()
 	// Resolve the new assignee's project-member record to get their user_id.
 	assigneeMember, err := s.memberRepo.FindMemberByID(ctx, in.NewAssigneeMemberID)
 	if err != nil {
@@ -138,6 +148,9 @@ func (s *Svc) NotifyAssigned(ctx context.Context, in notificationdom.NotifyAssig
 		return nil
 	}
 
+	if !s.canNotifyTask(ctx, assigneeMember.UserID, in.ProjectID, in.TaskID) {
+		return nil
+	}
 	// Skip self-assignment (actor is the same user as the new assignee).
 	if assigneeMember.UserID == in.ActorUserID {
 		return nil
@@ -184,6 +197,11 @@ func (s *Svc) NotifyAssigned(ctx context.Context, in notificationdom.NotifyAssig
 // for each project member found, excluding the actor themselves.
 // When MentionedUserID is provided in input, it is used directly instead of parsing.
 func (s *Svc) NotifyMentioned(ctx context.Context, in notificationdom.NotifyMentionedInput) error {
+	ctx, leave, gateErr := s.enter(ctx)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer leave()
 	var mentionedUserIDs []uuid.UUID
 
 	// If specific user ID is provided (from BlockNote mentions), use it directly
@@ -225,6 +243,9 @@ func (s *Svc) NotifyMentioned(ctx context.Context, in notificationdom.NotifyMent
 	}
 	seen := make(map[uuid.UUID]bool) // avoid duplicate notifications
 	for _, mentionedUserID := range mentionedUserIDs {
+		if !s.canNotifyTask(ctx, mentionedUserID, in.ProjectID, in.TaskID) {
+			continue
+		}
 		// Skip self-mention.
 		if mentionedUserID == in.ActorUserID {
 			continue
@@ -279,6 +300,11 @@ func (s *Svc) NotifyMentioned(ctx context.Context, in notificationdom.NotifyMent
 // subscribing plugin (and trigger it to email them) despite them having no
 // relationship to this project.
 func (s *Svc) NotifyDocMentioned(ctx context.Context, mentionedUserID, actorUserID uuid.UUID, projectID, docID uuid.UUID) {
+	ctx, leave, gateErr := s.enter(ctx)
+	if gateErr != nil {
+		return
+	}
+	defer leave()
 	if mentionedUserID == actorUserID {
 		return
 	}
@@ -296,6 +322,14 @@ func (s *Svc) NotifyDocMentioned(ctx context.Context, mentionedUserID, actorUser
 // why this doesn't create an in-app row and why project membership must be
 // re-verified against the client-supplied mention ID.
 func (s *Svc) NotifyTaskDescriptionMentioned(ctx context.Context, mentionedUserID, actorUserID uuid.UUID, projectID, taskID uuid.UUID) {
+	ctx, leave, gateErr := s.enter(ctx)
+	if gateErr != nil {
+		return
+	}
+	defer leave()
+	if !s.canNotifyTask(ctx, mentionedUserID, projectID, taskID) {
+		return
+	}
 	if mentionedUserID == actorUserID {
 		return
 	}
@@ -360,4 +394,24 @@ func (s *Svc) publishCreated(ctx context.Context, n *notificationdom.Notificatio
 		"type":    events.TopicNotificationCreated,
 		"payload": payload,
 	})
+}
+
+func (s *Svc) WithCurrentDelivery(g *delivery.Gate, checker taskdom.AccessChecker) *Svc {
+	s.gate = g
+	s.taskChecker = checker
+	return s
+}
+func (s *Svc) enter(ctx context.Context) (context.Context, func(), error) {
+	if s.gate == nil {
+		return ctx, func() {}, nil
+	}
+	ctx, _, leave, err := s.gate.Enter(ctx)
+	return ctx, leave, err
+}
+func (s *Svc) canNotifyTask(ctx context.Context, user, project, task uuid.UUID) bool {
+	if s.taskChecker == nil {
+		return s.gate == nil
+	}
+	_, err := s.taskChecker.CheckTaskAccess(authz.WithActorID(ctx, user), project, task, taskdom.AccessRead)
+	return err == nil
 }

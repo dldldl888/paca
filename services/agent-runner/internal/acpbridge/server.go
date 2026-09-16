@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Paca-AI/agent-runner/internal/runauth"
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -43,6 +45,7 @@ const bridgeMessageReadLimit = 10 * 1024 * 1024 // 10 MiB
 // Run in its own goroutine alongside messaging.Consumer.Run in
 // cmd/agent-runner/main.go.
 type Server struct {
+	RunAuthorizer *runauth.Client
 	Registry      *Registry
 	AgentRepo     *postgres.AgentRepository
 	ConvRepo      *postgres.ConversationRepository
@@ -132,6 +135,7 @@ func (s *Server) requireInternalToken(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type helloFrame struct {
+	BootID  string `json:"boot_id"`
 	Type    string `json:"type"`
 	AgentID string `json:"agent_id"`
 	Token   string `json:"token"`
@@ -199,7 +203,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.relayMessages(r.Context(), conn, agentID)
+	if s.RunAuthorizer != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.Registry.EnrollNative(ctx, agentID, sessionID, hello.BootID); err != nil {
+				_ = conn.Close(4403, "authorization unavailable")
+			}
+		}()
+	}
+	s.relayMessages(r.Context(), conn, agentID, sessionID)
 
 	s.Registry.Unregister(context.WithoutCancel(r.Context()), agentID, cfg.ProjectID, sessionID)
 	s.Log.Info("acpbridge: bridge disconnected", "agent_id", agentID)
@@ -208,7 +221,39 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 // relayMessages reads event/turn_status/ping messages from the daemon until
 // the connection closes — mirrors bridge_ws's `while True: ... receive_json()`
 // loop.
-func (s *Server) relayMessages(ctx context.Context, conn *websocket.Conn, agentID uuid.UUID) {
+func (s *Server) relayMessages(ctx context.Context, conn *websocket.Conn, agentID uuid.UUID, sessionID string) {
+	// Keep controls independent of slow protected event lookups. A single worker preserves event order.
+	var mu sync.Mutex
+	var queued []map[string]any
+	wake := make(chan struct{}, 1)
+	workctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		for {
+			select {
+			case <-workctx.Done():
+				return
+			case <-wake:
+			}
+			for {
+				mu.Lock()
+				if len(queued) == 0 {
+					mu.Unlock()
+					break
+				}
+				msg := queued[0]
+				queued[0] = nil
+				queued = queued[1:]
+				mu.Unlock()
+				if msg["type"] == "event" {
+					s.handleEventMessage(workctx, agentID, msg)
+				} else {
+					s.handleTurnStatusMessage(workctx, agentID, msg)
+				}
+			}
+		}
+	}()
+
 	for {
 		var msg map[string]any
 		if err := wsjson.Read(ctx, conn, &msg); err != nil {
@@ -219,10 +264,24 @@ func (s *Server) relayMessages(ctx context.Context, conn *websocket.Conn, agentI
 			return
 		}
 		switch msgType, _ := msg["type"].(string); msgType {
-		case "event":
-			s.handleEventMessage(ctx, agentID, msg)
-		case "turn_status":
-			s.handleTurnStatusMessage(ctx, agentID, msg)
+		case "event", "turn_status":
+			mu.Lock()
+			queued = append(queued, msg)
+			mu.Unlock()
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		case "authorization_barrier_ack":
+			phase, _ := msg["phase"].(string)
+			epoch, _ := msg["authorization_epoch"].(string)
+			if phase == "close" || phase == "reconcile" {
+				_ = s.Registry.NativeAck(ctx, agentID, sessionID, phase, epoch)
+			}
+		case "authorization_shutdown":
+			if err := s.Registry.NativeShutdown(ctx, agentID, sessionID); err == nil {
+				_ = wsjson.Write(ctx, conn, map[string]string{"type": "authorization_shutdown_ack"})
+			}
 		case "ping":
 			if err := s.Registry.Heartbeat(ctx, agentID); err != nil {
 				s.Log.Warn("acpbridge: failed to refresh heartbeat", "agent_id", agentID, "error", err)
@@ -237,6 +296,11 @@ func (s *Server) relayMessages(ctx context.Context, conn *websocket.Conn, agentI
 }
 
 func (s *Server) handleEventMessage(ctx context.Context, agentID uuid.UUID, msg map[string]any) {
+	ctx, leave, gateErr := s.protectMessage(ctx, agentID, msg)
+	if gateErr != nil {
+		return
+	}
+	defer leave()
 	convIDStr, _ := msg["conversation_id"].(string)
 	if convIDStr == "" {
 		return
@@ -297,6 +361,7 @@ func (s *Server) handleEventMessage(ctx context.Context, agentID uuid.UUID, msg 
 	createdAt := time.Now().UTC()
 	if err := s.ConvRepo.InsertEvent(ctx, id, convID, eventType, eventSource, eventIndex, payload, createdAt); err != nil {
 		s.Log.Warn("acpbridge: failed to persist bridge event", "conversation_id", convID, "error", err)
+		return
 	}
 	if err := s.Publisher.PublishEvent(ctx, convID, projectID, eventType, eventSource, eventIndex, payload, "running"); err != nil {
 		s.Log.Warn("acpbridge: failed to publish bridge event", "conversation_id", convID, "error", err)
@@ -328,8 +393,16 @@ func (s *Server) handleEventMessage(ctx context.Context, agentID uuid.UUID, msg 
 }
 
 func (s *Server) handleTurnStatusMessage(ctx context.Context, agentID uuid.UUID, msg map[string]any) {
+	ctx, leave, gateErr := s.protectMessage(ctx, agentID, msg)
+	if gateErr != nil {
+		return
+	}
+	defer leave()
 	convIDStr, _ := msg["conversation_id"].(string)
 	statusStr, hasStatus := msg["status"].(string)
+	if statusStr != "finished" && statusStr != "failed" && statusStr != "stopped" && statusStr != "paused" {
+		return
+	}
 	if convIDStr == "" || !hasStatus {
 		return
 	}
@@ -354,6 +427,14 @@ func (s *Server) handleTurnStatusMessage(ctx context.Context, agentID uuid.UUID,
 		return
 	}
 
+	if actual, err := s.ConvRepo.GetStatus(ctx, convID); err != nil || actual != statusStr {
+		return
+	}
+	if statusStr != "paused" {
+		if err := s.Publisher.PublishConversationStatus(ctx, convID, statusStr); err != nil {
+			return
+		}
+	}
 	projectID, ownerUserID, err := s.ConvRepo.GetConversationRealtimeContext(ctx, convID)
 	if err != nil {
 		s.Log.Warn("acpbridge: failed to resolve realtime context", "conversation_id", convID, "error", err)

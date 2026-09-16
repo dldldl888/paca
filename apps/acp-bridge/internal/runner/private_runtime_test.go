@@ -472,3 +472,100 @@ func TestPrivateSaveBarrierPrecedesUserEvent(t *testing.T) {
 		t.Fatal("no user event checked")
 	}
 }
+
+func TestPrivateAuthorizationBarrierRejectsDelayedStart(t *testing.T) {
+	cfg, msg := privateFixture(t)
+	cfg.RequireAuthorization = true
+	r, sent := privateRunner(t, cfg)
+	msg["authorization_epoch"] = "1"
+	r.StartTurn(context.Background(), msg)
+	r.mu.Lock()
+	n := len(r.conversations)
+	r.mu.Unlock()
+	if n != 0 {
+		t.Fatal("unenrolled daemon started native work")
+	}
+	if err := r.AuthorizationBarrier(context.Background(), "open", "1", nil); err != nil {
+		t.Fatal(err)
+	}
+	r.StartTurn(context.Background(), msg)
+	waitForStatus(t, sent, "finished")
+	waitPrivateIdle(t, r, msg)
+	before := privateRPCs(t, cfg.PrivateHermes.Root)
+	if err := r.AuthorizationBarrier(context.Background(), "close", "2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AuthorizationBarrier(context.Background(), "reconcile", "2", []string{"conversation"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AuthorizationBarrier(context.Background(), "open", "2", nil); err != nil {
+		t.Fatal(err)
+	}
+	r.StartTurn(context.Background(), msg)
+	if got := privateRPCs(t, cfg.PrivateHermes.Root); !reflect.DeepEqual(got, before) {
+		t.Fatalf("stale dispatch started RPC: %v", got)
+	}
+	msg["authorization_epoch"] = "2"
+	r.StartTurn(context.Background(), msg)
+	waitPrivateIdle(t, r, msg)
+	if len(privateRPCs(t, cfg.PrivateHermes.Root)) != len(before)+1 {
+		t.Fatal("lawful new epoch failed to prompt")
+	}
+}
+
+func TestPrivateAuthorizationReconcileJoinsDelayedLoad(t *testing.T) {
+	cfg, msg := privateFixture(t)
+	first, sent := privateRunner(t, cfg)
+	first.StartTurn(context.Background(), msg)
+	waitForStatus(t, sent, "finished")
+	waitPrivateIdle(t, first, msg)
+	first.Close()
+	cfg.RequireAuthorization = true
+	cfg.SetupTimeout = 30 * time.Second
+	if err := os.WriteFile(filepath.Join(cfg.PrivateHermes.Root, "behavior"), []byte("stall_load"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, output := privateRunner(t, cfg)
+	msg["has_prior_turns"] = true
+	msg["authorization_epoch"] = "1"
+	if err := r.AuthorizationBarrier(context.Background(), "open", "1", nil); err != nil {
+		t.Fatal(err)
+	}
+	r.StartTurn(context.Background(), msg)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		rpc := privateRPCs(t, cfg.PrivateHermes.Root)
+		if rpc[len(rpc)-1] == "session/load" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("load never started")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	before := privateRPCs(t, cfg.PrivateHermes.Root)
+	if err := r.AuthorizationBarrier(ctx, "close", "2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AuthorizationBarrier(ctx, "reconcile", "2", nil); err != nil {
+		t.Fatal(err)
+	}
+	state := waitPrivateIdle(t, r, msg)
+	state.mu.Lock()
+	client := state.client
+	state.mu.Unlock()
+	if client != nil {
+		t.Fatal("reconcile ACK retained native child")
+	}
+	if err := r.AuthorizationBarrier(ctx, "open", "2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, privateRPCs(t, cfg.PrivateHermes.Root)) {
+		t.Fatal("late native prompt after revoked load")
+	}
+	if len(output.all()) != 0 {
+		t.Fatal("cancelled recovery emitted content")
+	}
+}

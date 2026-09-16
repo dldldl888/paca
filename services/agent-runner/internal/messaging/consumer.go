@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -51,6 +52,7 @@ type ControlHandler func(ctx context.Context, c Control) error
 // message for a conversation still in flight, since reading the *next*
 // stream entry was blocked behind finishing the current one.
 type Consumer struct {
+	workers        sync.WaitGroup
 	client         *redis.Client
 	handler        Handler
 	controlHandler ControlHandler
@@ -84,15 +86,10 @@ func NewConsumer(client *redis.Client, maxConcurrency int, handler Handler, cont
 
 // Run blocks, reading from StreamAgentTriggers until ctx is cancelled.
 //
-// Shutdown is deliberately not graceful in the sense of waiting for
-// in-flight trigger goroutines to finish: this returns as soon as the read
-// loop itself exits. Each in-flight executor.Run call still tears its own
-// sandbox down correctly regardless (it uses context.WithoutCancel for
-// that specific step — see executor.go) — what's not guaranteed is that
-// this function's return means every conversation has actually stopped.
-// Acceptable for now; revisit if a slow, coordinated shutdown ever matters
-// more than a fast one.
+// Run joins every dispatched handler before returning so durable enrollment can
+// only be removed after native cancellation and cleanup have completed.
 func (c *Consumer) Run(ctx context.Context) {
+	defer c.workers.Wait()
 	if err := c.ensureGroup(ctx); err != nil {
 		c.log.Error("consumer: failed to create consumer group", "error", err)
 		return
@@ -199,10 +196,12 @@ func (c *Consumer) ensureGroup(ctx context.Context) error {
 func (c *Consumer) dispatch(ctx context.Context, msg redis.XMessage) {
 	rawType, _ := msg.Values["type"].(string)
 	if controlType, ok := controlTypes[rawType]; ok {
-		go c.processControl(ctx, msg, controlType)
+		c.workers.Add(1)
+		go func() { defer c.workers.Done(); c.processControl(ctx, msg, controlType) }()
 		return
 	}
-	go c.processTrigger(ctx, msg)
+	c.workers.Add(1)
+	go func() { defer c.workers.Done(); c.processTrigger(ctx, msg) }()
 }
 
 // ack acknowledges msg, logging (not returning) a failure to do so — used

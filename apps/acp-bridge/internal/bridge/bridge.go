@@ -8,6 +8,8 @@ package bridge
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -61,6 +63,7 @@ type Handler interface {
 
 // Client is the bridge daemon's connection to one Paca instance.
 type Client struct {
+	bootID    string
 	url       string
 	agentID   string
 	token     string
@@ -81,7 +84,14 @@ func New(server, agentID, token, workspace string, log *slog.Logger, newHandler 
 	if log == nil {
 		log = slog.Default()
 	}
+	boot := make([]byte, 16)
+	if _, err := rand.Read(boot); err != nil {
+		panic(err)
+	}
+	boot[6] = (boot[6] & 0x0f) | 0x40
+	boot[8] = (boot[8] & 0x3f) | 0x80
 	c := &Client{
+		bootID:    fmt.Sprintf("%x-%x-%x-%x-%x", boot[:4], boot[4:6], boot[6:8], boot[8:10], boot[10:]),
 		url:       toBridgeWSURL(server),
 		agentID:   agentID,
 		token:     token,
@@ -135,7 +145,7 @@ func (c *Client) RunForever(ctx context.Context) error {
 	for {
 		err := c.connectOnce(ctx)
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return errors.Join(ctx.Err(), err)
 		}
 		if err != nil {
 			c.log.Warn("bridge: connection lost, reconnecting", "error", err, "backoff", backoff)
@@ -162,13 +172,19 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer func() { _ = conn.CloseNow() }()
+
 	conn.SetReadLimit(messageReadLimit)
 
 	c.conn.Store(conn)
 	defer c.conn.Store(nil)
+	defer func() {
+		if handler, ok := c.handler.(interface{ AuthorizationDisconnected() }); ok {
+			handler.AuthorizationDisconnected()
+		}
+	}()
 
 	if err := wsjson.Write(ctx, conn, map[string]string{
-		"type": "hello", "agent_id": c.agentID, "token": c.token,
+		"type": "hello", "agent_id": c.agentID, "token": c.token, "boot_id": c.bootID,
 	}); err != nil {
 		return fmt.Errorf("sending hello: %w", err)
 	}
@@ -185,12 +201,65 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	defer cancelHeartbeat()
 	go c.heartbeatLoop(heartbeatCtx, conn)
 
+	// Keep the socket reader alive during native close and durable unregister.
+	// Cancelling coder/websocket.Read's context closes the transport immediately.
+	readCtx, cancelRead := context.WithCancel(context.Background())
+	defer cancelRead()
+	disconnected := make(chan struct{})
+	defer close(disconnected)
+	shutdownAck := make(chan struct{})
+	shutdownResult := make(chan error, 1)
+	go func() {
+		select {
+		case <-disconnected:
+			return
+		case <-ctx.Done():
+		}
+		if _, ok := c.handler.(interface{ AuthorizationDisconnected() }); !ok {
+			shutdownResult <- ctx.Err()
+			cancelRead()
+			return
+		}
+		c.conn.Store(nil)
+		c.handler.(interface{ AuthorizationDisconnected() }).AuthorizationDisconnected()
+		if closer, ok := c.handler.(interface{ Close() }); ok {
+			closer.Close()
+		}
+		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := wsjson.Write(finish, conn, map[string]string{"type": "authorization_shutdown"})
+		if err == nil {
+			select {
+			case <-shutdownAck:
+			case <-finish.Done():
+				err = errors.New("native stopped but durable unregister was not acknowledged")
+			case <-disconnected:
+				return
+			}
+		}
+		if err != nil {
+			c.log.Error("bridge: durable unregister not confirmed; participant remains fail closed", "error", err)
+		}
+		shutdownResult <- err
+		cancelRead()
+	}()
 	for {
 		var msg map[string]any
-		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+		if err := wsjson.Read(readCtx, conn, &msg); err != nil {
+			if ctx.Err() != nil {
+				return errors.Join(ctx.Err(), <-shutdownResult)
+			}
 			return fmt.Errorf("reading message: %w", err)
 		}
-		c.handleMessage(ctx, msg)
+		if msg["type"] == "authorization_shutdown_ack" {
+			select {
+			case <-shutdownAck:
+			default:
+				close(shutdownAck)
+			}
+			continue
+		}
+		c.handleMessage(readCtx, msg)
 	}
 }
 
@@ -200,7 +269,10 @@ func (c *Client) heartbeatLoop(ctx context.Context, conn *websocket.Conn) {
 	for {
 		select {
 		case <-ticker.C:
-			if err := wsjson.Write(ctx, conn, map[string]string{"type": "ping"}); err != nil {
+			writeCtx, stopWrite := context.WithTimeout(context.Background(), 5*time.Second)
+			err := wsjson.Write(writeCtx, conn, map[string]string{"type": "ping"})
+			stopWrite()
+			if err != nil {
 				return
 			}
 		case <-ctx.Done():
@@ -212,6 +284,30 @@ func (c *Client) heartbeatLoop(ctx context.Context, conn *websocket.Conn) {
 func (c *Client) handleMessage(ctx context.Context, msg map[string]any) {
 	msgType, _ := msg["type"].(string)
 	switch msgType {
+	case "authorization_barrier":
+		handler, ok := c.handler.(interface {
+			AuthorizationBarrier(context.Context, string, string, []string) error
+		})
+		if !ok {
+			return
+		}
+		phase, _ := msg["phase"].(string)
+		epoch, _ := msg["authorization_epoch"].(string)
+		var allowed []string
+		if ids, ok := msg["allowed_conversation_ids"].([]any); ok {
+			for _, id := range ids {
+				if v, ok := id.(string); ok {
+					allowed = append(allowed, v)
+				}
+			}
+		}
+		if err := handler.AuthorizationBarrier(ctx, phase, epoch, allowed); err != nil {
+			return
+		}
+		// Bypass the content outbox: it may be blocked on an authorization lookup.
+		if conn := c.conn.Load(); conn != nil {
+			_ = wsjson.Write(ctx, conn, map[string]string{"type": "authorization_barrier_ack", "phase": phase, "authorization_epoch": epoch})
+		}
 	case "start_turn":
 		c.handler.StartTurn(ctx, msg)
 	case "stop_turn", "pause_turn":
@@ -245,7 +341,10 @@ func (c *Client) senderLoop(ctx context.Context) {
 					return
 				}
 			}
-			if err := wsjson.Write(ctx, conn, msg); err != nil {
+			writeCtx, stopWrite := context.WithTimeout(context.Background(), 5*time.Second)
+			err := wsjson.Write(writeCtx, conn, msg)
+			stopWrite()
+			if err != nil {
 				c.log.Warn("bridge: failed to send, will retry once reconnected",
 					"type", msg["type"], "error", err)
 				select {

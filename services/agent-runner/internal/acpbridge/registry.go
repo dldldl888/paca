@@ -26,6 +26,8 @@ import (
 
 	"github.com/Paca-AI/agent-runner/internal/convlock"
 	"github.com/Paca-AI/agent-runner/internal/messaging"
+	"github.com/Paca-AI/agent-runner/internal/repository/postgres"
+	"github.com/Paca-AI/agent-runner/internal/runauth"
 )
 
 const (
@@ -82,6 +84,9 @@ type Conn interface {
 // mirrors acp_bridge.py's _connections/_sessions/_forward_tasks/
 // _eviction_tasks module dicts, collapsed into one struct per agent.
 type connEntry struct {
+	bootID    string
+	enrolled  bool
+	fenced    bool
 	conn      Conn
 	sessionID string
 	cancel    context.CancelFunc
@@ -97,9 +102,12 @@ type connEntry struct {
 // presence/dispatch/eviction. One instance is shared by every WebSocket
 // connection this process holds.
 type Registry struct {
-	redis     *redis.Client
-	publisher *messaging.Publisher
-	log       Logger
+	authorizer                   *runauth.Client
+	convRepo                     *postgres.ConversationRepository
+	deliveryPhase, deliveryEpoch string
+	redis                        *redis.Client
+	publisher                    *messaging.Publisher
+	log                          Logger
 
 	mu          sync.Mutex
 	connections map[uuid.UUID]*connEntry

@@ -83,12 +83,12 @@ const projectSelectColsQualified = `projects.id, projects.name, projects.descrip
 // List returns a page of projects and the total count.
 func (r *ProjectRepository) List(ctx context.Context, offset, limit int) ([]*projectdom.Project, int64, error) {
 	var total int64
-	if err := r.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM projects WHERE deleted_at IS NULL`); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &total, `SELECT COUNT(*) FROM projects WHERE deleted_at IS NULL`); err != nil {
 		return nil, 0, fmt.Errorf("project repo: list count: %w", err)
 	}
 
 	var records []projectRecord
-	if err := r.db.SelectContext(ctx, &records, `SELECT `+projectSelectCols+` FROM projects WHERE deleted_at IS NULL ORDER BY created_at ASC OFFSET $1 LIMIT $2`, offset, limit); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+projectSelectCols+` FROM projects WHERE deleted_at IS NULL ORDER BY created_at ASC OFFSET $1 LIMIT $2`, offset, limit); err != nil {
 		return nil, 0, fmt.Errorf("project repo: list: %w", err)
 	}
 
@@ -106,7 +106,7 @@ func (r *ProjectRepository) List(ctx context.Context, offset, limit int) ([]*pro
 // ListAccessible returns the projects that the given user is an active member of.
 func (r *ProjectRepository) ListAccessible(ctx context.Context, userID uuid.UUID, offset, limit int) ([]*projectdom.Project, int64, error) {
 	var total int64
-	if err := r.db.GetContext(ctx, &total, `
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &total, `
 		SELECT COUNT(*) FROM projects
 		JOIN project_members ON project_members.project_id = projects.id
 		WHERE project_members.user_id = $1 AND project_members.deleted_at IS NULL AND projects.deleted_at IS NULL`, userID.String()); err != nil {
@@ -114,7 +114,7 @@ func (r *ProjectRepository) ListAccessible(ctx context.Context, userID uuid.UUID
 	}
 
 	var records []projectRecord
-	if err := r.db.SelectContext(ctx, &records, `
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `
 		SELECT `+projectSelectColsQualified+` FROM projects
 		JOIN project_members ON project_members.project_id = projects.id
 		WHERE project_members.user_id = $1 AND project_members.deleted_at IS NULL AND projects.deleted_at IS NULL
@@ -136,7 +136,7 @@ func (r *ProjectRepository) ListAccessible(ctx context.Context, userID uuid.UUID
 // FindByID returns a project by its primary key.
 func (r *ProjectRepository) FindByID(ctx context.Context, id uuid.UUID) (*projectdom.Project, error) {
 	var record projectRecord
-	err := r.db.GetContext(ctx, &record, `SELECT `+projectSelectCols+` FROM projects WHERE id = $1 AND deleted_at IS NULL`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &record, `SELECT `+projectSelectCols+` FROM projects WHERE id = $1 AND deleted_at IS NULL`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, projectdom.ErrNotFound
 	}
@@ -151,7 +151,7 @@ func (r *ProjectRepository) FindByID(ctx context.Context, id uuid.UUID) (*projec
 // no match exists.
 func (r *ProjectRepository) FindByTaskIDPrefix(ctx context.Context, prefix string) (*projectdom.Project, error) {
 	var record projectRecord
-	err := r.db.GetContext(ctx, &record, `SELECT `+projectSelectCols+` FROM projects WHERE upper(task_id_prefix) = upper($1) AND deleted_at IS NULL`, prefix)
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &record, `SELECT `+projectSelectCols+` FROM projects WHERE upper(task_id_prefix) = upper($1) AND deleted_at IS NULL`, prefix)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, projectdom.ErrNotFound
 	}
@@ -167,7 +167,7 @@ func (r *ProjectRepository) Create(ctx context.Context, p *projectdom.Project) e
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO projects (id, name, description, task_id_prefix, is_public, settings, created_by, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		rec.ID, rec.Name, rec.Description, rec.TaskIDPrefix, rec.IsPublic,
@@ -184,48 +184,52 @@ func (r *ProjectRepository) Create(ctx context.Context, p *projectdom.Project) e
 
 // Update saves changes to a project.
 func (r *ProjectRepository) Update(ctx context.Context, p *projectdom.Project) error {
-	settings, err := json.Marshal(p.Settings)
-	if err != nil {
-		return fmt.Errorf("project repo: marshal settings: %w", err)
-	}
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		settings, err := json.Marshal(p.Settings)
+		if err != nil {
+			return fmt.Errorf("project repo: marshal settings: %w", err)
+		}
 
-	var createdBy *string
-	if p.CreatedBy != nil {
-		s := p.CreatedBy.String()
-		createdBy = &s
-	}
+		var createdBy *string
+		if p.CreatedBy != nil {
+			s := p.CreatedBy.String()
+			createdBy = &s
+		}
 
-	result, err := r.db.ExecContext(ctx, `
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE projects SET name=$1, description=$2, task_id_prefix=$3, is_public=$4, settings=$5,
 		  avatar_key=$6, avatar_thumb_key=$7, created_by=$8
 		WHERE id=$9`,
-		p.Name, p.Description, p.TaskIDPrefix, p.IsPublic, settings,
-		p.AvatarKey, p.AvatarThumbKey, createdBy, p.ID.String(),
-	)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return projectdom.ErrNameTaken
+			p.Name, p.Description, p.TaskIDPrefix, p.IsPublic, settings,
+			p.AvatarKey, p.AvatarThumbKey, createdBy, p.ID.String(),
+		)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return projectdom.ErrNameTaken
+			}
+			return fmt.Errorf("project repo: update: %w", err)
 		}
-		return fmt.Errorf("project repo: update: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return projectdom.ErrNotFound
-	}
-	return nil
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return projectdom.ErrNotFound
+		}
+		return nil
+	})
 }
 
 // Delete soft-deletes a project by setting deleted_at.
 func (r *ProjectRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE projects SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`, time.Now(), id.String())
-	if err != nil {
-		return fmt.Errorf("project repo: delete: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return projectdom.ErrNotFound
-	}
-	return nil
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE projects SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`, time.Now(), id.String())
+		if err != nil {
+			return fmt.Errorf("project repo: delete: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return projectdom.ErrNotFound
+		}
+		return nil
+	})
 }
 
 // --- Project Roles ----------------------------------------------------------
@@ -235,7 +239,7 @@ const projectRoleCols = `id, project_id, role_name, permissions, created_at, upd
 // ListRoles returns project-scoped roles for a given project.
 func (r *ProjectRepository) ListRoles(ctx context.Context, projectID uuid.UUID) ([]*projectdom.ProjectRole, error) {
 	var records []projectRoleRecord
-	if err := r.db.SelectContext(ctx, &records, `SELECT `+projectRoleCols+` FROM project_roles WHERE project_id = $1 ORDER BY role_name ASC`, projectID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+projectRoleCols+` FROM project_roles WHERE project_id = $1 ORDER BY role_name ASC`, projectID.String()); err != nil {
 		return nil, fmt.Errorf("project repo: list roles: %w", err)
 	}
 
@@ -253,7 +257,7 @@ func (r *ProjectRepository) ListRoles(ctx context.Context, projectID uuid.UUID) 
 // FindRoleByID returns a project role by its primary key.
 func (r *ProjectRepository) FindRoleByID(ctx context.Context, id uuid.UUID) (*projectdom.ProjectRole, error) {
 	var record projectRoleRecord
-	err := r.db.GetContext(ctx, &record, `SELECT `+projectRoleCols+` FROM project_roles WHERE id = $1`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &record, `SELECT `+projectRoleCols+` FROM project_roles WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, projectdom.ErrRoleNotFound
 	}
@@ -266,7 +270,7 @@ func (r *ProjectRepository) FindRoleByID(ctx context.Context, id uuid.UUID) (*pr
 // FindRoleByName returns a role by name within the given project scope.
 func (r *ProjectRepository) FindRoleByName(ctx context.Context, projectID uuid.UUID, name string) (*projectdom.ProjectRole, error) {
 	var record projectRoleRecord
-	err := r.db.GetContext(ctx, &record, `SELECT `+projectRoleCols+` FROM project_roles WHERE project_id = $1 AND role_name = $2`, projectID.String(), name)
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &record, `SELECT `+projectRoleCols+` FROM project_roles WHERE project_id = $1 AND role_name = $2`, projectID.String(), name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, projectdom.ErrRoleNotFound
 	}
@@ -282,7 +286,7 @@ func (r *ProjectRepository) CreateRole(ctx context.Context, role *projectdom.Pro
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO project_roles (id, project_id, role_name, permissions, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
 		rec.ID, rec.ProjectID, rec.RoleName, rec.Permissions, rec.CreatedAt, rec.UpdatedAt,
@@ -298,44 +302,48 @@ func (r *ProjectRepository) CreateRole(ctx context.Context, role *projectdom.Pro
 
 // UpdateRole saves changes to a project role.
 func (r *ProjectRepository) UpdateRole(ctx context.Context, role *projectdom.ProjectRole) error {
-	perms, err := json.Marshal(role.Permissions)
-	if err != nil {
-		return fmt.Errorf("project repo: marshal role permissions: %w", err)
-	}
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE project_roles SET role_name=$1, permissions=$2, updated_at=$3 WHERE id=$4`,
-		role.RoleName, perms, role.UpdatedAt, role.ID.String(),
-	)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return projectdom.ErrRoleNameTaken
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		perms, err := json.Marshal(role.Permissions)
+		if err != nil {
+			return fmt.Errorf("project repo: marshal role permissions: %w", err)
 		}
-		return fmt.Errorf("project repo: update role: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return projectdom.ErrRoleNotFound
-	}
-	return nil
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
+		UPDATE project_roles SET role_name=$1, permissions=$2, updated_at=$3 WHERE id=$4`,
+			role.RoleName, perms, role.UpdatedAt, role.ID.String(),
+		)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return projectdom.ErrRoleNameTaken
+			}
+			return fmt.Errorf("project repo: update role: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return projectdom.ErrRoleNotFound
+		}
+		return nil
+	})
 }
 
 // DeleteRole removes a project role.
 func (r *ProjectRepository) DeleteRole(ctx context.Context, id uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM project_roles WHERE id = $1`, id.String())
-	if err != nil {
-		return fmt.Errorf("project repo: delete role: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return projectdom.ErrRoleNotFound
-	}
-	return nil
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM project_roles WHERE id = $1`, id.String())
+		if err != nil {
+			return fmt.Errorf("project repo: delete role: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return projectdom.ErrRoleNotFound
+		}
+		return nil
+	})
 }
 
 // CountMembersWithRole returns the number of active project members assigned to the role.
 func (r *ProjectRepository) CountMembersWithRole(ctx context.Context, roleID uuid.UUID) (int64, error) {
 	var count int64
-	if err := r.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM project_members WHERE project_role_id = $1`, roleID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, `SELECT COUNT(*) FROM project_members WHERE project_role_id = $1`, roleID.String()); err != nil {
 		return 0, fmt.Errorf("project repo: count members with role: %w", err)
 	}
 	return count, nil
@@ -355,7 +363,7 @@ const projectMemberCols = `
 // ListMembers returns all active (non-deleted) members of a project enriched with user and role info.
 func (r *ProjectRepository) ListMembers(ctx context.Context, projectID uuid.UUID) ([]*projectdom.ProjectMember, error) {
 	var rows []projectMemberReadRow
-	if err := r.db.SelectContext(ctx, &rows, `
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, `
 		SELECT `+projectMemberCols+`
 		FROM project_members pm
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
@@ -390,7 +398,7 @@ func (r *ProjectRepository) CountDistinctAgentsByProjects(ctx context.Context, p
 		SELECT COUNT(DISTINCT agent_id)
 		FROM project_members
 		WHERE deleted_at IS NULL AND agent_id IS NOT NULL AND ` + b.whereClauses[0]
-	if err := r.db.GetContext(ctx, &count, query, b.args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, query, b.args...); err != nil {
 		return 0, fmt.Errorf("project repo: count distinct agents: %w", err)
 	}
 	return count, nil
@@ -399,7 +407,7 @@ func (r *ProjectRepository) CountDistinctAgentsByProjects(ctx context.Context, p
 // FindMember returns a single active member record for the given project + user combo.
 func (r *ProjectRepository) FindMember(ctx context.Context, projectID, userID uuid.UUID) (*projectdom.ProjectMember, error) {
 	var row projectMemberReadRow
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+projectMemberCols+`
 		FROM project_members pm
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
@@ -419,7 +427,7 @@ func (r *ProjectRepository) FindMember(ctx context.Context, projectID, userID uu
 // FindMemberByAgent returns a single active member record for the given project + agent combo.
 func (r *ProjectRepository) FindMemberByAgent(ctx context.Context, projectID, agentID uuid.UUID) (*projectdom.ProjectMember, error) {
 	var row projectMemberReadRow
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+projectMemberCols+`
 		FROM project_members pm
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
@@ -458,7 +466,7 @@ func (r *ProjectRepository) FindMemberByActor(ctx context.Context, projectID, ac
 // Used by the notification service to resolve an assignee member ID to a user ID.
 func (r *ProjectRepository) FindMemberByID(ctx context.Context, memberID uuid.UUID) (*projectdom.ProjectMember, error) {
 	var row projectMemberReadRow
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+projectMemberCols+`
 		FROM project_members pm
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
@@ -478,7 +486,7 @@ func (r *ProjectRepository) FindMemberByID(ctx context.Context, memberID uuid.UU
 func (r *ProjectRepository) AddMember(ctx context.Context, m *projectdom.ProjectMember) error {
 	// First try to restore a previously soft-deleted membership for this
 	// project+user pair, updating only the role (preserving original created_at).
-	restore, err := r.db.ExecContext(ctx, `
+	restore, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE project_members
 		SET project_role_id = $1, deleted_at = NULL
 		WHERE project_id = $2 AND user_id = $3 AND deleted_at IS NOT NULL`,
@@ -492,7 +500,7 @@ func (r *ProjectRepository) AddMember(ctx context.Context, m *projectdom.Project
 	}
 
 	// No soft-deleted row to restore; insert a fresh membership.
-	result, err := r.db.ExecContext(ctx, `
+	result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO project_members (id, project_id, user_id, project_role_id, member_type, created_at, deleted_at)
 		VALUES ($1, $2, $3, $4, 'human', NOW(), NULL)
 		ON CONFLICT (project_id, user_id) WHERE deleted_at IS NULL DO NOTHING`,
@@ -509,7 +517,7 @@ func (r *ProjectRepository) AddMember(ctx context.Context, m *projectdom.Project
 
 // AddAgentMember inserts a project_members row for an AI agent.
 func (r *ProjectRepository) AddAgentMember(ctx context.Context, memberID, projectID, agentID, roleID uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `
+	result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO project_members (id, project_id, agent_id, project_role_id, member_type, user_id, created_at, deleted_at)
 		VALUES ($1, $2, $3, $4, 'agent', NULL, NOW(), NULL)
 		ON CONFLICT (project_id, agent_id) WHERE deleted_at IS NULL AND member_type = 'agent' DO NOTHING`,
@@ -526,76 +534,86 @@ func (r *ProjectRepository) AddAgentMember(ctx context.Context, memberID, projec
 
 // RemoveAgentMember soft-deletes the membership row for the given agent.
 func (r *ProjectRepository) RemoveAgentMember(ctx context.Context, projectID, agentID uuid.UUID) error {
-	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		now := time.Now().UTC()
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE project_members SET deleted_at = $1
 		WHERE project_id = $2 AND agent_id = $3 AND member_type = 'agent'`, now, projectID.String(), agentID.String())
-	if err != nil {
-		return fmt.Errorf("project repo: remove agent member: %w", err)
-	}
-	return nil
+		if err != nil {
+			return fmt.Errorf("project repo: remove agent member: %w", err)
+		}
+		return nil
+	})
 }
 
 // UpdateMemberRole changes the role of an existing active project member.
 func (r *ProjectRepository) UpdateMemberRole(ctx context.Context, projectID, userID, roleID uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE project_members SET project_role_id = $1 WHERE project_id = $2 AND user_id = $3 AND deleted_at IS NULL`,
-		roleID.String(), projectID.String(), userID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("project repo: update member role: %w", err)
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return projectdom.ErrMemberNotFound
-	}
-	return nil
+			roleID.String(), projectID.String(), userID.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("project repo: update member role: %w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return projectdom.ErrMemberNotFound
+		}
+		return nil
+	})
 }
 
 // RemoveMember soft-deletes the membership row for the given project + user.
 func (r *ProjectRepository) RemoveMember(ctx context.Context, projectID, userID uuid.UUID) error {
-	now := time.Now().UTC()
-	result, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		now := time.Now().UTC()
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE project_members SET deleted_at = $1 WHERE project_id = $2 AND user_id = $3 AND deleted_at IS NULL`,
-		now, projectID.String(), userID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("project repo: remove member: %w", err)
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return projectdom.ErrMemberNotFound
-	}
-	return nil
+			now, projectID.String(), userID.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("project repo: remove member: %w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return projectdom.ErrMemberNotFound
+		}
+		return nil
+	})
 }
 
 // UpdateMemberRoleByMemberID changes the role of an existing active project member by member ID.
 func (r *ProjectRepository) UpdateMemberRoleByMemberID(ctx context.Context, memberID, roleID uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE project_members SET project_role_id = $1 WHERE id = $2 AND deleted_at IS NULL`,
-		roleID.String(), memberID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("project repo: update member role: %w", err)
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return projectdom.ErrMemberNotFound
-	}
-	return nil
+			roleID.String(), memberID.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("project repo: update member role: %w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return projectdom.ErrMemberNotFound
+		}
+		return nil
+	})
 }
 
 // RemoveMemberByMemberID soft-deletes the membership row for the given member ID.
 func (r *ProjectRepository) RemoveMemberByMemberID(ctx context.Context, memberID uuid.UUID) error {
-	now := time.Now().UTC()
-	result, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		now := time.Now().UTC()
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE project_members SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-		now, memberID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("project repo: remove member: %w", err)
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return projectdom.ErrMemberNotFound
-	}
-	return nil
+			now, memberID.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("project repo: remove member: %w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return projectdom.ErrMemberNotFound
+		}
+		return nil
+	})
 }
 
 // --- Mapping helpers --------------------------------------------------------

@@ -129,7 +129,7 @@ func run(log *slog.Logger) error {
 	if settings.InstanceID != "" {
 		runAuthorizer = runauth.New(settings.PacaAPIURL, settings.InternalAPIKey, settings.InstanceID)
 	}
-	acpRegistry := acpbridge.New(redisClient, publisher, log)
+	acpRegistry := acpbridge.New(redisClient, publisher, log).WithAuthorization(runAuthorizer, convRepo)
 	acpDispatcher := &acpbridge.Dispatcher{
 		RunAuthorizer: runAuthorizer,
 		Registry:      acpRegistry,
@@ -157,7 +157,7 @@ func run(log *slog.Logger) error {
 
 	consumer := messaging.NewConsumer(redisClient, settings.WorkerConcurrency, h.Handle, h.HandleControl, log)
 
-	acpServer := &acpbridge.Server{
+	acpServer := &acpbridge.Server{RunAuthorizer: runAuthorizer,
 		Registry:              acpRegistry,
 		AgentRepo:             agentRepo,
 		ConvRepo:              convRepo,
@@ -187,6 +187,34 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if runAuthorizer != nil {
+		bootCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdown, err := runAuthorizer.StartParticipant(bootCtx, redisClient, func(ctx context.Context, phase, epoch string) error {
+			if phase == "reconcile" {
+				if err := h.ReconcileAuthorization(ctx); err != nil {
+					return err
+				}
+			}
+			return acpRegistry.AuthorizationControl(ctx, phase, epoch)
+		})
+		cancel()
+		if err != nil {
+			log.Error("authorization enrollment failed", "error", err)
+			return err
+		}
+		defer func() {
+			if err := inFlight.StopFailure(); err != nil {
+				runAuthorizer.Gate.Disconnect()
+				log.Error("native stop unconfirmed; retaining durable participant", "error", err)
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := shutdown(ctx); err != nil {
+				log.Error("authorization unregister failed", "error", err)
+			}
+		}()
+	}
 
 	log.Info("agent-runner: starting",
 		"image", settings.AgentServerImage,

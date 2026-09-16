@@ -3,6 +3,9 @@ package postgres
 import (
 	"context"
 	"fmt"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -160,6 +163,24 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 	limitPlaceholder := fmt.Sprintf("$%d", len(args)+1)
 	args = append(args, limit+1)
 
+	// Preserve old personal rows while authorizing only freshly joined task fields.
+	var projects []uuid.UUID
+	if err := r.db.SelectContext(ctx, &projects, `SELECT DISTINCT project_id FROM notifications WHERE recipient_user_id=$1`, userID); err != nil {
+		return nil, false, err
+	}
+	policy := authz.NewTaskAccessPolicy(NewAuthzPermissionStore(r.db))
+	scopes := []taskdom.AccessScope{}
+	for _, project := range projects {
+		scope, err := policy.ResolveTaskAccess(authz.WithActorID(ctx, userID), project)
+		if err != nil {
+			return nil, false, err
+		}
+		scopes = append(scopes, scope)
+	}
+	b := &queryBuilder{idx: len(args) + 1}
+	applyTaskVisibility(b, scopes)
+	visible := strings.ReplaceAll(strings.Join(b.whereClauses, " AND "), "tasks.", "t.")
+	args = append(args, b.args...)
 	var rows []notificationReadRow
 	query := `
 		SELECT ` + notificationReadCols + `
@@ -167,7 +188,7 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 		LEFT JOIN project_members pm ON pm.id = n.actor_member_id
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
 		LEFT JOIN agents ag ON ag.id = pm.agent_id
-		LEFT JOIN tasks t ON t.id = n.task_id AND t.deleted_at IS NULL
+		LEFT JOIN tasks t ON t.id = n.task_id AND t.deleted_at IS NULL AND (` + visible + `)
 		JOIN projects p ON p.id = n.project_id
 		WHERE n.recipient_user_id = $1` + whereCursor + `
 		ORDER BY n.created_at DESC, n.id DESC

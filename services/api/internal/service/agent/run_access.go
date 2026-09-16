@@ -3,6 +3,7 @@ package agentsvc
 import (
 	"context"
 	"errors"
+	"github.com/Paca-AI/api/internal/platform/database"
 	"time"
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
@@ -30,17 +31,18 @@ func (s *Service) WithPrivateRuns(instance uuid.UUID, repo runRepository, docs d
 // RunAuthorization is the only server-to-server dispatch identity. Empty project
 // and linkage strings are explicit; the boolean must always be present on wire.
 type RunAuthorization struct {
-	ConversationID string `json:"conversation_id"`
-	AgentID        string `json:"agent_id"`
-	InstanceID     string `json:"instance_id"`
-	ProjectID      string `json:"project_id"`
-	Audience       string `json:"audience"`
-	OwnerUserID    string `json:"owner_user_id"`
-	HasPriorTurns  bool   `json:"has_prior_turns"`
-	Status         string `json:"status"`
-	TaskID         string `json:"task_id"`
-	CommentID      string `json:"comment_id"`
-	ChatSessionID  string `json:"chat_session_id"`
+	AuthorizationEpoch string `json:"authorization_epoch"`
+	ConversationID     string `json:"conversation_id"`
+	AgentID            string `json:"agent_id"`
+	InstanceID         string `json:"instance_id"`
+	ProjectID          string `json:"project_id"`
+	Audience           string `json:"audience"`
+	OwnerUserID        string `json:"owner_user_id"`
+	HasPriorTurns      bool   `json:"has_prior_turns"`
+	Status             string `json:"status"`
+	TaskID             string `json:"task_id"`
+	CommentID          string `json:"comment_id"`
+	ChatSessionID      string `json:"chat_session_id"`
 }
 
 func stringID(id uuid.UUID) string {
@@ -257,6 +259,11 @@ func (s *Service) checkContext(ctx context.Context, project, owner uuid.UUID, re
 // AuthorizeRun is shared with future active-run/realtime reconciliation. It never
 // uses queue actor/project attribution or confers permission to read old history.
 func (s *Service) AuthorizeRun(ctx context.Context, conversation, agent uuid.UUID, begin bool) (*RunAuthorization, error) {
+	ctx, epoch, leave, gateErr := s.enterDelivery(ctx)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer leave()
 	if s.instanceID == uuid.Nil || s.runRepo == nil {
 		return nil, agentdom.ErrConversationNotFound
 	}
@@ -276,7 +283,7 @@ func (s *Service) AuthorizeRun(ctx context.Context, conversation, agent uuid.UUI
 	defer cancel()
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
-	actorCtx := authz.WithActorID(humanCtx, owner)
+	actorCtx := authz.WithActorID(database.CopyTransaction(humanCtx, ctx), owner)
 	refs, err := s.validateRun(actorCtx, c, owner, map[uuid.UUID]bool{})
 	if err != nil {
 		return nil, err
@@ -288,7 +295,7 @@ func (s *Service) AuthorizeRun(ctx context.Context, conversation, agent uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	return &RunAuthorization{ConversationID: c.ID.String(), AgentID: c.AgentID.String(), InstanceID: s.instanceID.String(), ProjectID: stringID(c.ProjectID), Audience: string(c.Audience), OwnerUserID: owner.String(), HasPriorTurns: prior, Status: c.Status, TaskID: pointerID(c.TaskID), CommentID: pointerID(c.CommentID), ChatSessionID: pointerID(c.ChatSessionID)}, nil
+	return &RunAuthorization{AuthorizationEpoch: epoch, ConversationID: c.ID.String(), AgentID: c.AgentID.String(), InstanceID: s.instanceID.String(), ProjectID: stringID(c.ProjectID), Audience: string(c.Audience), OwnerUserID: owner.String(), HasPriorTurns: prior, Status: c.Status, TaskID: pointerID(c.TaskID), CommentID: pointerID(c.CommentID), ChatSessionID: pointerID(c.ChatSessionID)}, nil
 }
 
 func (s *Service) prepareChat(ctx context.Context, project, agent, member, user uuid.UUID, c *agentdom.AgentConversation, refs []agentdom.ContextItemRef) ([]agentdom.ContextItemRef, error) {

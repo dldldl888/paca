@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -172,5 +173,29 @@ func TestRegister_ConcurrentUseIsSafe(t *testing.T) {
 	}
 	for range 50 {
 		<-done
+	}
+}
+
+func TestAuthorizationStopWaitsForCleanupAndRetainsFailure(t *testing.T) {
+	r := New()
+	id := uuid.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	token := r.Register(id, cancel)
+	done := make(chan error, 1)
+	go func() { done <- r.InterruptAndWait(context.Background(), id) }()
+	<-ctx.Done()
+	select {
+	case <-done:
+		t.Fatal("cancellation request acknowledged before cleanup")
+	default:
+	}
+	failure := fmt.Errorf("native terminal response not observed")
+	r.RecordStopError(id, failure)
+	r.Unregister(id, token)
+	if err := <-done; err != failure {
+		t.Fatal("stop failure ignored", err)
+	}
+	if err := r.InterruptAndWait(context.Background(), id); err != failure {
+		t.Fatal("retry forgot unfenced native process", err)
 	}
 }

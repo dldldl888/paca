@@ -3,6 +3,7 @@ package automationsvc
 import (
 	"context"
 	"fmt"
+	"github.com/Paca-AI/api/internal/platform/database"
 	"log/slog"
 	"time"
 
@@ -46,6 +47,9 @@ func graphKey(automationID uuid.UUID) string {
 // LoadGraph returns automationID's full node/edge set, reading from cache
 // when available and populating it on a miss.
 func (c *CachedRepository) LoadGraph(ctx context.Context, automationID uuid.UUID) (*automationdom.Graph, error) {
+	if database.Transaction(ctx) != nil {
+		return c.repo.LoadGraph(ctx, automationID)
+	}
 	if c.ttl == 0 {
 		return c.repo.LoadGraph(ctx, automationID)
 	}

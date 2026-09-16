@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Paca-AI/agent-runner/internal/agent"
 	"github.com/google/uuid"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +19,7 @@ import (
 type Client struct {
 	Origin, InternalKey, InstanceID string
 	HTTP                            *http.Client
+	Gate                            *Gate
 }
 
 func New(origin, key, instance string) *Client {
@@ -24,22 +27,23 @@ func New(origin, key, instance string) *Client {
 }
 
 type Authorization struct {
-	ConversationID string `json:"conversation_id"`
-	AgentID        string `json:"agent_id"`
-	InstanceID     string `json:"instance_id"`
-	ProjectID      string `json:"project_id"`
-	Audience       string `json:"audience"`
-	OwnerUserID    string `json:"owner_user_id"`
-	HasPriorTurns  bool   `json:"has_prior_turns"`
-	Status         string `json:"status"`
-	TaskID         string `json:"task_id"`
-	CommentID      string `json:"comment_id"`
-	ChatSessionID  string `json:"chat_session_id"`
+	AuthorizationEpoch string `json:"authorization_epoch"`
+	ConversationID     string `json:"conversation_id"`
+	AgentID            string `json:"agent_id"`
+	InstanceID         string `json:"instance_id"`
+	ProjectID          string `json:"project_id"`
+	Audience           string `json:"audience"`
+	OwnerUserID        string `json:"owner_user_id"`
+	HasPriorTurns      bool   `json:"has_prior_turns"`
+	Status             string `json:"status"`
+	TaskID             string `json:"task_id"`
+	CommentID          string `json:"comment_id"`
+	ChatSessionID      string `json:"chat_session_id"`
 }
 
 func (c *Client) Authorize(ctx context.Context, conversation, agentID uuid.UUID, begin bool) (*Authorization, error) {
 	if c == nil || c.InternalKey == "" || c.InstanceID == "" {
-		return nil, fmt.Errorf("private run authorization unavailable")
+		return nil, ErrUnavailable
 	}
 	body, _ := json.Marshal(map[string]any{"conversation_id": conversation.String(), "agent_id": agentID.String(), "begin_turn": begin})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Origin+"/api/internal/agent-runs/authorize", bytes.NewReader(body))
@@ -50,11 +54,17 @@ func (c *Client) Authorize(ctx context.Context, conversation, agentID uuid.UUID,
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("private run authorization unavailable")
+		return nil, ErrUnavailable
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("private run authorization refused (%d)", resp.StatusCode)
+		if resp.StatusCode == 409 {
+			return nil, ErrBlocked
+		}
+		if resp.StatusCode == 404 || resp.StatusCode == 400 {
+			return nil, ErrDenied
+		}
+		return nil, ErrUnavailable
 	}
 	var envelope struct {
 		Success   bool            `json:"success"`
@@ -68,21 +78,24 @@ func (c *Client) Authorize(ctx context.Context, conversation, agentID uuid.UUID,
 		return nil, fmt.Errorf("invalid authorization envelope")
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(envelope.Data, &fields) != nil || len(fields) != 11 {
+	if json.Unmarshal(envelope.Data, &fields) != nil || len(fields) != 12 {
 		return nil, fmt.Errorf("incomplete authorization")
 	}
-	for _, key := range []string{"conversation_id", "agent_id", "instance_id", "project_id", "audience", "owner_user_id", "has_prior_turns", "status", "task_id", "comment_id", "chat_session_id"} {
+	for _, key := range []string{"authorization_epoch", "conversation_id", "agent_id", "instance_id", "project_id", "audience", "owner_user_id", "has_prior_turns", "status", "task_id", "comment_id", "chat_session_id"} {
 		raw, ok := fields[key]
 		if !ok || string(raw) == "null" {
 			return nil, fmt.Errorf("incomplete authorization")
 		}
 	}
-	// There are exactly eleven identity/status fields; reject unknown fields too.
+	// Every identity/status field is required, including the current delivery epoch.
 	var a Authorization
 	d := json.NewDecoder(bytes.NewReader(envelope.Data))
 	d.DisallowUnknownFields()
 	if d.Decode(&a) != nil {
 		return nil, fmt.Errorf("invalid authorization")
+	}
+	if n, e := strconv.ParseUint(a.AuthorizationEpoch, 10, 63); e != nil || strconv.FormatUint(n, 10) != a.AuthorizationEpoch {
+		return nil, ErrUnavailable
 	}
 	if a.ConversationID != conversation.String() || a.AgentID != agentID.String() || a.InstanceID != c.InstanceID || a.Audience != "owner_private" {
 		return nil, fmt.Errorf("authorization identity mismatch")
@@ -131,3 +144,6 @@ func parseOptional(value string) *uuid.UUID {
 	id := uuid.MustParse(value)
 	return &id
 }
+
+var ErrUnavailable = errors.New("run authorization unavailable")
+var ErrDenied = errors.New("run authorization refused")

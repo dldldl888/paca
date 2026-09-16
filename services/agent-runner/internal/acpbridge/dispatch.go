@@ -2,6 +2,7 @@ package acpbridge
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +42,11 @@ type Dispatcher struct {
 // otherwise schedules a watchdog to fail the conversation if the bridge
 // never reports a terminal turn_status within its timeout.
 func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger, cfg *agent.ACPConfig) error {
+	ctx, epoch, leave, gateErr := d.RunAuthorizer.Enter(ctx)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer leave()
 	online, err := d.Registry.IsOnline(ctx, cfg.ID)
 	if err != nil {
 		return err
@@ -54,6 +60,12 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 	var authorization *runauth.Authorization
 	if d.RunAuthorizer != nil {
 		authorization, err = d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, true)
+		if errors.Is(err, runauth.ErrUnavailable) {
+			return err
+		}
+		if err == nil && epoch != "" && authorization.AuthorizationEpoch != epoch {
+			return runauth.ErrUnavailable
+		}
 		if err != nil {
 			if _, e := d.ConvRepo.FailIfNotTerminal(ctx, trigger.ConversationID, "Private run authorization refused"); e != nil {
 				return e
@@ -82,6 +94,7 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 		"chat_session_id": uuidPtrOrEmpty(trigger.ChatSessionID),
 	}
 	if authorization != nil {
+		payload["authorization_epoch"] = authorization.AuthorizationEpoch
 		payload["agent_id"] = authorization.AgentID
 		payload["instance_id"] = authorization.InstanceID
 		payload["audience"] = authorization.Audience

@@ -48,6 +48,8 @@ const outboundQueueSize = 100_000
 // start_turn time, and torn down explicitly rather than implicitly by the
 // OpenHands SDK.
 type conversationState struct {
+	authorizationEpoch string
+	promptStarted      bool
 	// acpProvider/command are set once, on the conversation's first
 	// start_turn, and read (without further locking) only by the single
 	// goroutine runTurn spawns per turn — safe under Go's memory model
@@ -143,10 +145,11 @@ const (
 // reclaims idle ones. The zero value is valid: Scope defaults to ScopeTask
 // and IdleTimeout to 0 (no eviction).
 type Config struct {
-	AgentID       string
-	InstanceID    string
-	PrivateHermes *PrivateHermesConfig
-	SetupTimeout  time.Duration
+	RequireAuthorization bool
+	AgentID              string
+	InstanceID           string
+	PrivateHermes        *PrivateHermesConfig
+	SetupTimeout         time.Duration
 	// Scope selects the session-keying strategy (see the Scope* constants).
 	// An unknown or empty value is normalized to ScopeTask.
 	Scope string
@@ -166,14 +169,17 @@ func (c Config) scope() string {
 
 // Runner implements bridge.Handler.
 type Runner struct {
-	workspace   string
-	send        bridge.SendFunc
-	log         *slog.Logger
-	scope       string
-	idleTimeout time.Duration
-	cfg         Config
-	closed      bool
-	done        chan struct{}
+	requestMu            sync.RWMutex
+	authorizationEpoch   string
+	authorizationBlocked bool
+	workspace            string
+	send                 bridge.SendFunc
+	log                  *slog.Logger
+	scope                string
+	idleTimeout          time.Duration
+	cfg                  Config
+	closed               bool
+	done                 chan struct{}
 
 	mu sync.Mutex
 	// conversations is keyed by session key (see sessionKeyFor), NOT by
@@ -246,6 +252,15 @@ func (r *Runner) sessionKeyFor(msg map[string]any) string {
 // conversation is still in flight. Returns quickly — the actual ACP work
 // runs on a goroutine it spawns.
 func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
+	if r.cfg.RequireAuthorization {
+		r.requestMu.RLock()
+		defer r.requestMu.RUnlock()
+		epoch, ok := msg["authorization_epoch"].(string)
+		if !ok || epoch == "" || r.authorizationBlocked || r.authorizationEpoch == "" || epoch != r.authorizationEpoch {
+			return
+		}
+	}
+
 	conversationID, _ := msg["conversation_id"].(string)
 	projectID, _ := msg["project_id"].(string)
 	message, _ := msg["message"].(string)
@@ -328,6 +343,8 @@ func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
 
 	state.hasPriorTurns = state.hasPriorTurns || prior
 	state.turnRunning = true
+	state.promptStarted = false
+	state.authorizationEpoch, _ = msg["authorization_epoch"].(string)
 	state.currentConversationID = conversationID
 	state.currentProjectID = projectID
 	state.lastActivity = time.Now()
@@ -406,6 +423,9 @@ func (r *Runner) Interrupt(conversationID string) {
 
 func (r *Runner) runTurn(ctx context.Context, state *conversationState, conversationID, projectID, message string) {
 	defer r.finishTurn(state)
+	if r.cfg.RequireAuthorization {
+		ctx = acpclient.WithRequestFence(ctx, func(method string) (func(), error) { return r.requestFence(ctx, state, method) })
+	}
 
 	state.updateMu.Lock()
 	state.mu.Lock()
@@ -855,6 +875,9 @@ func (r *Runner) reportStatus(state *conversationState, conversationID, projectI
 // run on the ACP client's own stdout-reading goroutine, which must never
 // block on the network.
 func (r *Runner) enqueue(state *conversationState, msg map[string]any) {
+	state.mu.Lock()
+	msg["authorization_epoch"] = state.authorizationEpoch
+	state.mu.Unlock()
 	r.ensureOutbound(state) <- msg
 }
 

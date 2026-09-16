@@ -107,6 +107,9 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 	trigger = resolved
 	if h.RunAuthorizer != nil {
 		authorization, e := h.RunAuthorizer.Authorize(ctx, trigger.ConversationID, trigger.AgentID, false)
+		if errors.Is(e, runauth.ErrUnavailable) {
+			return e
+		}
 		if e != nil || authorization.Status != "running" {
 			return h.failAuthorization(ctx, trigger.ConversationID)
 		}
@@ -280,6 +283,15 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 	// .../events call would return, and has to re-fetch instead of
 	// appending the live event directly.
 	persistAndPublish := func(eventType, eventSource string, payload []byte) {
+		ctx, leave, err := waitAuthorization(runCtx, func() (context.Context, func(), error) { return h.protect(ctx, trigger) })
+		if err != nil {
+			if errors.Is(err, runauth.ErrDenied) {
+				cancelRun()
+			}
+			return
+		}
+		defer leave()
+
 		id := uuid.New()
 		createdAt := time.Now().UTC()
 		// The durable record read back by services/api's
@@ -295,6 +307,7 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 		); err != nil {
 			h.Log.Warn("agent-runner: failed to persist event",
 				"conversation_id", trigger.ConversationID, "error", err)
+			return
 		}
 		if pubErr := h.Publisher.PublishEvent(
 			ctx, trigger.ConversationID, trigger.ProjectID,
@@ -311,6 +324,10 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 		// changed, go re-fetch" signal — that used to mean one HTTP GET per
 		// realtime message, which added up fast across a whole streamed
 		// reply. See apps/web/src/hooks/use-project-realtime.ts.
+		if eventType == "turn_usage" || eventType == "turn_end" {
+			eventIndex++
+			return
+		}
 		if pubErr := h.Publisher.PublishRealtime(
 			ctx, trigger.ProjectID, trigger.ConversationID,
 			"agent."+strings.ToLower(eventType),
@@ -444,7 +461,13 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 		persistAndPublish("environment_ready", "system", []byte("{}"))
 	}
 
+	runCtx = acp.WithRequestFence(runCtx, func(ctx context.Context) (context.Context, func(), error) {
+		return waitAuthorization(ctx, func() (context.Context, func(), error) { return h.protect(ctx, trigger) })
+	})
 	result, runErr := h.Executor.Run(runCtx, *cfg, trigger, resume, onEvent, onReady)
+	if errors.Is(runErr, acp.ErrCancellationUnconfirmed) {
+		h.InFlight.RecordStopError(trigger.ConversationID, runErr)
+	}
 	// Whatever's still buffered when the turn ends — successfully,
 	// interrupted, or failed — is a genuine partial reply, not scratch
 	// state to discard; flush it unconditionally before any of the
@@ -464,7 +487,7 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 		// That read as more confusing than useful to carry forward: a
 		// timed-out turn that never actually completed looks identical to
 		// one that did, from the conversation's own status field.
-		if errors.Is(runErr, context.Canceled) {
+		if errors.Is(runErr, context.Canceled) && !errors.Is(runErr, acp.ErrCancellationUnconfirmed) {
 			// Which control message actually fired — see registry.
 			// Conversations.TakeReason. Must be read before InFlight.
 			// Unregister (deferred above) clears it; "not found" (e.g. ctx
@@ -581,19 +604,7 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 	}
 
 	stopReasonJSON, _ := json.Marshal(map[string]string{"stopReason": result.StopReason})
-	if err := h.ConvRepo.InsertEvent(
-		ctx, uuid.New(), trigger.ConversationID, "turn_end", "system", eventIndex, stopReasonJSON, time.Now().UTC(),
-	); err != nil {
-		h.Log.Warn("agent-runner: failed to persist turn_end event",
-			"conversation_id", trigger.ConversationID, "error", err)
-	}
-	if pubErr := h.Publisher.PublishEvent(
-		ctx, trigger.ConversationID, trigger.ProjectID,
-		"turn_end", "system", eventIndex, stopReasonJSON, "finished",
-	); pubErr != nil {
-		h.Log.Warn("agent-runner: failed to publish turn_end event",
-			"conversation_id", trigger.ConversationID, "error", pubErr)
-	}
+	persistAndPublish("turn_end", "system", stopReasonJSON)
 
 	// A separate row from turn_end (not folded into its payload) so
 	// services/api's conversationCols can sum input_tokens/output_tokens/
@@ -606,7 +617,6 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 	// PublishRealtime — like turn_end, this has no place in the live chat
 	// transcript.
 	if result.Usage != nil || latestCostUSD != nil {
-		eventIndex++
 		usagePayload := map[string]any{}
 		if result.Usage != nil {
 			usagePayload["input_tokens"] = result.Usage.InputTokens
@@ -617,19 +627,7 @@ func (h *Handler) Handle(ctx context.Context, trigger agent.Trigger) error {
 			usagePayload["cost_usd"] = *latestCostUSD
 		}
 		usageJSON, _ := json.Marshal(usagePayload)
-		if err := h.ConvRepo.InsertEvent(
-			ctx, uuid.New(), trigger.ConversationID, "turn_usage", "system", eventIndex, usageJSON, time.Now().UTC(),
-		); err != nil {
-			h.Log.Warn("agent-runner: failed to persist turn_usage event",
-				"conversation_id", trigger.ConversationID, "error", err)
-		}
-		if pubErr := h.Publisher.PublishEvent(
-			ctx, trigger.ConversationID, trigger.ProjectID,
-			"turn_usage", "system", eventIndex, usageJSON, "finished",
-		); pubErr != nil {
-			h.Log.Warn("agent-runner: failed to publish turn_usage event",
-				"conversation_id", trigger.ConversationID, "error", pubErr)
-		}
+		persistAndPublish("turn_usage", "system", usageJSON)
 	}
 
 	if isChat && trigger.EnvironmentID == nil {
@@ -829,6 +827,7 @@ func (h *Handler) tearDownSandbox(ctx context.Context, trigger agent.Trigger, re
 		return
 	}
 	if err := h.Executor.StopSandbox(context.WithoutCancel(ctx), result.Handle); err != nil {
+		h.InFlight.RecordStopError(trigger.ConversationID, err)
 		h.Log.Warn("agent-runner: failed to stop sandbox",
 			"conversation_id", trigger.ConversationID, "error", err)
 	}
@@ -997,6 +996,9 @@ func (h *Handler) TeardownIdleProviderCLIClient(conversationID uuid.UUID) bool {
 // returned — the conversation's own DB status is already the source of
 // truth and was written by the caller before this runs.
 func (h *Handler) publishTerminalStatus(ctx context.Context, projectID, conversationID uuid.UUID, actorUserID *uuid.UUID, status, realtimeEventType string) {
+	if !h.currentTerminal(ctx, conversationID, status) {
+		return
+	}
 	if err := h.Publisher.PublishRealtime(
 		ctx, projectID, conversationID, realtimeEventType, nil, actorUserID,
 	); err != nil {

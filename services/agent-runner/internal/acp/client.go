@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sync/atomic"
+	"time"
 )
 
 // Event is what Prompt hands back to its callback for every session/update
@@ -26,6 +27,8 @@ type Event struct {
 // 600+ tool-call cycles with no backoff in 20 seconds — so this client owns
 // that limit, mirroring what agent_config.MaxIterations enforces today via
 // OpenHands' conversation.run(max_iterations=...).
+var ErrCancellationUnconfirmed = errors.New("acp: native cancellation is not confirmed")
+
 var ErrMaxToolCalls = errors.New("acp: exceeded max tool calls for this turn")
 
 // Client is a single conversation's connection to one container's
@@ -407,15 +410,9 @@ func mcpServerToGooseExtension(s MCPServerConfig) (ext GooseExtension, ok bool) 
 // see ErrMaxToolCalls's doc comment for why this exists at all. Pass 0 for
 // no limit (not recommended against a real, paid LLM).
 //
-// ctx cancellation (e.g. from a user-initiated "stop") stops Prompt from
-// waiting any further; callers should treat ctx.Err() coming back through
-// the returned error as a clean stop, not a failure. Note this only ends
-// *this call's* wait — the underlying session/prompt request already sent
-// to goose isn't itself cancelled (this transport has no session/cancel
-// call), so a late response or trailing notifications for this same
-// request may still arrive on the session stream and are silently ignored
-// by the next Prompt call's own wait (see awaitResponse's tolerance for
-// non-matching frames).
+// Context cancellation sends session/cancel and waits up to five seconds for
+// the original prompt terminal response. Updates received while cancelling are
+// discarded; HTTP acceptance alone does not prove that native execution ended.
 func (c *Client) Prompt(
 	ctx context.Context,
 	sessionID string,
@@ -431,9 +428,23 @@ func (c *Client) Prompt(
 	}
 
 	id := c.nextID.Add(1)
-	if err := c.post(ctx, id, "session/prompt", promptParams{SessionID: sessionID, Prompt: prompt}, sessionID); err != nil {
-		return "", nil, fmt.Errorf("acp: session/prompt: %w", err)
+	if sendErr := c.post(ctx, id, "session/prompt", promptParams{SessionID: sessionID, Prompt: prompt}, sessionID); sendErr != nil {
+		var notSent *requestNotSentError
+		if errors.As(sendErr, &notSent) {
+			return "", nil, sendErr
+		}
+		cause := sendErr
+		if ctx.Err() != nil {
+			cause = ctx.Err()
+		}
+		return "", nil, c.cancelPrompt(sessionID, id, cause)
 	}
+	terminal := false
+	defer func() {
+		if err != nil && !terminal {
+			err = c.cancelPrompt(sessionID, id, err)
+		}
+	}()
 
 	toolCalls := 0
 	stream := c.sessionStream
@@ -474,6 +485,7 @@ func (c *Client) Prompt(
 				}
 
 			case frame.isResponse() && frame.ID != nil && *frame.ID == id:
+				terminal = true
 				if frame.Error != nil {
 					return "", nil, fmt.Errorf("%w", frame.Error)
 				}
@@ -503,8 +515,54 @@ func (c *Client) Prompt(
 // never in this call's own HTTP response body. Accept is application/json
 // only (not text/event-stream) since a POST's own response is now always a
 // bare status with no body worth negotiating a format for.
+type requestFenceKey struct{}
+type requestNotSentError struct{ cause error }
+
+func (e *requestNotSentError) Error() string { return e.cause.Error() }
+func (e *requestNotSentError) Unwrap() error { return e.cause }
+
+func WithRequestFence(ctx context.Context, f func(context.Context) (context.Context, func(), error)) context.Context {
+	return context.WithValue(ctx, requestFenceKey{}, f)
+}
+
 func (c *Client) post(ctx context.Context, id int64, method string, params any, sessionID string) error {
-	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
+	if fence, ok := ctx.Value(requestFenceKey{}).(func(context.Context) (context.Context, func(), error)); ok {
+		var leave func()
+		var err error
+		ctx, leave, err = fence(ctx)
+		if err != nil {
+			return &requestNotSentError{err}
+		}
+		defer leave()
+	}
+
+	return c.postBody(ctx, rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}, sessionID)
+}
+
+// cancelPrompt uses a new context so control traffic bypasses the admission fence.
+func (c *Client) cancelPrompt(sessionID string, id int64, cause error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	notification := map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]string{"sessionId": sessionID}}
+	if err := c.postBody(ctx, notification, sessionID); err != nil {
+		return errors.Join(cause, ErrCancellationUnconfirmed, err)
+	}
+	frame, err := c.awaitResponse(ctx, id, c.sessionStream)
+	if err != nil {
+		return errors.Join(cause, ErrCancellationUnconfirmed, err)
+	}
+	if frame.Error != nil {
+		return errors.Join(cause, ErrCancellationUnconfirmed, frame.Error)
+	}
+	var result promptResult
+	if err := json.Unmarshal(frame.Result, &result); err != nil || result.StopReason == "" {
+		return errors.Join(cause, ErrCancellationUnconfirmed, errors.New("invalid terminal prompt response"))
+	}
+	return cause
+}
+
+func (c *Client) postBody(ctx context.Context, bodyValue any, sessionID string) error {
+	body, err := json.Marshal(bodyValue)
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)
 	}

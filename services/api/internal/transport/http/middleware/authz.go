@@ -105,6 +105,7 @@ func EnforcePermissions(w http.ResponseWriter, r *http.Request, authorizer *auth
 		return false
 	}
 
+	recordMutationCheck(r, authorizer, []PermissionGroup{{Scope: scope, Permissions: permissions}})
 	return true
 }
 
@@ -179,6 +180,7 @@ func RequireAnyPermissions(authorizer *authz.Authorizer, groups ...PermissionGro
 					return
 				}
 				if allowed {
+					recordMutationCheck(r, authorizer, groups)
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -297,4 +299,46 @@ func RequirePublicProjectOrPermissions(checker ProjectVisibilityChecker, authori
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// Preserve the exact route action for a post-lock, transaction-bound recheck.
+// Human legacy JWT roles are deliberately omitted on recheck: persisted current
+// roles are authoritative after another request has demoted the actor.
+func recordMutationCheck(r *http.Request, a *authz.Authorizer, groups []PermissionGroup) {
+	claims := ClaimsFrom(r)
+	if claims == nil || a == nil {
+		return
+	}
+	user, _ := uuid.Parse(claims.Subject)
+	agentID, isAgent := AgentIDFromRequest(r)
+	check := func(ctx context.Context) error {
+		for _, group := range groups {
+			resolver := group.Scope
+			if resolver == nil {
+				resolver = GlobalScope()
+			}
+			project, err := resolver(r.WithContext(ctx))
+			if err != nil {
+				return err
+			}
+			var allowed bool
+			if isAgent {
+				if project == nil {
+					allowed, err = a.HasGlobalPermissionsForAgent(ctx, agentID, group.Permissions...)
+				} else {
+					allowed, err = a.HasPermissionsForAgent(ctx, agentID, *project, group.Permissions...)
+				}
+			} else {
+				allowed, err = a.HasPermissions(ctx, user, project, "", group.Permissions...)
+			}
+			if err != nil {
+				return err
+			}
+			if allowed {
+				return nil
+			}
+		}
+		return apierr.New(apierr.CodeForbidden, "insufficient permissions")
+	}
+	*r = *r.WithContext(authz.WithMutationCheck(r.Context(), check))
 }

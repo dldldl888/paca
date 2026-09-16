@@ -77,7 +77,7 @@ func TestPrivateRunTrustedDispatchAndQueueReauthorization(t *testing.T) {
 			http.Error(w, "revoked", 404)
 			return
 		}
-		data := map[string]any{"conversation_id": cid.String(), "agent_id": aid.String(), "instance_id": instance, "project_id": env.projectID.String(), "audience": "owner_private", "owner_user_id": env.userID.String(), "has_prior_turns": body.Begin && mode.Load() == 4, "status": "running", "task_id": "", "comment_id": "", "chat_session_id": sid.String()}
+		data := map[string]any{"authorization_epoch": "1", "conversation_id": cid.String(), "agent_id": aid.String(), "instance_id": instance, "project_id": env.projectID.String(), "audience": "owner_private", "owner_user_id": env.userID.String(), "has_prior_turns": body.Begin && mode.Load() == 4, "status": "running", "task_id": "", "comment_id": "", "chat_session_id": sid.String()}
 		if mode.Load() == 3 {
 			delete(data, "owner_user_id")
 		}

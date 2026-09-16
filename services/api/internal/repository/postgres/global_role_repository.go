@@ -41,7 +41,7 @@ const globalRoleSelectCols = `id, name, permissions, created_at, updated_at`
 // List returns all global roles sorted by name.
 func (r *GlobalRoleRepository) List(ctx context.Context) ([]*globalroledom.GlobalRole, error) {
 	var records []globalRoleRecord
-	if err := r.db.SelectContext(ctx, &records, `SELECT `+globalRoleSelectCols+` FROM global_roles ORDER BY name ASC`); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+globalRoleSelectCols+` FROM global_roles ORDER BY name ASC`); err != nil {
 		return nil, fmt.Errorf("global role repo: list: %w", err)
 	}
 
@@ -59,7 +59,7 @@ func (r *GlobalRoleRepository) List(ctx context.Context) ([]*globalroledom.Globa
 // FindByID returns a role by ID.
 func (r *GlobalRoleRepository) FindByID(ctx context.Context, id uuid.UUID) (*globalroledom.GlobalRole, error) {
 	var record globalRoleRecord
-	err := r.db.GetContext(ctx, &record, `SELECT `+globalRoleSelectCols+` FROM global_roles WHERE id = $1`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &record, `SELECT `+globalRoleSelectCols+` FROM global_roles WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, globalroledom.ErrNotFound
 	}
@@ -72,7 +72,7 @@ func (r *GlobalRoleRepository) FindByID(ctx context.Context, id uuid.UUID) (*glo
 // FindByName returns a role by exact name.
 func (r *GlobalRoleRepository) FindByName(ctx context.Context, name string) (*globalroledom.GlobalRole, error) {
 	var record globalRoleRecord
-	err := r.db.GetContext(ctx, &record, `SELECT `+globalRoleSelectCols+` FROM global_roles WHERE name = $1`, strings.TrimSpace(name))
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &record, `SELECT `+globalRoleSelectCols+` FROM global_roles WHERE name = $1`, strings.TrimSpace(name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, globalroledom.ErrNotFound
 	}
@@ -88,7 +88,7 @@ func (r *GlobalRoleRepository) Create(ctx context.Context, role *globalroledom.G
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO global_roles (id, name, permissions, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5)`,
 		rec.ID, rec.Name, rec.Permissions, rec.CreatedAt, rec.UpdatedAt,
@@ -104,82 +104,88 @@ func (r *GlobalRoleRepository) Create(ctx context.Context, role *globalroledom.G
 
 // Update saves changes to a role.
 func (r *GlobalRoleRepository) Update(ctx context.Context, role *globalroledom.GlobalRole) error {
-	rec, err := fromGlobalRoleEntity(role)
-	if err != nil {
-		return err
-	}
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE global_roles SET name = $1, permissions = $2, updated_at = $3 WHERE id = $4`,
-		rec.Name, rec.Permissions, rec.UpdatedAt, rec.ID,
-	)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return globalroledom.ErrNameTaken
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		rec, err := fromGlobalRoleEntity(role)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("global role repo: update: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return globalroledom.ErrNotFound
-	}
-	return nil
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
+		UPDATE global_roles SET name = $1, permissions = $2, updated_at = $3 WHERE id = $4`,
+			rec.Name, rec.Permissions, rec.UpdatedAt, rec.ID,
+		)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return globalroledom.ErrNameTaken
+			}
+			return fmt.Errorf("global role repo: update: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return globalroledom.ErrNotFound
+		}
+		return nil
+	})
 }
 
 // Delete removes a role and all user-role assignments pointing to it.
 func (r *GlobalRoleRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM global_roles WHERE id = $1`, id.String())
-	if err != nil {
-		return fmt.Errorf("global role repo: delete: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return globalroledom.ErrNotFound
-	}
-	return nil
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM global_roles WHERE id = $1`, id.String())
+		if err != nil {
+			return fmt.Errorf("global role repo: delete: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return globalroledom.ErrNotFound
+		}
+		return nil
+	})
 }
 
 // ReplaceUserRoles sets the single global role for a user (users.role_id).
 // Exactly one roleID must be provided; the schema does not support multiple roles per user.
 func (r *GlobalRoleRepository) ReplaceUserRoles(ctx context.Context, userID uuid.UUID, roleIDs []uuid.UUID) error {
-	normalized := normalizeUUIDs(roleIDs)
-	if len(normalized) != 1 {
-		return fmt.Errorf("global role repo: exactly one role id required, got %d", len(normalized))
-	}
-	roleID := normalized[0]
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		normalized := normalizeUUIDs(roleIDs)
+		if len(normalized) != 1 {
+			return fmt.Errorf("global role repo: exactly one role id required, got %d", len(normalized))
+		}
+		roleID := normalized[0]
 
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		var userCount int64
-		if err := tx.GetContext(ctx, &userCount, `SELECT COUNT(*) FROM users WHERE id = $1 AND deleted_at IS NULL`, userID.String()); err != nil {
-			return fmt.Errorf("global role repo: check user exists: %w", err)
-		}
-		if userCount == 0 {
-			return userdom.ErrNotFound
-		}
+		return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+			var userCount int64
+			if err := tx.GetContext(ctx, &userCount, `SELECT COUNT(*) FROM users WHERE id = $1 AND deleted_at IS NULL`, userID.String()); err != nil {
+				return fmt.Errorf("global role repo: check user exists: %w", err)
+			}
+			if userCount == 0 {
+				return userdom.ErrNotFound
+			}
 
-		var roleCount int64
-		if err := tx.GetContext(ctx, &roleCount, `SELECT COUNT(*) FROM global_roles WHERE id = $1`, roleID); err != nil {
-			return fmt.Errorf("global role repo: check role id: %w", err)
-		}
-		if roleCount == 0 {
-			return globalroledom.ErrNotFound
-		}
+			var roleCount int64
+			if err := tx.GetContext(ctx, &roleCount, `SELECT COUNT(*) FROM global_roles WHERE id = $1`, roleID); err != nil {
+				return fmt.Errorf("global role repo: check role id: %w", err)
+			}
+			if roleCount == 0 {
+				return globalroledom.ErrNotFound
+			}
 
-		result, err := tx.ExecContext(ctx, `UPDATE users SET role_id = $1, updated_at = $2 WHERE id = $3`, roleID, time.Now(), userID.String())
-		if err != nil {
-			return fmt.Errorf("global role repo: set user role: %w", err)
-		}
-		n, _ := result.RowsAffected()
-		if n == 0 {
-			return userdom.ErrNotFound
-		}
-		return nil
+			result, err := tx.ExecContext(ctx, `UPDATE users SET role_id = $1, updated_at = $2 WHERE id = $3`, roleID, time.Now(), userID.String())
+			if err != nil {
+				return fmt.Errorf("global role repo: set user role: %w", err)
+			}
+			n, _ := result.RowsAffected()
+			if n == 0 {
+				return userdom.ErrNotFound
+			}
+			return nil
+		})
 	})
 }
 
 // ListUserRoles returns the single global role assigned to the provided user via users.role_id.
 func (r *GlobalRoleRepository) ListUserRoles(ctx context.Context, userID uuid.UUID) ([]*globalroledom.GlobalRole, error) {
 	var record globalRoleRecord
-	err := r.db.GetContext(ctx, &record, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &record, `
 		SELECT gr.id, gr.name, gr.permissions, gr.created_at, gr.updated_at
 		FROM global_roles gr
 		JOIN users u ON u.role_id = gr.id
@@ -200,7 +206,7 @@ func (r *GlobalRoleRepository) ListUserRoles(ctx context.Context, userID uuid.UU
 // CountUsersWithRole returns the total number of non-deleted users with the given role_id.
 func (r *GlobalRoleRepository) CountUsersWithRole(ctx context.Context, id uuid.UUID) (int64, error) {
 	var count int64
-	if err := r.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM users WHERE role_id = $1 AND deleted_at IS NULL`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, `SELECT COUNT(*) FROM users WHERE role_id = $1 AND deleted_at IS NULL`, id.String()); err != nil {
 		return 0, fmt.Errorf("global role repo: count users with role: %w", err)
 	}
 	return count, nil

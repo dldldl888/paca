@@ -5,6 +5,8 @@
 export interface Config {
 	port: number;
 	apiUrl: string;
+ internalAPIKey: string;
+ instanceID: string;
 	valkey: {
 		url: string;
 	};
@@ -25,6 +27,8 @@ export function loadConfig(): Config {
 		port: parseInt(process.env.PORT ?? "3001", 10),
 		// Internal API base URL (service-to-service, not via the public gateway).
 		apiUrl: requireEnv("API_URL"),
+ internalAPIKey: requireEnv("INTERNAL_API_KEY"),
+ instanceID: requireEnv("PACA_INSTANCE_ID"),
 		valkey: {
 			url: requireEnv("REDIS_URL"),
 		},

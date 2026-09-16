@@ -36,7 +36,7 @@ func NewConversationRepository(db *sqlx.DB) *ConversationRepository {
 // every status besides "failed" happening to never have set one before.
 func (r *ConversationRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string, errorMessage *string) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE agent_conversations SET status = $1, error_message = $2, updated_at = now() WHERE id = $3`,
+		`UPDATE agent_conversations SET status = $1, error_message = $2, updated_at = now() WHERE id = $3 AND status NOT IN ('finished','failed','stopped')`,
 		status, errorMessage, id)
 	if err != nil {
 		return fmt.Errorf("postgres: update conversation %s status: %w", id, err)
@@ -237,4 +237,21 @@ func (r *ConversationRepository) ResolveTrigger(ctx context.Context, t agent.Tri
 		_, t.ActorUserID, err = r.GetConversationRealtimeContext(ctx, t.ConversationID)
 	}
 	return t, err
+}
+
+func (r *ConversationRepository) AuthorizedRunningIDs(ctx context.Context, agentID uuid.UUID) ([]string, error) {
+	var ids []string
+	err := r.db.SelectContext(ctx, &ids, `SELECT id::text FROM agent_conversations WHERE agent_id=$1 AND status='running'`, agentID)
+	return ids, err
+}
+func (r *ConversationRepository) RevokedRuns(ctx context.Context) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.SelectContext(ctx, &ids, `SELECT id FROM agent_conversations WHERE audience='owner_private' AND status='failed' AND error_message='Authorization revoked'`)
+	return ids, err
+}
+
+func (r *ConversationRepository) GetStatus(ctx context.Context, id uuid.UUID) (string, error) {
+	var status string
+	err := r.db.GetContext(ctx, &status, `SELECT status FROM agent_conversations WHERE id=$1`, id)
+	return status, err
 }

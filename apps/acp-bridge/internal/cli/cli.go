@@ -104,7 +104,7 @@ func Main(argv []string, version string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg := runner.Config{Scope: *sessionScope, IdleTimeout: time.Duration(*idleMinutes) * time.Minute, AgentID: *agentID, InstanceID: *instanceID}
+	cfg := runner.Config{RequireAuthorization: *privateHermes, Scope: *sessionScope, IdleTimeout: time.Duration(*idleMinutes) * time.Minute, AgentID: *agentID, InstanceID: *instanceID}
 	if *privateHermes {
 		cfg.PrivateHermes = &runner.PrivateHermesConfig{Root: *privateRoot, Template: *privateTemplate, Launcher: *privateLauncher, Python: *privatePython, Source: *privateSource}
 	}

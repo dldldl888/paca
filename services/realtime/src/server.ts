@@ -14,11 +14,12 @@
 // permissions.  On any non-200 response the connection is refused.
 //
 // Session data (userId, username, role, globalPermissions, projectPermissions)
-// is stored in Valkey for auditing and recovery purposes.
+// is stored in Valkey for session bookkeeping. Reconnects authenticate again;
+// cached Socket.IO packet recovery is disabled.
 //
 // Room management
 // ---------------
-// Events are routed through namespace-scoped rooms per project:
+// Project joins retain namespace-scoped rooms for client compatibility:
 //
 //   project:<projectId>:tasks        — all task.* events
 //   project:<projectId>:docs         — all doc.* events
@@ -28,8 +29,10 @@
 //
 // When a client emits "join" with { projectId }, the server fetches the user's
 // project permissions via the API, then joins only the namespace rooms the user
-// is permitted to see.  The Pub/Sub subscriber routes events directly to the
-// correct room — no per-message permission checks are needed.
+// is permitted to see. The Pub/Sub subscriber independently resolves current
+// recipients through the API and checks the current delivery epoch immediately
+// before emitting to personal rooms. Project membership here is not authority
+// for event delivery.
 //
 // A "leave" event removes the socket from all namespace rooms for that project.
 //
@@ -37,9 +40,7 @@
 // socket's own identity rather than any project permission check:
 //
 //   user:<userId>:notifications  — all notification.* events
-//   user:<userId>:agent-chat     — agent.* events with no project_id, i.e. a
-//                                  conversation with a global agent from the
-//                                  home page / admin pages
+//   user:<userId>:agent-chat     — currently authorized agent.* events
 //
 // Client-side example (using socket.io-client):
 //
@@ -111,9 +112,6 @@ export function createSocketServer(
 			origin: config.cors.origins,
 			credentials: true,
 		},
-		connectionStateRecovery: {
-			maxDisconnectionDuration: 2 * 60 * 1000,
-		},
 	});
 
 	// ── Auth middleware ────────────────────────────────────────────────────────
@@ -140,7 +138,7 @@ export function createSocketServer(
 		try {
 			const authResult = await verifyTokenWithAPI(config.apiUrl, token);
 
-			// Persist the session in Valkey for auditing and recovery purposes.
+			// Persist session bookkeeping; event delivery uses current API policy.
 			const session: Session = {
 				userId: authResult.userId,
 				username: authResult.username,

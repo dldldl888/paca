@@ -98,7 +98,7 @@ func (r *AnnotationRepository) ListForPage(ctx context.Context, portForwardID uu
 		WHERE pa.port_forward_id = $1 AND pa.page_path = $2 AND pa.deleted_at IS NULL
 		`
 	query, args := annotationTaskVisibility(query, []any{portForwardID.String(), pagePath}, &scope)
-	err := r.db.SelectContext(ctx, &recs, query+" ORDER BY pa.created_at ASC", args...)
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, query+" ORDER BY pa.created_at ASC", args...)
 	if err != nil {
 		return nil, fmt.Errorf("annotation repo: list for page: %w", err)
 	}
@@ -115,7 +115,7 @@ func (r *AnnotationRepository) ListForPortForward(ctx context.Context, portForwa
 		WHERE pa.port_forward_id = $1 AND pa.deleted_at IS NULL
 		`
 	query, args := annotationTaskVisibility(query, []any{portForwardID.String()}, &scope)
-	err := r.db.SelectContext(ctx, &recs, query+" ORDER BY pa.created_at DESC", args...)
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, query+" ORDER BY pa.created_at DESC", args...)
 	if err != nil {
 		return nil, fmt.Errorf("annotation repo: list for port forward: %w", err)
 	}
@@ -126,7 +126,7 @@ func (r *AnnotationRepository) ListForPortForward(ctx context.Context, portForwa
 // or ErrAnnotationNotFound otherwise.
 func (r *AnnotationRepository) FindVisibleInProject(ctx context.Context, projectID, annotationID uuid.UUID) (*annotationdom.PageAnnotation, error) {
 	var rec pageAnnotationRecord
-	err := r.db.GetContext(ctx, &rec, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `
 		SELECT `+pageAnnotationCols+` FROM page_annotations pa
 		LEFT JOIN users u ON u.id = pa.created_by
 		WHERE pa.id = $1 AND pa.project_id = $2 AND pa.deleted_at IS NULL`, annotationID.String(), projectID.String())
@@ -196,7 +196,7 @@ func (r *AnnotationRepository) SearchInProject(ctx context.Context, projectID uu
 	}
 
 	var recs []pageAnnotationRecord
-	if err := r.db.SelectContext(ctx, &recs, query, args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, query, args...); err != nil {
 		return nil, false, fmt.Errorf("annotation repo: search in project: %w", err)
 	}
 
@@ -232,7 +232,7 @@ func (r *AnnotationRepository) Create(ctx context.Context, a *annotationdom.Page
 		return fmt.Errorf("annotation repo: marshal failed requests: %w", err)
 	}
 
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO page_annotations (
 			id, project_id, environment_id, port_forward_id, page_path, element_selector,
 			element_selector_fallbacks, bounding_box, element_snapshot, console_errors, failed_requests,
@@ -251,7 +251,7 @@ func (r *AnnotationRepository) Create(ctx context.Context, a *annotationdom.Page
 // SetScreenshotFileID attaches an already-uploaded screenshot file to
 // annotation id.
 func (r *AnnotationRepository) SetScreenshotFileID(ctx context.Context, id, fileID uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `
+	result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE page_annotations SET screenshot_file_id = $1, updated_at = $2
 		WHERE id = $3 AND deleted_at IS NULL`,
 		fileID.String(), time.Now(), id.String(),
@@ -268,7 +268,7 @@ func (r *AnnotationRepository) SetScreenshotFileID(ctx context.Context, id, file
 
 // SetStatus updates annotation id's resolved status.
 func (r *AnnotationRepository) SetStatus(ctx context.Context, id uuid.UUID, status string, resolvedBy *uuid.UUID, resolvedAt *time.Time) error {
-	result, err := r.db.ExecContext(ctx, `
+	result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE page_annotations SET status = $1, resolved_by = $2, resolved_at = $3, updated_at = $4
 		WHERE id = $5 AND deleted_at IS NULL`,
 		status, uuidPtrToStringPtr(resolvedBy), resolvedAt, time.Now(), id.String(),
@@ -285,24 +285,26 @@ func (r *AnnotationRepository) SetStatus(ctx context.Context, id uuid.UUID, stat
 
 // SetTaskID records the task created from annotation id.
 func (r *AnnotationRepository) SetTaskID(ctx context.Context, id, taskID uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE page_annotations SET task_id = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-		taskID.String(), time.Now(), id.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("annotation repo: set task id: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return annotationdom.ErrAnnotationNotFound
-	}
-	return nil
+			taskID.String(), time.Now(), id.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("annotation repo: set task id: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return annotationdom.ErrAnnotationNotFound
+		}
+		return nil
+	})
 }
 
 // ClaimTaskCreation — see annotationdom.Repository.ClaimTaskCreation's doc
 // comment.
 func (r *AnnotationRepository) ClaimTaskCreation(ctx context.Context, id uuid.UUID) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `
+	result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE page_annotations SET task_creation_claimed_at = $1
 		WHERE id = $2 AND deleted_at IS NULL AND task_id IS NULL
 			AND (task_creation_claimed_at IS NULL OR task_creation_claimed_at < $3)`,
@@ -317,7 +319,7 @@ func (r *AnnotationRepository) ClaimTaskCreation(ctx context.Context, id uuid.UU
 
 // AddComment appends a reply to an annotation's thread.
 func (r *AnnotationRepository) AddComment(ctx context.Context, c *annotationdom.AnnotationComment) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO page_annotation_comments (id, annotation_id, body, created_by, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
 		c.ID.String(), c.AnnotationID.String(), c.Body, c.CreatedBy.String(), c.CreatedAt, c.UpdatedAt,
@@ -333,7 +335,7 @@ func (r *AnnotationRepository) AddComment(ctx context.Context, c *annotationdom.
 // confirms it landed.
 func (r *AnnotationRepository) CreatePendingScreenshotFile(ctx context.Context, fileID, uploadedBy uuid.UUID, storageKey, bucket, fileName, contentType string, fileSize int64) error {
 	now := time.Now()
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO files (id, storage_key, bucket, file_name, content_type, file_size, upload_status, uploaded_by, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9)`,
 		fileID.String(), storageKey, bucket, fileName, contentType, fileSize, uploadedBy.String(), now, now,
@@ -347,7 +349,7 @@ func (r *AnnotationRepository) CreatePendingScreenshotFile(ctx context.Context, 
 // MarkScreenshotFileUploaded flips a pending screenshot file to "uploaded"
 // once the client's direct-to-object-store PUT has completed.
 func (r *AnnotationRepository) MarkScreenshotFileUploaded(ctx context.Context, fileID uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE files SET upload_status = 'uploaded', updated_at = $1 WHERE id = $2 AND upload_status = 'pending'`,
 		time.Now(), fileID.String(),
 	)
@@ -369,7 +371,7 @@ func (r *AnnotationRepository) ResolvePortForward(ctx context.Context, userID uu
 		PortForwardID string `db:"port_forward_id"`
 		Label         string `db:"label"`
 	}
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT e.project_id AS project_id, epf.environment_id AS environment_id, epf.id AS port_forward_id, epf.label AS label
 		FROM environment_port_forwards epf
 		JOIN environments e ON e.id = epf.environment_id AND e.deleted_at IS NULL
@@ -461,7 +463,7 @@ func (r *AnnotationRepository) listCommentsForAnnotations(ctx context.Context, a
 	query = sqlx.Rebind(sqlx.DOLLAR, query)
 
 	var recs []annotationCommentRecord
-	if err := r.db.SelectContext(ctx, &recs, query, args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, query, args...); err != nil {
 		return nil, fmt.Errorf("annotation repo: list comments: %w", err)
 	}
 	for _, rec := range recs {

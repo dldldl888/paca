@@ -250,7 +250,7 @@ func (r *AgentRepository) ListAgents(ctx context.Context, projectID uuid.UUID, s
 	}
 
 	var rows []agentRecord
-	err := r.db.SelectContext(ctx, &rows, query, args...)
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +269,7 @@ func (r *AgentRepository) ListAgents(ctx context.Context, projectID uuid.UUID, s
 // ListGlobalAgents returns every global-scope agent (agent_scope='global').
 func (r *AgentRepository) ListGlobalAgents(ctx context.Context) ([]*agentdom.Agent, error) {
 	var rows []agentRecord
-	err := r.db.SelectContext(ctx, &rows, `
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &rows, `
 		SELECT `+agentSelectColsNoMember+`
 		FROM agents a
 		WHERE a.agent_scope = 'global' AND a.deleted_at IS NULL
@@ -297,7 +297,7 @@ func (r *AgentRepository) ListGlobalAgents(ctx context.Context) ([]*agentdom.Age
 // use ListInvitedProjectIDs instead of this method's MemberID field.
 func (r *AgentRepository) FindAgentByID(ctx context.Context, id uuid.UUID) (*agentdom.Agent, error) {
 	var row agentRecord
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+agentSelectCols+`
 		FROM agents a
 		LEFT JOIN project_members pm ON pm.agent_id = a.id AND pm.deleted_at IS NULL
@@ -339,7 +339,7 @@ func (r *AgentRepository) FindAgentByID(ctx context.Context, id uuid.UUID) (*age
 // a.project_id, is what makes an invited global agent resolvable here).
 func (r *AgentRepository) FindVisibleAgentInProject(ctx context.Context, projectID, agentID uuid.UUID) (*agentdom.Agent, error) {
 	var row agentRecord
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+agentSelectCols+`
 		FROM agents a
 		JOIN project_members pm ON pm.agent_id = a.id AND pm.deleted_at IS NULL AND pm.project_id = $1
@@ -381,7 +381,7 @@ func (r *AgentRepository) FindVisibleAgentInProject(ctx context.Context, project
 // handle-uniqueness checks within a project.
 func (r *AgentRepository) FindAgentByHandle(ctx context.Context, projectID uuid.UUID, handle string) (*agentdom.Agent, error) {
 	var row agentRecord
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+agentSelectCols+`
 		FROM agents a
 		JOIN project_members pm ON pm.agent_id = a.id AND pm.deleted_at IS NULL AND pm.project_id = $1
@@ -402,7 +402,7 @@ func (r *AgentRepository) CreateAgent(ctx context.Context, a *agentdom.Agent) er
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agents (id, project_id, name, handle, avatar_key, avatar_thumb_key, agent_type, llm_provider, llm_model,
 		  llm_api_key_secret, llm_base_url, acp_provider, acp_command, system_prompt,
 		  max_iterations, timeout_minutes, parallelism_limit,
@@ -424,12 +424,13 @@ func (r *AgentRepository) CreateAgent(ctx context.Context, a *agentdom.Agent) er
 // When LLMAPIKeySecret is non-empty it is updated atomically with the rest of
 // the fields inside a single transaction so no partial update is possible.
 func (r *AgentRepository) UpdateAgent(ctx context.Context, a *agentdom.Agent) error {
-	rec, err := agentToRecord(a)
-	if err != nil {
-		return err
-	}
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		rec, err := agentToRecord(a)
+		if err != nil {
+			return err
+		}
+		return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+			_, err := tx.ExecContext(ctx, `
 			UPDATE agents SET
 			  name=$1, handle=$2, avatar_key=$3, avatar_thumb_key=$4, llm_provider=$5, llm_model=$6, llm_base_url=$7,
 			  acp_provider=$8, acp_command=$9,
@@ -439,44 +440,47 @@ func (r *AgentRepository) UpdateAgent(ctx context.Context, a *agentdom.Agent) er
 			  default_environment_id=$17, default_folder_id=$18, updated_at=$19,
 			  cli_provider=$20, cli_model=$21, cli_auth_mode=$22, parallelism_limit=$23
 			WHERE id=$24`,
-			a.Name, a.Handle, a.AvatarKey, a.AvatarThumbKey, a.LLMProvider, a.LLMModel, a.LLMBaseURL,
-			rec.ACPProvider, rec.ACPCommand,
-			a.SystemPrompt,
-			a.MaxIterations, a.TimeoutMinutes,
-			a.GitCommitterName, a.GitCommitterEmail, a.DockerEnabled, rec.GlobalRoleID,
-			rec.DefaultEnvironmentID, rec.DefaultFolderID, time.Now(),
-			rec.CLIProvider, rec.CLIModel, rec.CLIAuthMode, a.ParallelismLimit, a.ID.String(),
-		)
-		if err != nil {
-			return err
-		}
-		if a.LLMAPIKeySecret != "" {
-			_, err = tx.ExecContext(ctx, `UPDATE agents SET llm_api_key_secret=$1 WHERE id=$2`, a.LLMAPIKeySecret, a.ID.String())
+				a.Name, a.Handle, a.AvatarKey, a.AvatarThumbKey, a.LLMProvider, a.LLMModel, a.LLMBaseURL,
+				rec.ACPProvider, rec.ACPCommand,
+				a.SystemPrompt,
+				a.MaxIterations, a.TimeoutMinutes,
+				a.GitCommitterName, a.GitCommitterEmail, a.DockerEnabled, rec.GlobalRoleID,
+				rec.DefaultEnvironmentID, rec.DefaultFolderID, time.Now(),
+				rec.CLIProvider, rec.CLIModel, rec.CLIAuthMode, a.ParallelismLimit, a.ID.String(),
+			)
 			if err != nil {
 				return err
 			}
-		}
-		// cli_login_verified_at is deliberately NOT touched by the general
-		// UpdateAgent path — only SetCLILoginVerifiedAt writes it, so an
-		// unrelated name/model edit never resets or backdates a previously
-		// verified login.
-		if a.CLIAPIKeySecret != "" {
-			_, err = tx.ExecContext(ctx, `UPDATE agents SET cli_api_key_secret=$1 WHERE id=$2`, a.CLIAPIKeySecret, a.ID.String())
-		}
-		return err
+			if a.LLMAPIKeySecret != "" {
+				_, err = tx.ExecContext(ctx, `UPDATE agents SET llm_api_key_secret=$1 WHERE id=$2`, a.LLMAPIKeySecret, a.ID.String())
+				if err != nil {
+					return err
+				}
+			}
+			// cli_login_verified_at is deliberately NOT touched by the general
+			// UpdateAgent path — only SetCLILoginVerifiedAt writes it, so an
+			// unrelated name/model edit never resets or backdates a previously
+			// verified login.
+			if a.CLIAPIKeySecret != "" {
+				_, err = tx.ExecContext(ctx, `UPDATE agents SET cli_api_key_secret=$1 WHERE id=$2`, a.CLIAPIKeySecret, a.ID.String())
+			}
+			return err
+		})
 	})
 }
 
 // SoftDeleteAgent sets deleted_at on the agent row.
 func (r *AgentRepository) SoftDeleteAgent(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE agents SET deleted_at=$1 WHERE id=$2`, time.Now(), id.String())
-	return err
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE agents SET deleted_at=$1 WHERE id=$2`, time.Now(), id.String())
+		return err
+	})
 }
 
 // SetACPBridgeTokenHash stores the SHA-256 hash of a newly generated
 // local-bridge auth token, replacing any previous one.
 func (r *AgentRepository) SetACPBridgeTokenHash(ctx context.Context, agentID uuid.UUID, hash string) error {
-	_, err := r.db.ExecContext(ctx,
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx,
 		`UPDATE agents SET acp_bridge_token_hash=$1, updated_at=$2 WHERE id=$3`,
 		hash, time.Now(), agentID.String(),
 	)
@@ -486,7 +490,7 @@ func (r *AgentRepository) SetACPBridgeTokenHash(ctx context.Context, agentID uui
 // SetMCPAPIKeyHash stores the SHA-256 hash of a newly generated MCP API key,
 // overwriting any previous one so it immediately stops authenticating.
 func (r *AgentRepository) SetMCPAPIKeyHash(ctx context.Context, agentID uuid.UUID, hash string) error {
-	_, err := r.db.ExecContext(ctx,
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx,
 		`UPDATE agents SET mcp_api_key_hash=$1, updated_at=$2 WHERE id=$3`,
 		hash, time.Now(), agentID.String(),
 	)
@@ -498,7 +502,7 @@ func (r *AgentRepository) SetMCPAPIKeyHash(ctx context.Context, agentID uuid.UUI
 // into the general UpdateAgent path — see that method's own comment on
 // cli_login_verified_at for why.
 func (r *AgentRepository) SetCLILoginVerifiedAt(ctx context.Context, agentID uuid.UUID, t time.Time) error {
-	_, err := r.db.ExecContext(ctx,
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx,
 		`UPDATE agents SET cli_login_verified_at=$1, updated_at=$2 WHERE id=$3`,
 		t, time.Now(), agentID.String(),
 	)
@@ -510,7 +514,7 @@ func (r *AgentRepository) SetCLILoginVerifiedAt(ctx context.Context, agentID uui
 // directly from the key it presented.
 func (r *AgentRepository) FindAgentByMCPAPIKeyHash(ctx context.Context, hash string) (*agentdom.Agent, error) {
 	var row agentRecord
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+agentSelectColsNoMember+`
 		FROM agents a
 		WHERE a.mcp_api_key_hash = $1 AND a.deleted_at IS NULL
@@ -568,16 +572,18 @@ func (r *AgentRepository) CreateAgentWithMembership(ctx context.Context, a *agen
 // SoftDeleteAgentWithMembership atomically soft-deletes both the agent and its
 // project_members row within a single database transaction.
 func (r *AgentRepository) SoftDeleteAgentWithMembership(ctx context.Context, projectID, agentID uuid.UUID) error {
-	now := time.Now()
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE agents SET deleted_at=$1 WHERE id=$2`, now, agentID.String()); err != nil {
-			return err
-		}
-		// Soft-delete the membership row; 0 rows affected is fine for orphaned agents.
-		_, err := tx.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		now := time.Now()
+		return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+			if _, err := tx.ExecContext(ctx, `UPDATE agents SET deleted_at=$1 WHERE id=$2`, now, agentID.String()); err != nil {
+				return err
+			}
+			// Soft-delete the membership row; 0 rows affected is fine for orphaned agents.
+			_, err := tx.ExecContext(ctx, `
 			UPDATE project_members SET deleted_at=$1
 			WHERE project_id=$2 AND agent_id=$3 AND member_type='agent'`, now, projectID.String(), agentID.String())
-		return err
+			return err
+		})
 	})
 }
 
@@ -586,7 +592,7 @@ func (r *AgentRepository) SoftDeleteAgentWithMembership(ctx context.Context, pro
 // domain/agent/repository.go for how this differs from FindAgentByHandle.
 func (r *AgentRepository) FindGlobalAgentByHandle(ctx context.Context, handle string) (*agentdom.Agent, error) {
 	var row agentRecord
-	err := r.db.GetContext(ctx, &row, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, `
 		SELECT `+agentSelectColsNoMember+`
 		FROM agents a
 		WHERE a.project_id IS NULL AND a.handle = $1 AND a.deleted_at IS NULL`, handle)
@@ -608,7 +614,7 @@ func (r *AgentRepository) CreateGlobalAgent(ctx context.Context, a *agentdom.Age
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agents (id, project_id, agent_scope, global_role_id, name, handle, avatar_key, avatar_thumb_key, agent_type, llm_provider, llm_model,
 		  llm_api_key_secret, llm_base_url, acp_provider, acp_command, system_prompt,
 		  max_iterations, timeout_minutes, parallelism_limit,
@@ -632,15 +638,17 @@ func (r *AgentRepository) CreateGlobalAgent(ctx context.Context, a *agentdom.Age
 // only fires on a hard delete, and agents are soft-deleted, so the
 // membership cleanup has to happen explicitly here.
 func (r *AgentRepository) SoftDeleteGlobalAgentCascade(ctx context.Context, agentID uuid.UUID) error {
-	now := time.Now()
-	return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE agents SET deleted_at=$1 WHERE id=$2 AND agent_scope='global'`, now, agentID.String()); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		now := time.Now()
+		return WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+			if _, err := tx.ExecContext(ctx, `UPDATE agents SET deleted_at=$1 WHERE id=$2 AND agent_scope='global'`, now, agentID.String()); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `
 			UPDATE project_members SET deleted_at=$1
 			WHERE agent_id=$2 AND member_type='agent' AND deleted_at IS NULL`, now, agentID.String())
-		return err
+			return err
+		})
 	})
 }
 
@@ -648,7 +656,7 @@ func (r *AgentRepository) SoftDeleteGlobalAgentCascade(ctx context.Context, agen
 // currently has an active project_members row in.
 func (r *AgentRepository) ListInvitedProjectIDs(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
 	var ids []string
-	err := r.db.SelectContext(ctx, &ids, `
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &ids, `
 		SELECT project_id FROM project_members
 		WHERE agent_id = $1 AND member_type = 'agent' AND deleted_at IS NULL`, agentID.String())
 	if err != nil {
@@ -667,7 +675,7 @@ func (r *AgentRepository) ListInvitedProjectIDs(ctx context.Context, agentID uui
 // an agent, the same guard already applied for users.
 func (r *AgentRepository) CountAgentsWithGlobalRole(ctx context.Context, roleID uuid.UUID) (int64, error) {
 	var count int64
-	if err := r.db.GetContext(ctx, &count,
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count,
 		`SELECT COUNT(*) FROM agents WHERE global_role_id = $1 AND deleted_at IS NULL`, roleID.String()); err != nil {
 		return 0, fmt.Errorf("agent repo: count agents with global role: %w", err)
 	}
@@ -683,7 +691,7 @@ const mcpServerCols = `id, agent_id, server_name, transport, command, args, url,
 // ListMCPServers returns all MCP server records for the given agent.
 func (r *AgentRepository) ListMCPServers(ctx context.Context, agentID uuid.UUID) ([]*agentdom.AgentMCPServer, error) {
 	var recs []agentMCPServerRecord
-	if err := r.db.SelectContext(ctx, &recs, `SELECT `+mcpServerCols+` FROM agent_mcp_servers WHERE agent_id = $1`, agentID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `SELECT `+mcpServerCols+` FROM agent_mcp_servers WHERE agent_id = $1`, agentID.String()); err != nil {
 		return nil, err
 	}
 	result := make([]*agentdom.AgentMCPServer, 0, len(recs))
@@ -700,7 +708,7 @@ func (r *AgentRepository) ListMCPServers(ctx context.Context, agentID uuid.UUID)
 // FindMCPServerByID returns a single MCP server by its primary key.
 func (r *AgentRepository) FindMCPServerByID(ctx context.Context, id uuid.UUID) (*agentdom.AgentMCPServer, error) {
 	var rec agentMCPServerRecord
-	if err := r.db.GetContext(ctx, &rec, `SELECT `+mcpServerCols+` FROM agent_mcp_servers WHERE id = $1`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+mcpServerCols+` FROM agent_mcp_servers WHERE id = $1`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, agentdom.ErrMCPServerNotFound
 		}
@@ -715,7 +723,7 @@ func (r *AgentRepository) CreateMCPServer(ctx context.Context, s *agentdom.Agent
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agent_mcp_servers (id, agent_id, server_name, transport, command, args, url, env, is_enabled, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		rec.ID, rec.AgentID, rec.ServerName, rec.Transport, rec.Command,
@@ -730,7 +738,7 @@ func (r *AgentRepository) UpdateMCPServer(ctx context.Context, s *agentdom.Agent
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE agent_mcp_servers SET agent_id=$1, server_name=$2, transport=$3, command=$4,
 		  args=$5, url=$6, env=$7, is_enabled=$8, updated_at=$9
 		WHERE id=$10`,
@@ -742,7 +750,7 @@ func (r *AgentRepository) UpdateMCPServer(ctx context.Context, s *agentdom.Agent
 
 // DeleteMCPServer permanently removes an MCP server record.
 func (r *AgentRepository) DeleteMCPServer(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM agent_mcp_servers WHERE id = $1`, id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM agent_mcp_servers WHERE id = $1`, id.String())
 	return err
 }
 
@@ -755,7 +763,7 @@ const skillCols = `id, agent_id, skill_name, skill_source, skill_content, source
 // ListSkills returns all skill records for the given agent.
 func (r *AgentRepository) ListSkills(ctx context.Context, agentID uuid.UUID) ([]*agentdom.AgentSkill, error) {
 	var recs []agentSkillRecord
-	if err := r.db.SelectContext(ctx, &recs, `SELECT `+skillCols+` FROM agent_skills WHERE agent_id = $1`, agentID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `SELECT `+skillCols+` FROM agent_skills WHERE agent_id = $1`, agentID.String()); err != nil {
 		return nil, err
 	}
 	result := make([]*agentdom.AgentSkill, 0, len(recs))
@@ -772,7 +780,7 @@ func (r *AgentRepository) ListSkills(ctx context.Context, agentID uuid.UUID) ([]
 // FindSkillByID returns a single skill by its primary key.
 func (r *AgentRepository) FindSkillByID(ctx context.Context, id uuid.UUID) (*agentdom.AgentSkill, error) {
 	var rec agentSkillRecord
-	if err := r.db.GetContext(ctx, &rec, `SELECT `+skillCols+` FROM agent_skills WHERE id = $1`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+skillCols+` FROM agent_skills WHERE id = $1`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, agentdom.ErrSkillNotFound
 		}
@@ -787,7 +795,7 @@ func (r *AgentRepository) CreateSkill(ctx context.Context, s *agentdom.AgentSkil
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agent_skills (id, agent_id, skill_name, skill_source, skill_content, source_url, triggers, is_enabled, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		rec.ID, rec.AgentID, rec.SkillName, rec.SkillSource, rec.SkillContent,
@@ -802,7 +810,7 @@ func (r *AgentRepository) UpdateSkill(ctx context.Context, s *agentdom.AgentSkil
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE agent_skills SET agent_id=$1, skill_name=$2, skill_source=$3, skill_content=$4,
 		  source_url=$5, triggers=$6, is_enabled=$7, updated_at=$8
 		WHERE id=$9`,
@@ -814,7 +822,7 @@ func (r *AgentRepository) UpdateSkill(ctx context.Context, s *agentdom.AgentSkil
 
 // DeleteSkill permanently removes a skill record.
 func (r *AgentRepository) DeleteSkill(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM agent_skills WHERE id = $1`, id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM agent_skills WHERE id = $1`, id.String())
 	return err
 }
 
@@ -827,7 +835,7 @@ const envVarCols = `id, agent_id, key, encrypted_value, created_at, updated_at`
 // ListEnvVars returns all environment variable records for the given agent.
 func (r *AgentRepository) ListEnvVars(ctx context.Context, agentID uuid.UUID) ([]*agentdom.AgentEnvironmentVariable, error) {
 	var recs []agentEnvVarRecord
-	if err := r.db.SelectContext(ctx, &recs, `SELECT `+envVarCols+` FROM agent_environment_variables WHERE agent_id = $1 ORDER BY key`, agentID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `SELECT `+envVarCols+` FROM agent_environment_variables WHERE agent_id = $1 ORDER BY key`, agentID.String()); err != nil {
 		return nil, err
 	}
 	result := make([]*agentdom.AgentEnvironmentVariable, 0, len(recs))
@@ -840,7 +848,7 @@ func (r *AgentRepository) ListEnvVars(ctx context.Context, agentID uuid.UUID) ([
 // FindEnvVarByID returns a single environment variable by its primary key.
 func (r *AgentRepository) FindEnvVarByID(ctx context.Context, id uuid.UUID) (*agentdom.AgentEnvironmentVariable, error) {
 	var rec agentEnvVarRecord
-	if err := r.db.GetContext(ctx, &rec, `SELECT `+envVarCols+` FROM agent_environment_variables WHERE id = $1`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+envVarCols+` FROM agent_environment_variables WHERE id = $1`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, agentdom.ErrEnvVarNotFound
 		}
@@ -852,7 +860,7 @@ func (r *AgentRepository) FindEnvVarByID(ctx context.Context, id uuid.UUID) (*ag
 // FindEnvVarByKey returns a single environment variable by agent and key.
 func (r *AgentRepository) FindEnvVarByKey(ctx context.Context, agentID uuid.UUID, key string) (*agentdom.AgentEnvironmentVariable, error) {
 	var rec agentEnvVarRecord
-	if err := r.db.GetContext(ctx, &rec, `SELECT `+envVarCols+` FROM agent_environment_variables WHERE agent_id = $1 AND key = $2`, agentID.String(), key); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+envVarCols+` FROM agent_environment_variables WHERE agent_id = $1 AND key = $2`, agentID.String(), key); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, agentdom.ErrEnvVarNotFound
 		}
@@ -863,7 +871,7 @@ func (r *AgentRepository) FindEnvVarByKey(ctx context.Context, agentID uuid.UUID
 
 // CreateEnvVar inserts a new environment variable record.
 func (r *AgentRepository) CreateEnvVar(ctx context.Context, v *agentdom.AgentEnvironmentVariable) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agent_environment_variables (id, agent_id, key, encrypted_value, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
 		v.ID.String(), v.AgentID.String(), v.Key, v.EncryptedValue, v.CreatedAt, v.UpdatedAt,
@@ -879,7 +887,7 @@ func (r *AgentRepository) CreateEnvVar(ctx context.Context, v *agentdom.AgentEnv
 
 // UpdateEnvVar saves the full environment variable record.
 func (r *AgentRepository) UpdateEnvVar(ctx context.Context, v *agentdom.AgentEnvironmentVariable) error {
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE agent_environment_variables SET encrypted_value=$1, updated_at=$2
 		WHERE id=$3`,
 		v.EncryptedValue, v.UpdatedAt, v.ID.String(),
@@ -889,7 +897,7 @@ func (r *AgentRepository) UpdateEnvVar(ctx context.Context, v *agentdom.AgentEnv
 
 // DeleteEnvVar permanently removes an environment variable record.
 func (r *AgentRepository) DeleteEnvVar(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM agent_environment_variables WHERE id = $1`, id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM agent_environment_variables WHERE id = $1`, id.String())
 	return err
 }
 
@@ -1034,7 +1042,7 @@ func (r *AgentRepository) ListConversations(ctx context.Context, in agentdom.Lis
 	var recs []agentConversationRecord
 	query := `SELECT ` + conversationCols + ` FROM agent_conversations WHERE ` + whereSQL +
 		fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT %s`, limitP)
-	if err := r.db.SelectContext(ctx, &recs, query, b.args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, query, b.args...); err != nil {
 		return nil, false, err
 	}
 
@@ -1054,7 +1062,7 @@ func (r *AgentRepository) ListConversations(ctx context.Context, in agentdom.Lis
 func (r *AgentRepository) FindConversationByID(ctx context.Context, id uuid.UUID) (*agentdom.AgentConversation, error) {
 	var rec agentConversationRecord
 	const query = `SELECT ` + conversationCols + ` FROM agent_conversations WHERE id = $1`
-	if err := r.db.GetContext(ctx, &rec, query, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, query, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, agentdom.ErrConversationNotFound
 		}
@@ -1067,7 +1075,7 @@ func (r *AgentRepository) FindConversationByID(ctx context.Context, id uuid.UUID
 // conversation for a chat session, or (nil, nil) if none exists yet.
 func (r *AgentRepository) FindLatestConversationByChatSession(ctx context.Context, chatSessionID uuid.UUID) (*agentdom.AgentConversation, error) {
 	var rec agentConversationRecord
-	err := r.db.GetContext(ctx, &rec,
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec,
 		`SELECT `+conversationCols+` FROM agent_conversations
 		 WHERE chat_session_id = $1 ORDER BY created_at DESC LIMIT 1`,
 		chatSessionID.String(),
@@ -1084,7 +1092,7 @@ func (r *AgentRepository) FindLatestConversationByChatSession(ctx context.Contex
 // CreateConversation inserts a new conversation record.
 func (r *AgentRepository) CreateConversation(ctx context.Context, c *agentdom.AgentConversation) error {
 	rec := conversationToRecord(c)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agent_conversations (id, agent_id, project_id, trigger_type, task_id, comment_id, chat_session_id,
 		  triggered_by_member_id, actor_user_id, status, environment_id, environment_folder_id, error_message,
 		  repo_plugin_id, pr_url,
@@ -1100,14 +1108,14 @@ func (r *AgentRepository) CreateConversation(ctx context.Context, c *agentdom.Ag
 
 // UpdateConversationStatus sets the status field of a conversation.
 func (r *AgentRepository) UpdateConversationStatus(ctx context.Context, id uuid.UUID, status string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE agent_conversations SET status=$1, updated_at=$2 WHERE id=$3`, status, time.Now(), id.String())
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE agent_conversations SET status=$1, updated_at=$2 WHERE id=$3`, status, time.Now(), id.String())
 	return err
 }
 
 // ClaimConversationStatus atomically moves a conversation from fromStatus to
 // toStatus. Only one caller racing on the same conversation observes true.
 func (r *AgentRepository) ClaimConversationStatus(ctx context.Context, id uuid.UUID, fromStatus, toStatus string) (bool, error) {
-	res, err := r.db.ExecContext(ctx,
+	res, err := DeliveryQuery(ctx, r.db).ExecContext(ctx,
 		`UPDATE agent_conversations SET status=$1, updated_at=$2 WHERE id=$3 AND status=$4`,
 		toStatus, time.Now(), id.String(), fromStatus,
 	)
@@ -1215,7 +1223,7 @@ func (r *AgentRepository) ClaimQueuedForDispatch(ctx context.Context, conversati
 // UpdateConversation only writes mutable result fields. Identity, the first-dispatch
 // latch and cumulative dependencies have dedicated, monotonic writers.
 func (r *AgentRepository) UpdateConversation(ctx context.Context, c *agentdom.AgentConversation) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE agent_conversations SET status=$1,
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE agent_conversations SET status=$1,
  error_message=$2, repo_plugin_id=$3, pr_url=$4, finished_at=$5, updated_at=$6 WHERE id=$7`,
 		c.Status, c.ErrorMessage, c.RepoPluginID, c.PRUrl, c.FinishedAt, c.UpdatedAt, c.ID)
 	return err
@@ -1236,7 +1244,7 @@ func (r *AgentRepository) UpdateConversation(ctx context.Context, c *agentdom.Ag
 // asymmetry.
 func (r *AgentRepository) ListConversationEvents(ctx context.Context, conversationID uuid.UUID, window agentdom.ConversationEventWindow) ([]*agentdom.AgentConversationEvent, int64, error) {
 	var total int64
-	if err := r.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM agent_conversation_events WHERE conversation_id = $1`, conversationID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &total, `SELECT COUNT(*) FROM agent_conversation_events WHERE conversation_id = $1`, conversationID.String()); err != nil {
 		return nil, 0, err
 	}
 
@@ -1281,7 +1289,7 @@ func (r *AgentRepository) ListConversationEvents(ctx context.Context, conversati
 			ORDER BY event_index DESC LIMIT $2`
 		args = []any{conversationID.String(), window.Limit}
 	}
-	if err := r.db.SelectContext(ctx, &recs, query, args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, query, args...); err != nil {
 		return nil, 0, err
 	}
 	if window.After == nil {
@@ -1305,7 +1313,7 @@ func (r *AgentRepository) CreateConversationEvent(ctx context.Context, e *agentd
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agent_conversation_events (id, conversation_id, event_index, event_type, event_source, payload, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 		rec.ID, rec.ConversationID, rec.EventIndex, rec.EventType, rec.EventSource, rec.Payload, rec.CreatedAt,
@@ -1333,7 +1341,7 @@ type pendingTriggerRecord struct {
 // currently status "running", across every project.
 func (r *AgentRepository) CountRunningConversations(ctx context.Context, agentID uuid.UUID) (int, error) {
 	var count int
-	err := r.db.GetContext(ctx, &count, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, `
 		SELECT count(*) FROM agent_conversations WHERE agent_id = $1 AND status = 'running'`,
 		agentID.String())
 	return count, err
@@ -1346,7 +1354,7 @@ func (r *AgentRepository) CountRunningConversations(ctx context.Context, agentID
 // to environmentID with no specific folder as their own bucket.
 func (r *AgentRepository) CountRunningConversationsInFolder(ctx context.Context, environmentID uuid.UUID, folderID *uuid.UUID) (int, error) {
 	var count int
-	err := r.db.GetContext(ctx, &count, `
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &count, `
 		SELECT count(*)
 		FROM agent_conversations c
 		LEFT JOIN environment_folders running_folder ON running_folder.id = c.environment_folder_id
@@ -1396,7 +1404,7 @@ func (r *AgentRepository) CreatePendingTrigger(ctx context.Context, t *agentdom.
 	if err != nil {
 		return fmt.Errorf("marshal pending trigger payload for conversation %s: %w", t.ConversationID, err)
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agent_pending_triggers (id, agent_id, conversation_id, topic, payload, environment_id, environment_folder_id, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 		t.ID.String(), t.AgentID.String(), t.ConversationID.String(), t.Topic, payload,
@@ -1482,7 +1490,7 @@ func (r *AgentRepository) dequeueOldestPendingTrigger(ctx context.Context, selec
 // DeletePendingTriggerByConversationID removes conversationID's pending
 // trigger row, if it has one, reporting whether a row actually existed.
 func (r *AgentRepository) DeletePendingTriggerByConversationID(ctx context.Context, conversationID uuid.UUID) (bool, error) {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM agent_pending_triggers WHERE conversation_id = $1`, conversationID.String())
+	res, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM agent_pending_triggers WHERE conversation_id = $1`, conversationID.String())
 	if err != nil {
 		return false, err
 	}
@@ -1528,7 +1536,7 @@ const chatSessionCols = `id, agent_id, project_id, member_id, actor_user_id, tit
 // ListChatSessions returns all chat sessions for the given agent and member.
 func (r *AgentRepository) ListChatSessions(ctx context.Context, agentID, memberID uuid.UUID) ([]*agentdom.AgentChatSession, error) {
 	var recs []agentChatSessionRecord
-	if err := r.db.SelectContext(ctx, &recs, `
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `
 		SELECT `+chatSessionCols+` FROM agent_chat_sessions
 		WHERE agent_id = $1 AND member_id = $2
 		ORDER BY created_at DESC`, agentID.String(), memberID.String()); err != nil {
@@ -1546,7 +1554,7 @@ func (r *AgentRepository) ListChatSessions(ctx context.Context, agentID, memberI
 // instead of member_id).
 func (r *AgentRepository) ListGlobalChatSessions(ctx context.Context, agentID, actorUserID uuid.UUID) ([]*agentdom.AgentChatSession, error) {
 	var recs []agentChatSessionRecord
-	if err := r.db.SelectContext(ctx, &recs, `
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, `
 		SELECT `+chatSessionCols+` FROM agent_chat_sessions
 		WHERE agent_id = $1 AND actor_user_id = $2
 		ORDER BY created_at DESC`, agentID.String(), actorUserID.String()); err != nil {
@@ -1566,7 +1574,7 @@ func (r *AgentRepository) ListGlobalChatSessions(ctx context.Context, agentID, a
 func (r *AgentRepository) HasActiveGlobalChatSession(ctx context.Context, agentID, actorUserID uuid.UUID) (bool, error) {
 	const q = `SELECT EXISTS(SELECT 1 FROM agent_chat_sessions WHERE agent_id = $1 AND actor_user_id = $2)`
 	var exists bool
-	if err := r.db.GetContext(ctx, &exists, q, agentID.String(), actorUserID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &exists, q, agentID.String(), actorUserID.String()); err != nil {
 		return false, err
 	}
 	return exists, nil
@@ -1575,7 +1583,7 @@ func (r *AgentRepository) HasActiveGlobalChatSession(ctx context.Context, agentI
 // FindChatSessionByID returns a single chat session by its primary key.
 func (r *AgentRepository) FindChatSessionByID(ctx context.Context, id uuid.UUID) (*agentdom.AgentChatSession, error) {
 	var rec agentChatSessionRecord
-	if err := r.db.GetContext(ctx, &rec, `SELECT `+chatSessionCols+` FROM agent_chat_sessions WHERE id = $1`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+chatSessionCols+` FROM agent_chat_sessions WHERE id = $1`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, agentdom.ErrChatSessionNotFound
 		}
@@ -1587,7 +1595,7 @@ func (r *AgentRepository) FindChatSessionByID(ctx context.Context, id uuid.UUID)
 // CreateChatSession inserts a new chat session record.
 func (r *AgentRepository) CreateChatSession(ctx context.Context, s *agentdom.AgentChatSession) error {
 	rec := chatSessionToRecord(s)
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO agent_chat_sessions (id, agent_id, project_id, member_id, actor_user_id, title, last_message_at, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		rec.ID, rec.AgentID, rec.ProjectID, rec.MemberID, rec.ActorUserID, rec.Title, rec.LastMessageAt, rec.CreatedAt, rec.UpdatedAt,
@@ -1597,7 +1605,7 @@ func (r *AgentRepository) CreateChatSession(ctx context.Context, s *agentdom.Age
 
 // UpdateChatSession saves the full chat session record.
 func (r *AgentRepository) UpdateChatSession(ctx context.Context, s *agentdom.AgentChatSession) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE agent_chat_sessions SET title=$1,
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE agent_chat_sessions SET title=$1,
  last_message_at=GREATEST(last_message_at,$2),updated_at=now() WHERE id=$3`, s.Title, s.LastMessageAt, s.ID)
 	return err
 }
@@ -2140,7 +2148,7 @@ func (r *AgentRepository) ListAgentActivities(ctx context.Context, in agentdom.L
 	args := append([]interface{}{in.ActorMemberID.String(), in.ProjectID.String()}, b.args...)
 
 	var recs []agentActivityFeedRecord
-	if err := r.db.SelectContext(ctx, &recs, query, args...); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &recs, query, args...); err != nil {
 		return nil, false, err
 	}
 

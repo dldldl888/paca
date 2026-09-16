@@ -490,6 +490,12 @@ func (c *Client) Close() error {
 }
 
 // call sends a request and blocks for its matching response.
+type requestFenceKey struct{}
+
+func WithRequestFence(ctx context.Context, fence func(string) (func(), error)) context.Context {
+	return context.WithValue(ctx, requestFenceKey{}, fence)
+}
+
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
 	ch := make(chan inMessage, 1)
@@ -497,7 +503,20 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	c.pending[id] = ch
 	c.mu.Unlock()
 
-	if err := c.writeLine(outRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
+	release := func() {}
+	if fence, ok := ctx.Value(requestFenceKey{}).(func(string) (func(), error)); ok {
+		var err error
+		release, err = fence(method)
+		if err != nil {
+			c.mu.Lock()
+			delete(c.pending, id)
+			c.mu.Unlock()
+			return nil, err
+		}
+	}
+	err := c.writeLine(outRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
+	release()
+	if err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
