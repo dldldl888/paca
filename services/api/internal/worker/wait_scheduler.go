@@ -198,7 +198,14 @@ func (s *WaitScheduler) tick(ctx context.Context) {
 		}
 		if err := s.consumer.resumeAfterDelay(ctx, delay); err != nil {
 			s.log.Error("wait scheduler: resume after delay", "run_id", delay.RunID, "node_id", delay.NodeID, "err", err)
-			continue // row left in place — retried next tick, see ListDueDelays
+			if executionStarted(err) {
+				// Effects may already exist. Consume this delay and do not finalize
+				// success, even when recording the failed outcome also failed.
+				if deleteErr := s.consumer.repo.DeletePendingDelay(ctx, delay.ID); deleteErr != nil {
+					s.log.Error("wait scheduler: consume failed continuation", "id", delay.ID, "err", deleteErr)
+				}
+			}
+			continue // Only failures before execution leave a retryable delay.
 		}
 		// Only delete once the walk has actually resumed — see
 		// ListDueDelays' docstring.

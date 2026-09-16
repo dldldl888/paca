@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -35,11 +36,20 @@ func (f *fakeDueDateRepo) FindAutomationByNodeID(context.Context, uuid.UUID) (*a
 func (f *fakeDueDateRepo) FindAutomationByID(context.Context, uuid.UUID) (*automationdom.Automation, error) {
 	return f.automation, nil
 }
-func (f *fakeDueDateRepo) FindNodeByID(context.Context, uuid.UUID) (*automationdom.Node, error) {
+func (f *fakeDueDateRepo) FindNodeByID(_ context.Context, id uuid.UUID) (*automationdom.Node, error) {
+	for _, cand := range f.candidates {
+		if cand.Node.ID == id {
+			return cand.Node, nil
+		}
+	}
 	return nil, automationdom.ErrNodeNotFound
 }
 func (f *fakeDueDateRepo) LoadGraph(context.Context, uuid.UUID) (*automationdom.Graph, error) {
-	return &automationdom.Graph{Automation: f.automation}, nil
+	nodes := make([]*automationdom.Node, 0, len(f.candidates))
+	for _, cand := range f.candidates {
+		nodes = append(nodes, cand.Node)
+	}
+	return &automationdom.Graph{Automation: f.automation, Nodes: nodes}, nil
 }
 func (f *fakeDueDateRepo) CreateRun(context.Context, *automationdom.Run) error { return nil }
 func (f *fakeDueDateRepo) UpdateRun(context.Context, *automationdom.Run) error { return nil }
@@ -112,6 +122,21 @@ func newTestDueDateScheduler(t *testing.T, repo *fakeDueDateRepo, taskReader aut
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	consumer := NewAutomationConsumer(client, repo, taskReader, &fakeTaskUpdater{}, nil, nil, discardLogger())
+	if repo.automation != nil {
+		for _, cand := range repo.candidates {
+			cand.Node.AutomationID = repo.automation.ID
+			if len(cand.Node.Config) == 0 {
+				cand.Node.Config = json.RawMessage(`{}`)
+			}
+		}
+		if r, ok := taskReader.(*fakeDueDateTaskReader); ok && r.task != nil {
+			r.task.ProjectID = repo.automation.ProjectID
+			past := time.Now().Add(-time.Hour)
+			r.task.DueDate = &past
+		}
+	}
+	consumer.taskSvc = &fakeTaskUpdater{reader: taskReader}
+	consumer.WithExecutionValidator(fixtureExecutionValidator{repo})
 	return NewDueDateScheduler(client, consumer, discardLogger()), client
 }
 

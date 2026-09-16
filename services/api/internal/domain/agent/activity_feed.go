@@ -3,6 +3,7 @@ package agentdom
 import (
 	"context"
 	"encoding/json"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,8 @@ type ActivityFeedItem struct {
 // that task_activities.actor_id/doc_activities.actor_id are resolved
 // against (see FindMemberByAgent), not the agents.id itself.
 type ListAgentActivitiesFilter struct {
+	ProjectID     uuid.UUID           `json:"-"`
+	Visibility    taskdom.AccessScope `json:"-"`
 	ActorMemberID uuid.UUID
 	SourceTypes   []ActivitySourceType
 	CreatedAfter  *time.Time

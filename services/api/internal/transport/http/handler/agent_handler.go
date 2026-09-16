@@ -54,7 +54,6 @@ type AgentHandler struct {
 	memberRepo         projectdom.MemberRepository
 	globalPermReader   agentGlobalPermissionReader
 	avatarSvc          attachmentdom.AvatarService
-	taskChecker        attachmentdom.TaskOwnerChecker
 }
 
 // NewAgentHandler returns an AgentHandler wired to the agent service.
@@ -97,14 +96,6 @@ func (h *AgentHandler) WithGlobalPermissionReader(reader agentGlobalPermissionRe
 // WithAvatarService configures avatar URL resolution for AgentResponse.
 func (h *AgentHandler) WithAvatarService(svc attachmentdom.AvatarService) *AgentHandler {
 	h.avatarSvc = svc
-	return h
-}
-
-// WithTaskChecker attaches the checker used by WriteTaskDescriptionWithAI to
-// verify the target task belongs to the caller's authorized project (the
-// agent service itself has no task-repository dependency to do this).
-func (h *AgentHandler) WithTaskChecker(checker attachmentdom.TaskOwnerChecker) *AgentHandler {
-	h.taskChecker = checker
 	return h
 }
 
@@ -1473,22 +1464,7 @@ func (h *AgentHandler) WriteTaskDescriptionWithAI(w http.ResponseWriter, r *http
 		return
 	}
 
-	if h.taskChecker == nil {
-		presenter.Error(w, r, apierr.New(apierr.CodeInternalError, "task checker not configured"))
-		return
-	}
-	if err := h.taskChecker.TaskBelongsToProject(r.Context(), projectID, taskID); err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-
-	memberID, err := h.resolveMemberID(r, projectID)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-
-	conv, err := h.svc.TriggerDescriptionWrite(r.Context(), projectID, req.AgentID, taskID, memberID)
+	conv, err := h.svc.TriggerDescriptionWrite(r.Context(), projectID, req.AgentID, taskID, uuid.Nil)
 	if err != nil {
 		presenter.Error(w, r, err)
 		return
@@ -2006,7 +1982,7 @@ func (h *AgentHandler) ListAgentActivities(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	filter := agentdom.ListAgentActivitiesFilter{ActorMemberID: member.ID}
+	filter := agentdom.ListAgentActivitiesFilter{ProjectID: projectID, ActorMemberID: member.ID}
 	if typesRaw := r.URL.Query().Get("type"); typesRaw != "" {
 		for _, t := range splitCommaList(typesRaw) {
 			if !slices.Contains(validActivitySourceTypes, t) {

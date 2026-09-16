@@ -2216,10 +2216,11 @@ func TestListAgentActivities_Success(t *testing.T) {
 			return items, true, nil
 		},
 	}
-	svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{})
+	access := agentTaskFixture(uuid.New(), uuid.New())
+	svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{}).WithTaskAccess(access, access)
 
-	filter := agentdom.ListAgentActivitiesFilter{ActorMemberID: memberID}
-	result, hasMore, err := svc.ListAgentActivities(context.Background(), filter, 20)
+	filter := agentdom.ListAgentActivitiesFilter{ProjectID: access.scope.ProjectID, ActorMemberID: memberID}
+	result, hasMore, err := svc.ListAgentActivities(authz.WithActorID(context.Background(), access.scope.UserID), filter, 20)
 
 	assert.NoError(t, err)
 	assert.True(t, hasMore)
@@ -2234,9 +2235,10 @@ func TestListAgentActivities_PropagatesRepoError(t *testing.T) {
 			return nil, false, agentdom.ErrActivityFeedInvalidCursor
 		},
 	}
-	svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{})
+	access := agentTaskFixture(uuid.New(), uuid.New())
+	svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{}).WithTaskAccess(access, access)
 
-	_, hasMore, err := svc.ListAgentActivities(context.Background(), agentdom.ListAgentActivitiesFilter{}, 20)
+	_, hasMore, err := svc.ListAgentActivities(authz.WithActorID(context.Background(), access.scope.UserID), agentdom.ListAgentActivitiesFilter{ProjectID: access.scope.ProjectID}, 20)
 
 	assert.ErrorIs(t, err, agentdom.ErrActivityFeedInvalidCursor)
 	assert.False(t, hasMore)
@@ -2921,9 +2923,10 @@ func TestTriggerDescriptionWrite_WrongProject_ReturnsNotFound(t *testing.T) {
 			return nil
 		},
 	}
-	svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{})
+	access := agentTaskFixture(projectID, taskID)
+	svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{}).WithTaskAccess(access, access)
 
-	_, err := svc.TriggerDescriptionWrite(context.Background(), projectID, agentID, taskID, memberID)
+	_, err := svc.TriggerDescriptionWrite(authz.WithActorID(context.Background(), access.scope.UserID), projectID, agentID, taskID, memberID)
 
 	assert.ErrorIs(t, err, agentdom.ErrAgentNotFound)
 }

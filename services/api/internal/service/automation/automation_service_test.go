@@ -194,21 +194,12 @@ func TestValidateConditionConfig_AcceptsValidBranches(t *testing.T) {
 
 // --- Plugin node resolver fallthrough ---------------------------------------
 
-type stubPluginResolver struct {
-	triggers, conditions, actions map[string]bool
-}
-
-func (s *stubPluginResolver) IsPluginTrigger(t string) bool   { return s.triggers[t] }
-func (s *stubPluginResolver) IsPluginCondition(t string) bool { return s.conditions[t] }
-func (s *stubPluginResolver) IsPluginAction(t string) bool    { return s.actions[t] }
-
-func TestService_ValidateNodeTypeAndConfig_PluginActionFallthrough(t *testing.T) {
+func TestService_ValidateNodeTypeAndConfig_PluginActionDenied(t *testing.T) {
 	svc := &Service{}
-	svc.WithPluginNodeResolver(&stubPluginResolver{actions: map[string]bool{"com.acme.github.comment_on_pr": true}})
 
 	err := svc.validateNodeTypeAndConfig(context.TODO(), uuid.Nil, automationdom.KindAction, "com.acme.github.comment_on_pr", json.RawMessage(`{"template":"lgtm"}`), true)
-	if err != nil {
-		t.Fatalf("expected a registered plugin action type to validate, got %v", err)
+	if err != automationdom.ErrNodeInvalidType {
+		t.Fatalf("plugin action must be denied, got %v", err)
 	}
 
 	err = svc.validateNodeTypeAndConfig(context.TODO(), uuid.Nil, automationdom.KindAction, "com.acme.unregistered.action", json.RawMessage(`{}`), true)
@@ -217,17 +208,15 @@ func TestService_ValidateNodeTypeAndConfig_PluginActionFallthrough(t *testing.T)
 	}
 }
 
-// TestService_ValidateNodeTypeAndConfig_PluginConditionFallthrough covers a
+// TestService_ValidateNodeTypeAndConfig_PluginConditionDenied covers a
 // plugin-contributed condition node: its own node type (KindCondition, not
-// the built-in ConditionNodeType), validated opaquely once the resolver
-// confirms it's registered.
-func TestService_ValidateNodeTypeAndConfig_PluginConditionFallthrough(t *testing.T) {
+// the built-in ConditionNodeType), is denied before any runtime dispatch.
+func TestService_ValidateNodeTypeAndConfig_PluginConditionDenied(t *testing.T) {
 	svc := &Service{}
-	svc.WithPluginNodeResolver(&stubPluginResolver{conditions: map[string]bool{"com.acme.github.pr_status": true}})
 
 	err := svc.validateNodeTypeAndConfig(context.TODO(), uuid.Nil, automationdom.KindCondition, "com.acme.github.pr_status", json.RawMessage(`{"status":"open"}`), true)
-	if err != nil {
-		t.Fatalf("expected a registered plugin condition type to validate, got %v", err)
+	if err != automationdom.ErrNodeInvalidType {
+		t.Fatalf("plugin condition must be denied, got %v", err)
 	}
 
 	err = svc.validateNodeTypeAndConfig(context.TODO(), uuid.Nil, automationdom.KindCondition, "com.acme.unregistered.condition", json.RawMessage(`{}`), true)

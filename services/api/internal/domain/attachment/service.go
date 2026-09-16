@@ -9,13 +9,6 @@ import (
 	"github.com/Paca-AI/api/internal/platform/storage"
 )
 
-// TaskOwnerChecker validates that a task belongs to a given project.
-type TaskOwnerChecker interface {
-	// TaskBelongsToProject loads the task by id and returns a non-nil error
-	// when the task does not belong to projectID (or does not exist).
-	TaskBelongsToProject(ctx context.Context, projectID, taskID uuid.UUID) error
-}
-
 // Service is the combined attachment management contract.
 type Service interface {
 	// InitiateUpload creates a pending File record and returns either a

@@ -18,15 +18,16 @@ import (
 // --- sqlx models -------------------------------------------------------------
 
 type automationRecord struct {
-	ID          string     `db:"id"`
-	ProjectID   string     `db:"project_id"`
-	Name        string     `db:"name"`
-	Description *string    `db:"description"`
-	Status      string     `db:"status"`
-	CreatedBy   *string    `db:"created_by"`
-	CreatedAt   time.Time  `db:"created_at"`
-	UpdatedAt   time.Time  `db:"updated_at"`
-	DeletedAt   *time.Time `db:"deleted_at"`
+	GraphRevision int64      `db:"graph_revision"`
+	ID            string     `db:"id"`
+	ProjectID     string     `db:"project_id"`
+	Name          string     `db:"name"`
+	Description   *string    `db:"description"`
+	Status        string     `db:"status"`
+	CreatedBy     *string    `db:"created_by"`
+	CreatedAt     time.Time  `db:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at"`
+	DeletedAt     *time.Time `db:"deleted_at"`
 }
 
 func (rec *automationRecord) toDomain() (*automationdom.Automation, error) {
@@ -39,13 +40,14 @@ func (rec *automationRecord) toDomain() (*automationdom.Automation, error) {
 		return nil, err
 	}
 	a := &automationdom.Automation{
-		ID:        id,
-		ProjectID: projectID,
-		Name:      rec.Name,
-		Status:    automationdom.Status(rec.Status),
-		CreatedAt: rec.CreatedAt,
-		UpdatedAt: rec.UpdatedAt,
-		DeletedAt: rec.DeletedAt,
+		GraphRevision: rec.GraphRevision,
+		ID:            id,
+		ProjectID:     projectID,
+		Name:          rec.Name,
+		Status:        automationdom.Status(rec.Status),
+		CreatedAt:     rec.CreatedAt,
+		UpdatedAt:     rec.UpdatedAt,
+		DeletedAt:     rec.DeletedAt,
 	}
 	if rec.Description != nil {
 		a.Description = *rec.Description
@@ -174,6 +176,8 @@ func (rec *edgeRecord) toDomain() (*automationdom.Edge, error) {
 }
 
 type runRecord struct {
+	GraphRevision int64      `db:"graph_revision"`
+	SprintID      *uuid.UUID `db:"sprint_id"`
 	ID            string     `db:"id"`
 	AutomationID  string     `db:"automation_id"`
 	TriggerNodeID string     `db:"trigger_node_id"`
@@ -205,6 +209,8 @@ func (rec *runRecord) toDomain() (*automationdom.Run, error) {
 		taskID = &parsed
 	}
 	return &automationdom.Run{
+		GraphRevision: rec.GraphRevision,
+		SprintID:      rec.SprintID,
 		ID:            id,
 		AutomationID:  automationID,
 		TriggerNodeID: triggerNodeID,
@@ -406,8 +412,8 @@ func (r *AutomationRepository) CreateAutomation(ctx context.Context, a *automati
 // FindAutomationByID implements automationdom.Repository.FindAutomationByID.
 func (r *AutomationRepository) FindAutomationByID(ctx context.Context, id uuid.UUID) (*automationdom.Automation, error) {
 	const q = `
-		SELECT id, project_id, name, description, status, created_by, created_at, updated_at, deleted_at
-		FROM automations WHERE id = $1 AND deleted_at IS NULL`
+		SELECT id, project_id, name, description, status, created_by, created_at, updated_at, deleted_at, graph_revision
+		FROM automations WHERE id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE projects.id=automations.project_id AND projects.deleted_at IS NULL)`
 	var rec automationRecord
 	if err := r.db.GetContext(ctx, &rec, q, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -422,7 +428,7 @@ func (r *AutomationRepository) FindAutomationByID(ctx context.Context, id uuid.U
 // its doc comment for the limit/cursor/hasMore pagination contract.
 func (r *AutomationRepository) ListAutomations(ctx context.Context, projectID uuid.UUID, status *automationdom.Status, search *string, cursor *string, limit *int) ([]*automationdom.Automation, bool, error) {
 	q := `
-		SELECT id, project_id, name, description, status, created_by, created_at, updated_at, deleted_at
+		SELECT id, project_id, name, description, status, created_by, created_at, updated_at, deleted_at, graph_revision
 		FROM automations WHERE project_id = $1 AND deleted_at IS NULL`
 	args := []interface{}{projectID.String()}
 	if status != nil {
@@ -495,15 +501,51 @@ func (r *AutomationRepository) DeleteAutomation(ctx context.Context, id uuid.UUI
 
 // LoadGraph implements automationdom.Repository.LoadGraph.
 func (r *AutomationRepository) LoadGraph(ctx context.Context, automationID uuid.UUID) (*automationdom.Graph, error) {
-	nodes, err := r.ListNodesByAutomation(ctx, automationID)
+	// Read metadata/revision, nodes and edges from one database snapshot. A later
+	// edit cannot lend a newer revision to this older graph when CreateRun persists it.
+	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	edges, err := r.ListEdgesByAutomation(ctx, automationID)
+	defer tx.Rollback()
+	var a automationRecord
+	if err := tx.GetContext(ctx, &a, `SELECT id,project_id,name,description,status,created_by,created_at,updated_at,deleted_at,graph_revision FROM automations WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM projects WHERE projects.id=automations.project_id AND projects.deleted_at IS NULL)`, automationID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, automationdom.ErrNotFound
+		}
+		return nil, err
+	}
+	graph := &automationdom.Graph{}
+	graph.Automation, err = a.toDomain()
 	if err != nil {
 		return nil, err
 	}
-	return &automationdom.Graph{Nodes: nodes, Edges: edges}, nil
+	var nodes []nodeRecord
+	if err := tx.SelectContext(ctx, &nodes, `SELECT id,automation_id,kind,type,config,pos_x,pos_y,created_at,updated_at FROM automation_nodes WHERE automation_id=$1`, automationID); err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		n, err := nodes[i].toDomain()
+		if err != nil {
+			return nil, err
+		}
+		graph.Nodes = append(graph.Nodes, n)
+	}
+	var edges []edgeRecord
+	if err := tx.SelectContext(ctx, &edges, `SELECT id,automation_id,source_node_id,source_handle,target_node_id,created_at FROM automation_edges WHERE automation_id=$1`, automationID); err != nil {
+		return nil, err
+	}
+	for i := range edges {
+		e, err := edges[i].toDomain()
+		if err != nil {
+			return nil, err
+		}
+		graph.Edges = append(graph.Edges, e)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return graph, nil
 }
 
 // --- Nodes ------------------------------------------------------------------
@@ -694,10 +736,10 @@ func (r *AutomationRepository) ListOutgoingEdges(ctx context.Context, sourceNode
 // FindAutomationByNodeID implements automationdom.Repository.FindAutomationByNodeID.
 func (r *AutomationRepository) FindAutomationByNodeID(ctx context.Context, nodeID uuid.UUID) (*automationdom.Automation, error) {
 	const q = `
-		SELECT a.id, a.project_id, a.name, a.description, a.status, a.created_by, a.created_at, a.updated_at, a.deleted_at
+		SELECT a.id, a.project_id, a.name, a.description, a.status, a.created_by, a.created_at, a.updated_at, a.deleted_at, a.graph_revision
 		FROM automations a
 		JOIN automation_nodes n ON n.automation_id = a.id
-		WHERE n.id = $1 AND a.deleted_at IS NULL`
+		WHERE n.id = $1 AND a.deleted_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE projects.id=a.project_id AND projects.deleted_at IS NULL)`
 	var rec automationRecord
 	if err := r.db.GetContext(ctx, &rec, q, nodeID.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -717,17 +759,18 @@ func (r *AutomationRepository) CreateRun(ctx context.Context, run *automationdom
 		taskID = run.TaskID.String()
 	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO automation_runs (id, automation_id, trigger_node_id, task_id, status, started_at, finished_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		run.ID.String(), run.AutomationID.String(), run.TriggerNodeID.String(), taskID, string(run.Status), run.StartedAt, run.FinishedAt,
+		INSERT INTO automation_runs (id, automation_id, trigger_node_id, task_id, status, started_at, finished_at, graph_revision, sprint_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		run.ID.String(), run.AutomationID.String(), run.TriggerNodeID.String(), taskID, string(run.Status), run.StartedAt, run.FinishedAt, run.GraphRevision, run.SprintID,
 	)
 	return err
 }
 
-// UpdateRun implements automationdom.Repository.UpdateRun.
+// UpdateRun preserves failure atomically, including concurrent finalization attempts.
 func (r *AutomationRepository) UpdateRun(ctx context.Context, run *automationdom.Run) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE automation_runs SET status = $1, finished_at = $2 WHERE id = $3`,
+		UPDATE automation_runs SET status = $1, finished_at = $2
+		WHERE id = $3 AND status <> 'failed'`,
 		string(run.Status), run.FinishedAt, run.ID.String(),
 	)
 	return err
@@ -736,7 +779,7 @@ func (r *AutomationRepository) UpdateRun(ctx context.Context, run *automationdom
 // FindRunByID implements automationdom.Repository.FindRunByID.
 func (r *AutomationRepository) FindRunByID(ctx context.Context, id uuid.UUID) (*automationdom.Run, error) {
 	const q = `
-		SELECT id, automation_id, trigger_node_id, task_id, status, started_at, finished_at
+		SELECT id, automation_id, trigger_node_id, task_id, status, started_at, finished_at, graph_revision, sprint_id
 		FROM automation_runs WHERE id = $1`
 	var rec runRecord
 	if err := r.db.GetContext(ctx, &rec, q, id.String()); err != nil {
@@ -754,7 +797,7 @@ func (r *AutomationRepository) ListRunsByAutomation(ctx context.Context, automat
 		limit = 50
 	}
 	const q = `
-		SELECT id, automation_id, trigger_node_id, task_id, status, started_at, finished_at
+		SELECT id, automation_id, trigger_node_id, task_id, status, started_at, finished_at, graph_revision, sprint_id
 		FROM automation_runs WHERE automation_id = $1 ORDER BY started_at DESC LIMIT $2`
 	var recs []runRecord
 	if err := r.db.SelectContext(ctx, &recs, q, automationID.String(), limit); err != nil {
@@ -1140,4 +1183,12 @@ func (r *AutomationRepository) StatusUsedByAutomation(ctx context.Context, statu
 		return false, err
 	}
 	return exists, nil
+}
+
+// ListChildTaskIDs is the automation preflight: no UI page cap or project filter
+// may hide a later target that must be validated before the first side effect.
+func (r *TaskRepository) ListChildTaskIDs(ctx context.Context, parentID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.SelectContext(ctx, &ids, `SELECT id FROM tasks WHERE parent_task_id=$1 AND deleted_at IS NULL ORDER BY id`, parentID)
+	return ids, err
 }

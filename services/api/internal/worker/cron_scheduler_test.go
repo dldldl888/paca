@@ -41,11 +41,20 @@ func (f *fakeCronRepo) FindAutomationByNodeID(context.Context, uuid.UUID) (*auto
 func (f *fakeCronRepo) FindAutomationByID(context.Context, uuid.UUID) (*automationdom.Automation, error) {
 	return f.automation, nil
 }
-func (f *fakeCronRepo) FindNodeByID(context.Context, uuid.UUID) (*automationdom.Node, error) {
+func (f *fakeCronRepo) FindNodeByID(_ context.Context, id uuid.UUID) (*automationdom.Node, error) {
+	for _, cand := range f.candidates {
+		if cand.Node.ID == id {
+			return cand.Node, nil
+		}
+	}
 	return nil, automationdom.ErrNodeNotFound
 }
 func (f *fakeCronRepo) LoadGraph(context.Context, uuid.UUID) (*automationdom.Graph, error) {
-	return &automationdom.Graph{Automation: f.automation}, nil
+	nodes := make([]*automationdom.Node, 0, len(f.candidates))
+	for _, cand := range f.candidates {
+		nodes = append(nodes, cand.Node)
+	}
+	return &automationdom.Graph{Automation: f.automation, Nodes: nodes}, nil
 }
 func (f *fakeCronRepo) CreateRun(context.Context, *automationdom.Run) error { return nil }
 func (f *fakeCronRepo) UpdateRun(context.Context, *automationdom.Run) error { return nil }
@@ -119,6 +128,21 @@ func newTestCronScheduler(t *testing.T, repo *fakeCronRepo, taskReader automatio
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	consumer := NewAutomationConsumer(client, repo, taskReader, &fakeTaskUpdater{}, nil, nil, discardLogger())
+	if repo.automation != nil {
+		for _, cand := range repo.candidates {
+			cand.Node.AutomationID = repo.automation.ID
+			if len(cand.Node.Config) == 0 {
+				cand.Node.Config = json.RawMessage(`{}`)
+			}
+		}
+		if r, ok := taskReader.(*fakeCronTaskReader); ok && r.task != nil {
+			r.task.ProjectID = repo.automation.ProjectID
+			past := time.Now().Add(-time.Hour)
+			r.task.DueDate = &past
+		}
+	}
+	consumer.taskSvc = &fakeTaskUpdater{reader: taskReader}
+	consumer.WithExecutionValidator(fixtureExecutionValidator{repo})
 	return NewCronScheduler(client, consumer, discardLogger()), client
 }
 

@@ -18,6 +18,7 @@ import (
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	domainauth "github.com/Paca-AI/api/internal/domain/auth"
 	projectdom "github.com/Paca-AI/api/internal/domain/project"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/transport/http/handler"
 	httpmw "github.com/Paca-AI/api/internal/transport/http/middleware"
 )
@@ -27,6 +28,7 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockAgentSvc struct {
+	descriptionErr                error
 	getAgent                      func(ctx context.Context, projectID, agentID uuid.UUID) (*agentdom.Agent, error)
 	createAgent                   func(ctx context.Context, projectID uuid.UUID, in agentdom.CreateAgentInput) (*agentdom.Agent, error)
 	startChatSession              func(ctx context.Context, projectID, agentID, memberID uuid.UUID, message string) (*agentdom.AgentChatSession, *agentdom.AgentConversation, error)
@@ -81,6 +83,9 @@ func (m *mockAgentSvc) DeleteAgent(_ context.Context, _, _ uuid.UUID) error {
 	return agentdom.ErrAgentNotFound
 }
 func (m *mockAgentSvc) TriggerDescriptionWrite(_ context.Context, _, _, _, _ uuid.UUID) (*agentdom.AgentConversation, error) {
+	if m.descriptionErr != nil {
+		return nil, m.descriptionErr
+	}
 	return nil, agentdom.ErrAgentNotFound
 }
 func (m *mockAgentSvc) ListMCPServers(_ context.Context, _ uuid.UUID) ([]*agentdom.AgentMCPServer, error) {
@@ -722,54 +727,15 @@ func TestWriteTaskDescriptionWithAI_MissingAgentID_Returns400(t *testing.T) {
 	}
 }
 
-// fakeAgentTaskChecker is a minimal attachmentdom.TaskOwnerChecker stand-in
-// for WriteTaskDescriptionWithAI's cross-project regression tests below.
-type fakeAgentTaskChecker struct {
-	err error
-}
-
-func (f fakeAgentTaskChecker) TaskBelongsToProject(context.Context, uuid.UUID, uuid.UUID) error {
-	return f.err
-}
-
-// TestWriteTaskDescriptionWithAI_NoTaskCheckerConfigured_Returns500 guards
-// the fail-closed design of the taskChecker fix (GHSA-xwmv-9c7h-g947
-// follow-up audit): if a deployment forgets to wire WithTaskChecker, the
-// handler must refuse the request rather than silently skip the
-// cross-project task-ownership check.
-func TestWriteTaskDescriptionWithAI_NoTaskCheckerConfigured_Returns500(t *testing.T) {
-	r := newAgentRouter(&mockAgentSvc{})
-	projectID := uuid.New()
-	taskID := uuid.New()
-
-	w := doAgentRequest(t, r, http.MethodPost,
-		"/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/write-with-ai",
-		map[string]any{"agent_id": uuid.New().String()})
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when no task checker is configured, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// TestWriteTaskDescriptionWithAI_WrongProject_Returns404 is the regression
-// test for the taskID half of the WriteTaskDescriptionWithAI cross-project
-// hijack: a taskID belonging to a different project must be rejected before
-// any agent is triggered against it.
-func TestWriteTaskDescriptionWithAI_WrongProject_Returns404(t *testing.T) {
-	svc := &mockAgentSvc{}
-	h := handler.NewAgentHandler(svc, "", "", "").
-		WithTaskChecker(fakeAgentTaskChecker{err: attachmentdom.ErrTaskNotInProject})
-	r := chi.NewRouter()
-	r.Route("/projects/{projectId}/tasks/{taskId}", func(r chi.Router) {
-		r.Post("/write-with-ai", h.WriteTaskDescriptionWithAI)
-	})
-	projectID := uuid.New()
-	taskID := uuid.New()
-
-	w := doAgentRequest(t, r, http.MethodPost,
-		"/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/write-with-ai",
-		map[string]any{"agent_id": uuid.New().String()})
+func TestWriteTaskDescriptionWithAI_ServiceDenial(t *testing.T) {
+	svc := &mockAgentSvc{descriptionErr: taskdom.ErrTaskNotFound}
+	r := newAgentRouter(svc)
+	w := doAgentRequest(t, r, http.MethodPost, "/projects/"+uuid.NewString()+"/tasks/"+uuid.NewString()+"/write-with-ai", map[string]any{"agent_id": uuid.NewString()})
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for cross-project taskID, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected service task denial, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"error_code":"TASK_NOT_FOUND"`) {
+		t.Fatalf("expected task denial code, got %s", w.Body.String())
 	}
 }
 

@@ -221,15 +221,16 @@ func NodeRequiresTask(kind Kind, nodeType string) bool {
 
 // Automation is the aggregate root: a named automation graph within a project.
 type Automation struct {
-	ID          uuid.UUID
-	ProjectID   uuid.UUID
-	Name        string
-	Description string
-	Status      Status
-	CreatedBy   *uuid.UUID
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   *time.Time
+	GraphRevision int64 // database revision; all graph mutations participate atomically
+	ID            uuid.UUID
+	ProjectID     uuid.UUID
+	Name          string
+	Description   string
+	Status        Status
+	CreatedBy     *uuid.UUID
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time
 }
 
 // Node is one Trigger/Condition/Action step in an automation's graph. Config
@@ -299,6 +300,8 @@ const (
 // walk stays within call_api actions, the one node type that doesn't touch
 // a task.
 type Run struct {
+	GraphRevision int64
+	SprintID      *uuid.UUID // explicit sprint-trigger binding; never a task-derived sprint
 	ID            uuid.UUID
 	AutomationID  uuid.UUID
 	TriggerNodeID uuid.UUID

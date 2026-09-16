@@ -21,6 +21,7 @@ import (
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	environmentdom "github.com/Paca-AI/api/internal/domain/environment"
 	plugindom "github.com/Paca-AI/api/internal/domain/plugin"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/events"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/messaging"
@@ -73,12 +74,20 @@ type Service struct {
 	// failing closed, since every existing GetConversationForAgent test
 	// constructs a bare Service with no authorizer. Production wiring
 	// (bootstrap/app.go) always configures one via WithAuthorizer.
-	authorizer *authz.Authorizer
+	authorizer  *authz.Authorizer
+	taskPolicy  taskdom.AccessPolicy
+	taskChecker taskdom.AccessChecker
 }
 
 // New returns a configured agent service.
 func New(repo agentdom.Repository, projRepo projectMemberWriter, publisher *messaging.Publisher, pluginRepo pluginFinder) *Service {
 	return &Service{repo: repo, projRepo: projRepo, publisher: publisher, pluginRepo: pluginRepo}
+}
+
+// WithTaskAccess shares current object and query authorization with task services.
+func (s *Service) WithTaskAccess(policy taskdom.AccessPolicy, checker taskdom.AccessChecker) *Service {
+	s.taskPolicy, s.taskChecker = policy, checker
+	return s
 }
 
 // WithEncryptor configures AES-256-GCM encryption for the LLM API key stored at rest.
@@ -1465,6 +1474,17 @@ func (s *Service) ListConversations(ctx context.Context, in agentdom.ListConvers
 
 // ListAgentActivities returns a page of an agent's unified task+doc activity feed.
 func (s *Service) ListAgentActivities(ctx context.Context, in agentdom.ListAgentActivitiesFilter, limit int) ([]*agentdom.ActivityFeedItem, bool, error) {
+	if s.taskPolicy == nil || in.ProjectID == uuid.Nil {
+		return nil, false, taskdom.ErrTaskNotFound
+	}
+	scope, err := s.taskPolicy.ResolveTaskAccess(ctx, in.ProjectID)
+	if err != nil {
+		return nil, false, err
+	}
+	if scope.ProjectID != in.ProjectID || scope.UserID == uuid.Nil || scope.TaskIDs != nil {
+		return nil, false, taskdom.ErrTaskNotFound
+	}
+	in.Visibility = scope
 	return s.repo.ListAgentActivities(ctx, in, limit)
 }
 
@@ -2838,9 +2858,23 @@ func (s *Service) TriggerCommentMention(ctx context.Context, projectID, agentID,
 
 // TriggerDescriptionWrite creates a conversation and publishes a trigger for
 // the agent to write a description for the given task. Verifies agentID
-// belongs to projectID; the caller is responsible for verifying taskID
-// belongs to projectID (this service has no task-repository dependency).
+// is visible in projectID and the authenticated requester can manage taskID.
 func (s *Service) TriggerDescriptionWrite(ctx context.Context, projectID, agentID, taskID, triggeredByMemberID uuid.UUID) (*agentdom.AgentConversation, error) {
+	if s.taskPolicy == nil || s.taskChecker == nil {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	scope, err := s.taskPolicy.ResolveTaskAccess(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if scope.UserID == uuid.Nil || scope.MemberID == uuid.Nil || scope.TaskIDs != nil {
+		return nil, taskdom.ErrTaskNotFound
+	}
+	if _, err := s.taskChecker.CheckTaskAccess(ctx, projectID, taskID, taskdom.AccessManage); err != nil {
+		return nil, err
+	}
+	triggeredByMemberID = scope.MemberID
+
 	if _, err := s.GetAgent(ctx, projectID, agentID); err != nil {
 		return nil, err
 	}
@@ -2886,7 +2920,10 @@ func (s *Service) TriggerDescriptionWrite(ctx context.Context, projectID, agentI
 		payload["environment_id"] = envID.String()
 		payload["workdir"] = workdir
 	}
-	_ = s.dispatchOrEnqueue(ctx, agentID, conv.ID, events.TopicAgentDescriptionWrite, payload, envID, resolvedFolderID)
+	if err := s.dispatchOrEnqueue(ctx, agentID, conv.ID, events.TopicAgentDescriptionWrite, payload, envID, resolvedFolderID); err != nil {
+		// Preserve queue/delivery failure semantics; never report a successful request.
+		return nil, err
+	}
 	return conv, nil
 }
 

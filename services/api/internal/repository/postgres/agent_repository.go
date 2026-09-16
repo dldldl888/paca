@@ -14,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 )
 
 // -------------------------------------------------------------------------
@@ -2062,7 +2063,12 @@ type agentActivityFeedRecord struct {
 // one row beyond limit to detect whether more pages remain.
 func (r *AgentRepository) ListAgentActivities(ctx context.Context, in agentdom.ListAgentActivitiesFilter, limit int) ([]*agentdom.ActivityFeedItem, bool, error) {
 	b := newQueryBuilder()
-	b.idx = 2 // $1 is reserved for the actor member id, shared by both UNION branches
+	b.idx = 3 // actor and trusted project are shared by both UNION arms
+	taskQuery := &queryBuilder{idx: b.idx}
+	applyTaskVisibility(taskQuery, []taskdom.AccessScope{in.Visibility})
+	visible := strings.Join(taskQuery.whereClauses, " AND ")
+	taskPredicate := visible + taskActivityReferencesVisible(visible)
+	b.idx, b.args = taskQuery.idx, taskQuery.args
 
 	if len(in.SourceTypes) > 0 {
 		types := make([]string, len(in.SourceTypes))
@@ -2115,24 +2121,24 @@ func (r *AgentRepository) ListAgentActivities(ctx context.Context, in agentdom.L
 	}
 
 	query := `WITH agent_activities AS (
-		SELECT ta.id, 'task' AS source_type, ta.task_id AS source_id, t.title AS source_title,
-		       (t.deleted_at IS NOT NULL) AS source_deleted,
+		SELECT ta.id, 'task' AS source_type, ta.task_id AS source_id, tasks.title AS source_title,
+		       false AS source_deleted,
 		       ta.activity_type, ta.content, ta.created_at, ta.updated_at
 		FROM task_activities ta
-		JOIN tasks t ON t.id = ta.task_id
-		WHERE ta.actor_id = $1 AND ta.deleted_at IS NULL
+		JOIN tasks ON tasks.id = ta.task_id
+		WHERE ta.actor_id = $1 AND ta.deleted_at IS NULL AND tasks.deleted_at IS NULL AND tasks.project_id=$2 AND ` + taskPredicate + `
 		UNION ALL
 		SELECT da.id, 'doc' AS source_type, da.document_id AS source_id, d.title AS source_title,
 		       (d.deleted_at IS NOT NULL) AS source_deleted,
 		       da.activity_type, da.content, da.created_at, da.updated_at
 		FROM doc_activities da
 		JOIN documents d ON d.id = da.document_id
-		WHERE da.actor_id = $1 AND da.deleted_at IS NULL
+		WHERE da.actor_id = $1 AND da.deleted_at IS NULL AND d.deleted_at IS NULL AND d.project_id=$2
 	)
 	SELECT id, source_type, source_id, source_title, source_deleted, activity_type, content, created_at, updated_at
-	FROM agent_activities WHERE ` + whereSQL + fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT %s`, limitP)
+	FROM agent_activities WHERE EXISTS (SELECT 1 FROM project_members pm JOIN projects p ON p.id=pm.project_id WHERE pm.id=$1 AND pm.project_id=$2 AND pm.member_type='agent' AND pm.deleted_at IS NULL AND p.deleted_at IS NULL) AND ` + whereSQL + fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT %s`, limitP)
 
-	args := append([]interface{}{in.ActorMemberID.String()}, b.args...)
+	args := append([]interface{}{in.ActorMemberID.String(), in.ProjectID.String()}, b.args...)
 
 	var recs []agentActivityFeedRecord
 	if err := r.db.SelectContext(ctx, &recs, query, args...); err != nil {

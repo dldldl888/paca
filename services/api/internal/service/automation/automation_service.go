@@ -40,11 +40,14 @@ type memberLookup interface {
 
 // Service implements automationdom.Service.
 type Service struct {
-	repo           automationdom.Repository
-	taskRepo       taskLookup
-	memberRepo     memberLookup
-	publisher      *messaging.Publisher
-	pluginResolver automationdom.PluginNodeResolver
+	repo       automationdom.Repository
+	taskRepo   taskLookup
+	memberRepo memberLookup
+	publisher  *messaging.Publisher
+	taskPolicy taskdom.AccessPolicy
+	sprintRepo interface {
+		FindSprintByID(context.Context, uuid.UUID) (*sprintdom.Sprint, error)
+	}
 }
 
 // New returns a Service backed by repo, taskRepo, and memberRepo.
@@ -53,13 +56,102 @@ func New(repo automationdom.Repository, taskRepo taskLookup, memberRepo memberLo
 	return &Service{repo: repo, taskRepo: taskRepo, memberRepo: memberRepo, publisher: publisher}
 }
 
-// WithPluginNodeResolver configures a fallback checked whenever a node's
-// type isn't one of the built-ins, so plugin-contributed trigger/condition/
-// action types validate successfully. Without it, only built-in types
-// validate (e.g. in tests).
-func (s *Service) WithPluginNodeResolver(resolver automationdom.PluginNodeResolver) *Service {
-	s.pluginResolver = resolver
+func (s *Service) WithSprintLookup(repo interface {
+	FindSprintByID(context.Context, uuid.UUID) (*sprintdom.Sprint, error)
+}) *Service {
+	s.sprintRepo = repo
 	return s
+}
+
+func (s *Service) assertSprintInProject(ctx context.Context, projectID, id uuid.UUID) error {
+	if s.sprintRepo == nil {
+		return automationdom.ErrNodeCrossProject
+	}
+	sprint, err := s.sprintRepo.FindSprintByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if sprint.ProjectID != projectID {
+		return automationdom.ErrNodeCrossProject
+	}
+	return nil
+}
+
+// WithTaskAccess configures the current human task policy for the rich control plane.
+func (s *Service) WithTaskAccess(policy taskdom.AccessPolicy) *Service {
+	s.taskPolicy = policy
+	return s
+}
+
+func (s *Service) requireTaskAccess(ctx context.Context, projectID uuid.UUID, write bool) error {
+	if s.taskPolicy == nil {
+		return taskdom.ErrTaskNotFound
+	}
+	scope, err := s.taskPolicy.ResolveTaskAccess(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if scope.ProjectID != projectID || scope.UserID == uuid.Nil || scope.TaskIDs != nil || !scope.ReadAll {
+		return taskdom.ErrTaskNotFound
+	}
+	if write && (!scope.Write || !scope.Manage) {
+		return taskdom.ErrTaskForbidden
+	}
+	return nil
+}
+
+// ValidateExecution reloads the active graph and checks its current configuration.
+// Only trusted workers use this service operation; it does not impersonate CreatedBy.
+func (s *Service) ValidateExecution(ctx context.Context, projectID, nodeID uuid.UUID) (*automationdom.Graph, error) {
+	a, err := s.repo.FindAutomationByNodeID(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if a.ProjectID != projectID || a.Status != automationdom.StatusActive {
+		return nil, automationdom.ErrNotFound
+	}
+	graph, err := s.repo.LoadGraph(ctx, a.ID)
+	if err != nil {
+		return nil, err
+	}
+	if graph.Automation == nil || graph.Automation.ID != a.ID || graph.Automation.ProjectID != projectID || graph.Automation.Status != automationdom.StatusActive {
+		return nil, automationdom.ErrNotFound
+	}
+	a = graph.Automation
+
+	found := false
+	for _, n := range graph.Nodes {
+		if n.AutomationID != a.ID {
+			return nil, automationdom.ErrNodeNotFound
+		}
+		if n.ID == nodeID {
+			found = true
+		}
+		if err := s.validateNodeTypeAndConfig(ctx, projectID, n.Kind, n.Type, n.Config, true); err != nil {
+			return nil, err
+		}
+	}
+	if !found {
+		return nil, automationdom.ErrNodeNotFound
+	}
+	nodeIDs := map[uuid.UUID]bool{}
+	for _, n := range graph.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	for _, e := range graph.Edges {
+		if e.AutomationID != a.ID || !nodeIDs[e.SourceNodeID] || !nodeIDs[e.TargetNodeID] {
+			return nil, automationdom.ErrNodeNotFound
+		}
+	}
+
+	if hasCycle(graph.Nodes, graph.Edges) {
+		return nil, automationdom.ErrEdgeCycle
+	}
+	if err := validateTaskReachability(graph.Nodes, graph.Edges); err != nil {
+		return nil, err
+	}
+	graph.Automation = a
+	return graph, nil
 }
 
 // publish sends a real-time pub/sub notification for an automation-graph
@@ -85,6 +177,9 @@ func (s *Service) ListAutomations(ctx context.Context, projectID uuid.UUID, stat
 
 // GetAutomation returns one automation together with its full node/edge graph.
 func (s *Service) GetAutomation(ctx context.Context, projectID, automationID uuid.UUID) (*automationdom.Graph, error) {
+	if err := s.requireTaskAccess(ctx, projectID, false); err != nil {
+		return nil, err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return nil, err
@@ -126,6 +221,9 @@ func (s *Service) CreateAutomation(ctx context.Context, in automationdom.CreateA
 
 // UpdateAutomation updates an automation's name/description.
 func (s *Service) UpdateAutomation(ctx context.Context, projectID, automationID uuid.UUID, in automationdom.UpdateAutomationInput) (*automationdom.Automation, error) {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return nil, err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return nil, err
@@ -153,6 +251,9 @@ func (s *Service) UpdateAutomation(ctx context.Context, projectID, automationID 
 
 // DeleteAutomation soft-deletes an automation and its graph.
 func (s *Service) DeleteAutomation(ctx context.Context, projectID, automationID uuid.UUID) error {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return err
@@ -172,6 +273,9 @@ func (s *Service) DeleteAutomation(ctx context.Context, projectID, automationID 
 // the graph remains a DAG. Always re-validates and re-confirms active even
 // if already active, so re-invoking it is a harmless idempotent no-op.
 func (s *Service) Activate(ctx context.Context, projectID, automationID uuid.UUID) (*automationdom.Automation, error) {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return nil, err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return nil, err
@@ -232,6 +336,9 @@ func (s *Service) Activate(ctx context.Context, projectID, automationID uuid.UUI
 // Always sets inactive unconditionally, so re-invoking it (or calling it on
 // an already-inactive automation) is a harmless idempotent no-op.
 func (s *Service) Deactivate(ctx context.Context, projectID, automationID uuid.UUID) (*automationdom.Automation, error) {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return nil, err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return nil, err
@@ -252,6 +359,9 @@ func (s *Service) Deactivate(ctx context.Context, projectID, automationID uuid.U
 
 // AddNode adds a new Trigger/Condition/Action node to an editable automation.
 func (s *Service) AddNode(ctx context.Context, projectID, automationID uuid.UUID, in automationdom.AddNodeInput) (*automationdom.Node, error) {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return nil, err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return nil, err
@@ -285,6 +395,9 @@ func (s *Service) AddNode(ctx context.Context, projectID, automationID uuid.UUID
 
 // UpdateNode updates a node's config and/or canvas position.
 func (s *Service) UpdateNode(ctx context.Context, projectID, automationID, nodeID uuid.UUID, in automationdom.UpdateNodeInput) (*automationdom.Node, error) {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return nil, err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return nil, err
@@ -348,6 +461,9 @@ func (s *Service) UpdateNode(ctx context.Context, projectID, automationID, nodeI
 
 // RemoveNode deletes a node and its connected edges from an editable automation.
 func (s *Service) RemoveNode(ctx context.Context, projectID, automationID, nodeID uuid.UUID) error {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return err
@@ -373,6 +489,9 @@ func (s *Service) RemoveNode(ctx context.Context, projectID, automationID, nodeI
 // cycles, duplicates, edges into a Trigger, and edges that would make a
 // downstream node unreachable from a task.
 func (s *Service) AddEdge(ctx context.Context, projectID, automationID uuid.UUID, in automationdom.AddEdgeInput) (*automationdom.Edge, error) {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return nil, err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return nil, err
@@ -442,6 +561,9 @@ func (s *Service) AddEdge(ctx context.Context, projectID, automationID uuid.UUID
 
 // RemoveEdge deletes one edge from an editable automation.
 func (s *Service) RemoveEdge(ctx context.Context, projectID, automationID, edgeID uuid.UUID) error {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return err
+	}
 	a, err := s.findOwnedAutomation(ctx, projectID, automationID)
 	if err != nil {
 		return err
@@ -468,6 +590,9 @@ func (s *Service) RemoveEdge(ctx context.Context, projectID, automationID, edgeI
 
 // ListRuns returns an automation's most recent executions, newest first.
 func (s *Service) ListRuns(ctx context.Context, projectID, automationID uuid.UUID, limit int) ([]*automationdom.Run, error) {
+	if err := s.requireTaskAccess(ctx, projectID, false); err != nil {
+		return nil, err
+	}
 	if _, err := s.findOwnedAutomation(ctx, projectID, automationID); err != nil {
 		return nil, err
 	}
@@ -476,6 +601,9 @@ func (s *Service) ListRuns(ctx context.Context, projectID, automationID uuid.UUI
 
 // ListRunSteps returns every node visited during one run, in execution order.
 func (s *Service) ListRunSteps(ctx context.Context, projectID, automationID, runID uuid.UUID) ([]*automationdom.RunStep, error) {
+	if err := s.requireTaskAccess(ctx, projectID, false); err != nil {
+		return nil, err
+	}
 	if _, err := s.findOwnedAutomation(ctx, projectID, automationID); err != nil {
 		return nil, err
 	}
@@ -490,6 +618,9 @@ func (s *Service) ListRunSteps(ctx context.Context, projectID, automationID, run
 // DependencyMap surfaces every active automation's predecessor_done trigger
 // configs in projectID, for the read-only, auto-generated dependency view.
 func (s *Service) DependencyMap(ctx context.Context, projectID uuid.UUID) ([]automationdom.DependencyMapEntry, error) {
+	if err := s.requireTaskAccess(ctx, projectID, false); err != nil {
+		return nil, err
+	}
 	active := automationdom.StatusActive
 	automations, _, err := s.repo.ListAutomations(ctx, projectID, &active, nil, nil, nil)
 	if err != nil {
@@ -531,6 +662,9 @@ const (
 // and never persisted or retrievable again afterward, same pattern as
 // apikeysvc.Create.
 func (s *Service) GenerateWebhookToken(ctx context.Context, projectID, automationID, nodeID uuid.UUID, actor automationdom.WebhookTokenActor) (*automationdom.WebhookToken, string, error) {
+	if err := s.requireTaskAccess(ctx, projectID, true); err != nil {
+		return nil, "", err
+	}
 	if _, err := s.findOwnedAutomation(ctx, projectID, automationID); err != nil {
 		return nil, "", err
 	}
@@ -595,10 +729,44 @@ func (s *Service) HandleWebhookTrigger(ctx context.Context, nodeID uuid.UUID, ra
 		return err
 	}
 
+	graph, err := s.ValidateExecution(ctx, automation.ProjectID, nodeID)
+	if err != nil {
+		return err
+	}
+
+	// Use the node returned with the freshly validated graph, not the routing lookup.
+	if graph.Automation.ID != automation.ID || tok.AutomationID != automation.ID {
+		return automationdom.ErrNotFound
+	}
+	for _, current := range graph.Nodes {
+		if current.ID == nodeID {
+			node = current
+			break
+		}
+	}
+	if node.Kind != automationdom.KindTrigger || automationdom.TriggerType(node.Type) != automationdom.TriggerAPITrigger {
+		return automationdom.ErrNotFound
+	}
+	if s.taskRepo == nil {
+		return taskdom.ErrTaskForbidden
+	}
+
 	var cfg automationdom.TriggerConfig
 	if err := json.Unmarshal(node.Config, &cfg); err != nil {
 		// Not the caller's fault, so don't leak it as a 4xx.
 		return fmt.Errorf("automation: api_trigger node %s has invalid config: %w", nodeID, err)
+	}
+
+	var target *taskdom.Task
+	if cfg.TargetTaskID != nil {
+		target, err = s.taskRepo.FindTaskByID(ctx, *cfg.TargetTaskID)
+		if err != nil {
+			return err
+		}
+	}
+	checker, _ := s.taskPolicy.(taskdom.AccessChecker)
+	if err := ValidateGraphTaskTargets(ctx, s.taskRepo, checker, automation.ProjectID, graph, target); err != nil {
+		return err
 	}
 
 	// Best-effort — a failure to record usage shouldn't block the trigger.
@@ -679,9 +847,8 @@ func normalizeConfig(raw json.RawMessage) json.RawMessage {
 // validateNodeTypeAndConfig checks that kind/type is a recognized
 // combination and that config unmarshals into the right shape with
 // cross-project references (status IDs, member IDs, watched task IDs) all
-// belonging to projectID. Plugin-contributed node types are validated
-// elsewhere (see the plugin automation bridge) — this only recognizes
-// built-ins.
+// belonging to projectID. Plugin-contributed node types are explicitly denied
+// until their host task access can enforce this boundary.
 //
 // strict controls whether a type's required fields (e.g. add_tag's tag,
 // assign's member_id) must already be present. Nodes are always created with
@@ -699,14 +866,7 @@ func (s *Service) validateNodeTypeAndConfig(ctx context.Context, projectID uuid.
 		return s.validateTriggerConfig(ctx, projectID, automationdom.TriggerType(nodeType), config, strict)
 	case automationdom.KindCondition:
 		if nodeType != automationdom.ConditionNodeType {
-			// Not the built-in N-branch switch — this must be a
-			// plugin-contributed condition node instead (its own node type,
-			// evaluated via the plugin runtime's EvaluateCondition bridge
-			// rather than the built-in leaf-tree DSL). Config is opaque to
-			// this service; the plugin owns its own validation.
-			if s.pluginResolver != nil && s.pluginResolver.IsPluginCondition(nodeType) {
-				return nil
-			}
+			// Plugin host task/db access is unscoped; fail closed.
 			return automationdom.ErrNodeInvalidType
 		}
 		return s.validateConditionConfig(ctx, projectID, config, strict)
@@ -719,18 +879,18 @@ func (s *Service) validateNodeTypeAndConfig(ctx context.Context, projectID uuid.
 
 func (s *Service) validateTriggerConfig(ctx context.Context, projectID uuid.UUID, t automationdom.TriggerType, raw json.RawMessage, strict bool) error {
 	if !automationdom.ValidBuiltinTriggerTypes[t] {
-		// A plugin-contributed trigger type: config is opaque here — the
-		// plugin's declared EventTopic is what the engine actually matches
-		// on, not anything in this config blob.
-		if s.pluginResolver != nil && s.pluginResolver.IsPluginTrigger(string(t)) {
-			return nil
-		}
+		// Plugin host task/db access is unscoped; fail closed.
 		return automationdom.ErrNodeInvalidType
 	}
 	var cfg automationdom.TriggerConfig
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return fmt.Errorf("%w: %v", automationdom.ErrNodeConfigInvalid, err)
+		}
+	}
+	if cfg.SprintID != nil {
+		if err := s.assertSprintInProject(ctx, projectID, *cfg.SprintID); err != nil {
+			return err
 		}
 	}
 	if cfg.StatusID != nil {
@@ -802,6 +962,22 @@ func (s *Service) validateConditionConfig(ctx context.Context, projectID uuid.UU
 			return fmt.Errorf("%w: %v", automationdom.ErrNodeConfigInvalid, err)
 		}
 		if b.Tree != nil {
+			if b.Tree.Field == automationdom.FieldParentTask && b.Tree.Value != nil {
+				value, ok := b.Tree.Value.(string)
+				if !ok {
+					return automationdom.ErrNodeConfigInvalid
+				}
+				if value == "" {
+					return automationdom.ErrNodeConfigInvalid
+				}
+				id, err := uuid.Parse(value)
+				if err != nil {
+					return automationdom.ErrNodeConfigInvalid
+				}
+				if err := s.validateTaskTarget(ctx, projectID, &automationdom.TaskTarget{Kind: automationdom.TaskTargetOther, OtherTaskID: &id}, true); err != nil {
+					return err
+				}
+			}
 			if b.Tree.MatchMode != "" && b.Tree.MatchMode != "any" && b.Tree.MatchMode != "all" {
 				return fmt.Errorf("%w: match_mode must be \"any\" or \"all\"", automationdom.ErrNodeConfigInvalid)
 			}
@@ -847,18 +1023,18 @@ func (s *Service) validateTaskTarget(ctx context.Context, projectID uuid.UUID, t
 
 func (s *Service) validateActionConfig(ctx context.Context, projectID uuid.UUID, t automationdom.ActionType, raw json.RawMessage, strict bool) error {
 	if !automationdom.ValidBuiltinActionTypes[t] {
-		// A plugin-contributed action type: config is opaque to this
-		// service — the plugin validates its own config when RunAction
-		// executes.
-		if s.pluginResolver != nil && s.pluginResolver.IsPluginAction(string(t)) {
-			return nil
-		}
+		// Plugin host task/db access is unscoped; fail closed.
 		return automationdom.ErrNodeInvalidType
 	}
 	var cfg automationdom.ActionConfig
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return fmt.Errorf("%w: %v", automationdom.ErrNodeConfigInvalid, err)
+		}
+	}
+	if cfg.MoveToSprintID != nil {
+		if err := s.assertSprintInProject(ctx, projectID, *cfg.MoveToSprintID); err != nil {
+			return err
 		}
 	}
 	if t == automationdom.ActionCallAPI || t == automationdom.ActionWait || t == automationdom.ActionUpdateSprint || t == automationdom.ActionCompleteSprint {
@@ -947,16 +1123,7 @@ func sprintFieldUpdateHasAnyField(upd *automationdom.SprintFieldUpdate) bool {
 		upd.Status != nil
 }
 
-// validateTaskFieldUpdate validates ActionUpdateTask's config: a
-// referenced status/reporter/assignee/parent-task must exist and belong to
-// projectID, and in strict mode at least one field must actually be set —
-// an update_task node with nothing to update is almost certainly an
-// author mistake (no built-in action before this one could be created
-// config-less and silently do nothing). task_type_id and sprint_id aren't
-// FK-checked here, matching this package's existing precedent (e.g.
-// validateTriggerConfig never checks a trigger's task_type_id either) —
-// an invalid ID just fails later at the task service's own FK layer when
-// the action actually runs.
+// validateTaskFieldUpdate checks all configured references against the actual project.
 func (s *Service) validateTaskFieldUpdate(ctx context.Context, projectID uuid.UUID, upd *automationdom.TaskFieldUpdate, strict bool) error {
 	if upd == nil {
 		if strict {
@@ -966,6 +1133,26 @@ func (s *Service) validateTaskFieldUpdate(ctx context.Context, projectID uuid.UU
 	}
 	if strict && !taskFieldUpdateHasAnyField(upd) {
 		return fmt.Errorf("%w: update_task requires at least one field to update", automationdom.ErrNodeConfigInvalid)
+	}
+	if upd.SprintID != nil {
+		if err := s.assertSprintInProject(ctx, projectID, *upd.SprintID); err != nil {
+			return err
+		}
+	}
+	if upd.TaskTypeID != nil {
+		repo, ok := s.taskRepo.(interface {
+			FindTaskTypeByID(context.Context, uuid.UUID) (*taskdom.TaskType, error)
+		})
+		if !ok {
+			return automationdom.ErrNodeCrossProject
+		}
+		typ, err := repo.FindTaskTypeByID(ctx, *upd.TaskTypeID)
+		if err != nil {
+			return err
+		}
+		if typ.ProjectID != projectID {
+			return automationdom.ErrNodeCrossProject
+		}
 	}
 	if upd.StatusID != nil {
 		if err := s.assertStatusInProject(ctx, projectID, *upd.StatusID); err != nil {

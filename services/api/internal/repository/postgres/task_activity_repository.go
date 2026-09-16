@@ -158,7 +158,21 @@ func (r *TaskActivityRepository) ListActivitiesVisible(ctx context.Context, task
 	visible := strings.Join(b.whereClauses, " AND ")
 	q := taskActivityJoinSQL + `
  WHERE ta.task_id=$1 AND ta.deleted_at IS NULL
- AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id=ta.task_id AND tasks.deleted_at IS NULL AND ` + visible + `)
+ AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id=ta.task_id AND tasks.deleted_at IS NULL AND ` + visible + `)` + taskActivityReferencesVisible(visible) + ` ORDER BY ta.created_at ASC`
+	var records []taskActivityRecord
+	if err := r.db.SelectContext(ctx, &records, q, b.args...); err != nil {
+		return nil, err
+	}
+	out := make([]*taskdom.Activity, 0, len(records))
+	for _, rec := range records {
+		out = append(out, activityFromRecord(rec))
+	}
+	return out, nil
+}
+
+// Both activity feeds exclude automatic payloads referencing unreadable tasks.
+func taskActivityReferencesVisible(visible string) string {
+	return `
  AND (ta.activity_type <> 'task.link.added' OR (jsonb_typeof(ta.content->'target_task_id')='string' AND ta.content->>'target_task_id' <> ''))
  AND (ta.activity_type <> 'task.updated' OR jsonb_typeof(ta.content->'changes')='array')
  AND NOT EXISTS (
@@ -174,14 +188,5 @@ func (r *TaskActivityRepository) ListActivitiesVisible(ctx context.Context, task
   WHERE related.id IS NOT NULL AND related.id <> '' AND NOT EXISTS (
    SELECT 1 FROM tasks WHERE tasks.id::text=related.id AND tasks.deleted_at IS NULL AND ` + visible + `
   )
- ) ORDER BY ta.created_at ASC`
-	var records []taskActivityRecord
-	if err := r.db.SelectContext(ctx, &records, q, b.args...); err != nil {
-		return nil, err
-	}
-	out := make([]*taskdom.Activity, 0, len(records))
-	for _, rec := range records {
-		out = append(out, activityFromRecord(rec))
-	}
-	return out, nil
+ )`
 }

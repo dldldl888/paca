@@ -31,7 +31,7 @@ import (
 func startAutomationConsumer(t *testing.T, env *e2eEnv) *worker.AutomationConsumer {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	ac := worker.NewAutomationConsumer(env.redisClient, env.automationRepo, env.taskRepo, env.taskSvc, env.activitySvc, nil, log).
+	ac := worker.NewAutomationConsumer(env.redisClient, env.automationRepo, env.taskRepo, env.taskSvc, env.activitySvc, nil, log).WithExecutionValidator(env.automationSvc).
 		// The production default is an SSRF-safe client that rejects private
 		// IPs — call_api e2e tests need to reach a local httptest.Server
 		// (127.0.0.1), which that client would otherwise reject. Safe here

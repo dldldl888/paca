@@ -332,32 +332,6 @@ func sanitizeFileName(name string) string {
 	return name
 }
 
-// --- Task ownership checker --------------------------------------------------
-
-type taskOwnerChecker struct {
-	repo taskdom.TaskRepository
-}
-
-// NewTaskOwnerChecker returns a attachmentdom.TaskOwnerChecker that validates
-// task→project ownership via the task repository.
-func NewTaskOwnerChecker(repo taskdom.TaskRepository) attachmentdom.TaskOwnerChecker {
-	return &taskOwnerChecker{repo: repo}
-}
-
-func (c *taskOwnerChecker) TaskBelongsToProject(ctx context.Context, projectID, taskID uuid.UUID) error {
-	t, err := c.repo.FindTaskByID(ctx, taskID)
-	if err != nil {
-		if errors.Is(err, taskdom.ErrTaskNotFound) {
-			return attachmentdom.ErrTaskNotInProject
-		}
-		return err
-	}
-	if t.ProjectID != projectID {
-		return attachmentdom.ErrTaskNotInProject
-	}
-	return nil
-}
-
 // --- Doc ownership checker --------------------------------------------------
 
 type docOwnerChecker struct {

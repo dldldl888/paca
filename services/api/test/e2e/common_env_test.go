@@ -228,9 +228,9 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	activityRepo := pgRepo.NewTaskActivityRepository(db)
 	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, projectRepo, publisher).WithTaskAccessChecker(taskService)
 	automationRepo := pgRepo.NewAutomationRepository(db)
-	automationService := automationsvc.New(automationRepo, taskRepo, projectRepo, publisher)
+	automationService := automationsvc.New(automationRepo, taskRepo, projectRepo, publisher).WithTaskAccess(taskService).WithSprintLookup(sprintRepo)
 	pluginRepoForAgent := pgRepo.NewPluginRepository(db)
-	agentService := agentsvc.New(agentRepo, noopMemberCacheInvalidator{}, publisher, pluginRepoForAgent)
+	agentService := agentsvc.New(agentRepo, noopMemberCacheInvalidator{}, publisher, pluginRepoForAgent).WithTaskAccess(taskService, taskService)
 	var attachmentService *attachmentsvc.Service
 	if sharedMinIOEndpoint != "" {
 		minIOEndpoint := sharedMinIOEndpoint

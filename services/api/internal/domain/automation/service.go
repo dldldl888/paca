@@ -105,17 +105,6 @@ type AddEdgeInput struct {
 	TargetNodeID uuid.UUID
 }
 
-// PluginNodeResolver checks whether a node type string is one a loaded
-// plugin has registered, for each kind — consulted by the service's node
-// validation as a fallback after the built-in type lists, and by nothing
-// else in this package (the actual dispatch/execution call happens in the
-// worker, which talks to the plugin runtime directly).
-type PluginNodeResolver interface {
-	IsPluginTrigger(nodeType string) bool
-	IsPluginCondition(nodeType string) bool
-	IsPluginAction(nodeType string) bool
-}
-
 // DependencyMapEntry is one predecessor-done relationship surfaced by
 // DependencyMap: automation/node identify where the wait lives, TargetTaskID
 // is the downstream task whose automation is waiting, WatchedTaskIDs are the

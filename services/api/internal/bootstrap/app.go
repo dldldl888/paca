@@ -163,7 +163,7 @@ func New(cfg *config.Config) (*App, error) {
 	viewService := sprintsvc.NewCachedViewService(sprintsvc.NewViewService(viewRepo, sprintRepo, taskRepo, publisher).WithTaskAccessChecker(taskService), cacheStore, cfg.Cache.SprintTTL, log)
 	notificationService := notificationsvc.New(notificationRepo, projectRepo, publisher).
 		WithEventPublishing(userRepo, cfg.Server.PublicURL)
-	agentService := agentsvc.New(agentRepo, projectService, publisher, pluginRepo)
+	agentService := agentsvc.New(agentRepo, projectService, publisher, pluginRepo).WithTaskAccess(taskService, taskService)
 	// environmentService calls agent-runner via the same AI_AGENT_URL/
 	// AI_AGENT_INTERNAL_KEY pair AgentHandler already uses for its fast
 	// calls (see environmentsvc.New's doc comment) — not a new config
@@ -216,8 +216,8 @@ func New(cfg *config.Config) (*App, error) {
 	docActivityService := docsvc.NewActivityService(docRepo, docRepo, projectRepo, publisher).
 		WithNotificationService(notificationService)
 	docActivityConsumer := worker.NewDocActivityConsumer(redisClient, docRepo, projectRepo, log)
-	automationService := automationsvc.New(automationRepo, taskRepo, projectRepo, publisher)
-	automationConsumer := worker.NewAutomationConsumer(redisClient, automationRepo, taskRepo, taskService, activityService, publisher, log)
+	automationService := automationsvc.New(automationRepo, taskRepo, projectRepo, publisher).WithTaskAccess(taskService).WithSprintLookup(sprintRepo)
+	automationConsumer := worker.NewAutomationConsumer(redisClient, automationRepo, taskRepo, taskService, activityService, publisher, log).WithExecutionValidator(automationService)
 	dueDateScheduler := worker.NewDueDateScheduler(redisClient, automationConsumer, log)
 	cronScheduler := worker.NewCronScheduler(redisClient, automationConsumer, log)
 	waitScheduler := worker.NewWaitScheduler(redisClient, automationConsumer, log)
@@ -367,14 +367,6 @@ func New(cfg *config.Config) (*App, error) {
 		log.Error("plugin: some plugins failed to load", "error", err)
 	}
 
-	// Wire the plugin runtime into the automation engine so
-	// plugin-contributed trigger/condition/action node types validate and
-	// execute: automationService.WithPluginNodeResolver gates node
-	// creation/update (rejecting unrecognized types), automationConsumer.
-	// WithPluginRuntime dispatches plugin condition/action nodes mid-walk via
-	// the same EvaluateCondition/RunAction WASM bridge HandleRequest uses.
-	automationService.WithPluginNodeResolver(pluginRuntime)
-	automationConsumer.WithPluginRuntime(pluginRuntime)
 	// trigger_ai_agent starts an agent conversation without ever touching the
 	// task's assignee: task-bound, it dispatches straight to
 	// agentService.TriggerTaskAssigned; task-less (a cron/api_trigger/
@@ -410,8 +402,7 @@ func New(cfg *config.Config) (*App, error) {
 		WithActivityRecorder(activityService).
 		WithMemberRepo(projectRepo).
 		WithGlobalPermissionReader(permissionStore).
-		WithAvatarService(attachmentService).
-		WithTaskChecker(attachmentsvc.NewTaskOwnerChecker(taskRepo))
+		WithAvatarService(attachmentService)
 	environmentHandler := handler.NewEnvironmentHandler(environmentService, cfg.AIAgentInternalKey).
 		WithDeploymentConfig(cfg.SSHBastionHost, cfg.PortForwardHost)
 	annotationHandler := handler.NewAnnotationHandler(annotationService).

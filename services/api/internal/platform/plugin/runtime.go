@@ -605,7 +605,7 @@ func (r *Runtime) AutomationNodeTypes() (triggers, conditions, actions []plugind
 }
 
 // IsPluginTrigger reports whether nodeType is a plugin-registered Trigger
-// type. Satisfies automationdom.PluginNodeResolver.
+// type.
 func (r *Runtime) IsPluginTrigger(nodeType string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -614,7 +614,7 @@ func (r *Runtime) IsPluginTrigger(nodeType string) bool {
 }
 
 // IsPluginCondition reports whether nodeType is a plugin-registered
-// Condition type. Satisfies automationdom.PluginNodeResolver.
+// Condition type.
 func (r *Runtime) IsPluginCondition(nodeType string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -623,7 +623,7 @@ func (r *Runtime) IsPluginCondition(nodeType string) bool {
 }
 
 // IsPluginAction reports whether nodeType is a plugin-registered Action
-// type. Satisfies automationdom.PluginNodeResolver.
+// type.
 func (r *Runtime) IsPluginAction(nodeType string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

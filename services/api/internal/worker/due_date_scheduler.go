@@ -138,13 +138,17 @@ func (s *DueDateScheduler) tick(ctx context.Context) {
 		// overlap right at a leader-lock handoff. Acceptable trade-off for a
 		// scheduled trigger, unlike the stream-based triggers' true
 		// at-least-once retry semantics.
-		if err := s.consumer.repo.RecordDueDateFire(ctx, automation.ID, cand.Node.ID, cand.TaskID); err != nil {
-			s.log.Error("due-date scheduler: record fire", "node_id", cand.Node.ID, "task_id", cand.TaskID, "err", err)
-			continue
-		}
+
 		task, err := s.consumer.taskRepo.FindTaskByID(ctx, cand.TaskID)
 		if err != nil {
 			s.log.Error("due-date scheduler: find task", "task_id", cand.TaskID, "err", err)
+			continue
+		}
+		if _, _, _, _, err := s.consumer.executionStart(ctx, automation.ProjectID, cand.Node, task, nil); err != nil {
+			continue
+		}
+		if err := s.consumer.repo.RecordDueDateFire(ctx, automation.ID, cand.Node.ID, cand.TaskID); err != nil {
+			s.log.Error("due-date scheduler: record fire", "node_id", cand.Node.ID, "task_id", cand.TaskID, "err", err)
 			continue
 		}
 		if err := s.consumer.executeRun(ctx, automation.ProjectID, cand.Node, task); err != nil {

@@ -127,6 +127,12 @@ func (s *CronScheduler) tick(ctx context.Context) {
 	}
 	now := time.Now().UTC()
 	for _, cand := range candidates {
+		current, err := s.consumer.repo.FindNodeByID(ctx, cand.Node.ID)
+		if err != nil || current.Kind != automationdom.KindTrigger || automationdom.TriggerType(current.Type) != automationdom.TriggerCron {
+			continue
+		}
+		cand.Node = current
+
 		var cfg automationdom.TriggerConfig
 		if err := json.Unmarshal(cand.Node.Config, &cfg); err != nil || cfg.CronExpression == "" {
 			continue // misconfigured node — same defensive skip as predecessor_done
@@ -168,10 +174,7 @@ func (s *CronScheduler) tick(ctx context.Context) {
 		// and anchoring to grid time rather than processing time keeps a
 		// fixed-interval cron (e.g. "every hour on the hour") from
 		// drifting later with each tick's own scheduling jitter.
-		if err := s.consumer.repo.RecordCronFire(ctx, automation.ID, cand.Node.ID, next); err != nil {
-			s.log.Error("cron scheduler: record fire", "node_id", cand.Node.ID, "err", err)
-			continue
-		}
+
 		// TargetTaskID is optional — nil means this node may only reach
 		// call_api actions downstream (validateTaskReachability enforces
 		// that at edge-creation/node-update/activate time).
@@ -182,6 +185,13 @@ func (s *CronScheduler) tick(ctx context.Context) {
 				s.log.Error("cron scheduler: find target task", "node_id", cand.Node.ID, "err", err)
 				continue
 			}
+		}
+		if _, _, _, _, err := s.consumer.executionStart(ctx, automation.ProjectID, cand.Node, targetTask, nil); err != nil {
+			continue
+		}
+		if err := s.consumer.repo.RecordCronFire(ctx, automation.ID, cand.Node.ID, next); err != nil {
+			s.log.Error("cron scheduler: record fire", "node_id", cand.Node.ID, "err", err)
+			continue
 		}
 		if err := s.consumer.executeRun(ctx, automation.ProjectID, cand.Node, targetTask); err != nil {
 			s.log.Error("cron scheduler: run failed", "node_id", cand.Node.ID, "err", err)
