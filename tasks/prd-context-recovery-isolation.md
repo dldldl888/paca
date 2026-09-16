@@ -1,6 +1,6 @@
 # PRD：Paca + Hermes 上下文恢复与权限隔离
 
-日期：2026-09-15。状态：修复规格已编制，用户已选择在新独立任务中使用 Superpowers 执行，并用 Ponytail 监测与消融；业务修复尚未实现或通过验收。
+日期：2026-09-15；本轮验收：2026-09-16。状态：批准范围已实现、独立复审与专用本地验收通过。15 stories / 31 scenarios已按实际证据标绿；保留已知边界。最终结果见 docs/superpowers/reports/2026-09-16-context-recovery-isolation.md。
 
 本阶段承接用户“请先修复上下文恢复与权限隔离”的决定，仅处理已确认的三个缺口及其同类入口。产品基线见[企业工作台总 PRD](/Users/xxp/Documents/Codex/2026-09-10/dui/tasks/prd-paca-hermes-enterprise-workbench.md)，实测依据见[验证报告](/Users/xxp/Documents/ChatGPT/新一版AI本位/outputs/paca-validation-20260915/验证报告.md)。本文件细化本轮实现边界；总 PRD 的其他功能仍属于后续工作。
 

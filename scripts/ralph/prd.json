@@ -37,8 +37,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task2A reviewed creator migration/current policy; migration named PASS + final API race; basic15 and final browser accepted. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-002",
@@ -54,15 +54,15 @@
           "when": "按 ID 和编号读取任务",
           "then": "A 与授权经理可读，B 与跨项目经理无任务数据",
           "sut": "GetTask",
-          "test": "services/api/internal/service/task/task_service_test.go::TestUS002ReadMatrix"
+          "test": "services/api/test/e2e/task_access_test.go::TestUS002To004TaskIsolation"
         },
         {
           "id": "US-002-S2",
           "given": "A 为可靠创建者，C 仅为 reporter",
           "when": "分别读取，再移除 A 项目资格",
           "then": "C 不可读，移除后的 A 也不可读",
-          "sut": "GetTaskByNumber",
-          "test": "services/api/internal/service/task/task_service_test.go::TestUS002CreatorMembership"
+          "sut": "GetTask",
+          "test": "services/api/test/e2e/task_access_test.go::TestUS002To004TaskIsolation"
         }
       ],
       "acceptanceCriteria": [
@@ -72,8 +72,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task2A reviewed object/number/current actor policy; final real API E2E and A/B basic15/browser refused foreign task. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-003",
@@ -88,8 +88,8 @@
           "given": "A/B 有不同任务，B 有多页可读结果",
           "when": "B 按 A 标题、assignee、视图和游标查询",
           "then": "A 任务不出现，B 可见分页完整无重复",
-          "sut": "ListTasks",
-          "test": "services/api/internal/repository/postgres/task_repository_test.go::TestUS003VisibleQueries"
+          "sut": "ListAssignedTasksInProjects",
+          "test": "services/api/test/e2e/task_access_test.go::TestUS002To004TaskIsolation"
         },
         {
           "id": "US-003-S2",
@@ -97,7 +97,7 @@
           "when": "B 查询计数、求和和首页数量",
           "then": "只计算 B 获准数据，经理取得授权范围统计",
           "sut": "CountTasks",
-          "test": "services/api/internal/service/task/task_service_test.go::TestUS003ScopedAggregates"
+          "test": "services/api/test/e2e/task_access_test.go::TestUS002To004TaskIsolation"
         }
       ],
       "acceptanceCriteria": [
@@ -107,8 +107,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task2A/Task2B1 reviewed SQL list/count/sum/view/sprint coverage; existing broader evidence retained plus final task isolation E2E/basic15. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-004",
@@ -124,7 +124,7 @@
           "when": "更新状态后混入受限字段再次提交",
           "then": "正常状态成功，混合请求全部拒绝且无副作用",
           "sut": "UpdateTask",
-          "test": "services/api/internal/service/task/task_service_test.go::TestUS004FieldAuthorization"
+          "test": "services/api/test/e2e/task_access_test.go::TestUS002To004TaskIsolation"
         },
         {
           "id": "US-004-S2",
@@ -132,7 +132,7 @@
           "when": "分别创建、改派和删除",
           "then": "A 被拒绝，M 在授权项目成功，创建者来自认证身份",
           "sut": "CreateTask",
-          "test": "services/api/internal/service/task/task_service_test.go::TestUS004TaskManagement"
+          "test": "services/api/test/e2e/task_access_test.go::TestUS002To004TaskIsolation"
         }
       ],
       "acceptanceCriteria": [
@@ -142,8 +142,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task2A/Task2B1 and final writer-lock review; final management revocation E2E and basic15 denied mixed management writes. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-005",
@@ -178,8 +178,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task2B1/Task2B2/Task2B3 reviewed related/annotation/activity/automation coverage; original real PG named passes plus final API E2E. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-006",
@@ -214,8 +214,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task2B2 real PG/MinIO named pass retained; final attachments8 passed. Existing signed-URL TTL remains documented. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-007",
@@ -252,8 +252,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task5 and scoped OPEN-buffer independent reviews approved; TS/Bun5+real network22 assertions and dedicated task realtime2 passed. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-008",
@@ -288,8 +288,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task3 reviewed persisted owner/context authorization; final API E2E/private8 passed; legacy readable history refuses continuation unchanged. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-009",
@@ -323,8 +323,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task3/Task4 reviewed trusted dispatch/private keys; final runner E2E/native race and same-task A/B real native tools passed. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-010",
@@ -358,8 +358,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Reviewed final9 real macOS sandbox/native tests retained; final live19 same-task history/memory/file/foreign-load controls passed; tool markers separate from recall markers. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-011",
@@ -392,7 +392,7 @@
       ],
       "priority": 11,
       "passes": true,
-      "notes": "Implemented dd718e1; native Go tests TestUS011LoadProtocol/TestUS011LoadFailures and full bridge regression passed. Independent spec/correctness and Ponytail review passed. Native protocol capability/schema verified; whole recovery acceptance remains US013/015."
+      "notes": "ACP load protocol/capability/failures reviewed; exact named tests pass in final native race. Integrated real recovery accepted under US013. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-012",
@@ -427,8 +427,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Reviewed atomic binding/store fault/ownership checks; final native race and original Linux fsync EIO evidence; real same-binding history recovery passed. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-013",
@@ -471,8 +471,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task4 reviewed recovery guards/provenance/nonempty history/fail-closed; native race and actual bridge restart/child exit/idle recovery with unchanged history prefix passed. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-014",
@@ -499,7 +499,7 @@
           "when": "撤权后有新 chunk 和延迟事件到达",
           "then": "停止运行，撤权生效后不再向 A 投递受限内容，其他人正常",
           "sut": "routeEvent",
-          "test": "services/realtime/src/subscriber.test.ts::US014Revocation"
+          "test": "services/realtime/src/subscriber.test.ts::US007RecipientRouting"
         }
       ],
       "acceptanceCriteria": [
@@ -509,8 +509,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Task5+scoped final review approved; queue/stream/reconnect real rerun3 passed, current owner receives original event and revoked owner0; Goose native model not run, source/protocol evidence only. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     },
     {
       "id": "US-015",
@@ -559,8 +559,8 @@
         "Typecheck passes（Go build/test；TypeScript check；Python compile 与实际检查，按受影响模块执行）。"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "31 scenarios/28 unique bindings audited with named actual PASS records; unchanged executions reused per user instruction. Effective basic15/live19/private8/attachments8 all pass; browser, source version, backups, rollback and ablation archived. Devtools mouse-send limitation retained. Acceptance: docs/superpowers/reports/2026-09-16-context-recovery-isolation.md."
     }
   ]
 }
