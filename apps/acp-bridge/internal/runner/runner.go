@@ -15,7 +15,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -57,6 +56,14 @@ type conversationState struct {
 	acpProvider string
 	command     []string
 
+	updateMu       sync.Mutex // serializes callback admission with turn/setup boundaries
+	private        *privateIdentity
+	hasPriorTurns  bool
+	generation     uint64
+	loading        bool
+	loadedHistory  bool
+	updatesEnabled bool
+
 	mu          sync.Mutex
 	turnRunning bool
 	turnCancel  context.CancelFunc
@@ -71,7 +78,7 @@ type conversationState struct {
 	// than one Paca conversation, so the conversation an event belongs to
 	// changes turn-to-turn and can no longer be captured once in the spawn
 	// closure. runTurn stamps these under mu before doing any work; the ACP
-	// stdout goroutine's onUpdate closure reads them (via currentIDs) so each
+	// stdout goroutine's dispatchUpdate callback reads them so each
 	// event is attributed to the turn actually in flight. Guarded by mu.
 	currentConversationID string
 	currentProjectID      string
@@ -136,6 +143,10 @@ const (
 // reclaims idle ones. The zero value is valid: Scope defaults to ScopeTask
 // and IdleTimeout to 0 (no eviction).
 type Config struct {
+	AgentID       string
+	InstanceID    string
+	PrivateHermes *PrivateHermesConfig
+	SetupTimeout  time.Duration
 	// Scope selects the session-keying strategy (see the Scope* constants).
 	// An unknown or empty value is normalized to ScopeTask.
 	Scope string
@@ -160,6 +171,9 @@ type Runner struct {
 	log         *slog.Logger
 	scope       string
 	idleTimeout time.Duration
+	cfg         Config
+	closed      bool
+	done        chan struct{}
 
 	mu sync.Mutex
 	// conversations is keyed by session key (see sessionKeyFor), NOT by
@@ -186,6 +200,8 @@ func New(workspace string, cfg Config, log *slog.Logger) func(bridge.SendFunc) b
 			log:           log,
 			scope:         cfg.scope(),
 			idleTimeout:   cfg.IdleTimeout,
+			cfg:           cfg,
+			done:          make(chan struct{}),
 			conversations: make(map[string]*conversationState),
 			convIndex:     make(map[string]string),
 		}
@@ -202,6 +218,13 @@ func New(workspace string, cfg Config, log *slog.Logger) func(bridge.SendFunc) b
 // yet leaves ScopeTask degrading to exactly ScopeConversation, with no error.
 func (r *Runner) sessionKeyFor(msg map[string]any) string {
 	conversationID, _ := msg["conversation_id"].(string)
+	if r.cfg.PrivateHermes != nil {
+		id, _, err := r.privateIdentityFor(msg)
+		if err != nil {
+			return ""
+		}
+		return "private:" + id.key()
+	}
 	switch r.scope {
 	case ScopeAgent:
 		return "agent"
@@ -230,12 +253,31 @@ func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
 		return
 	}
 
+	if r.cfg.PrivateHermes == nil && msg["audience"] == "owner_private" {
+		r.reportStatus(&conversationState{}, conversationID, projectID, "failed", privateRecoveryError)
+		return
+	}
+	var identity *privateIdentity
+	var prior bool
+	if r.cfg.PrivateHermes != nil {
+		id, hasPrior, err := r.privateIdentityFor(msg)
+		if err != nil {
+			r.log.Warn("runner: rejected private identity", "error", err)
+			r.reportStatus(&conversationState{}, conversationID, projectID, "failed", privateRecoveryError)
+			return
+		}
+		identity, prior = &id, hasPrior
+	}
 	key := r.sessionKeyFor(msg)
 
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return
+	}
 	state, exists := r.conversations[key]
 	if !exists {
-		state = &conversationState{chunks: newChunkBuffer()}
+		state = &conversationState{chunks: newChunkBuffer(), private: identity}
 		r.conversations[key] = state
 	}
 	// Index this conversation to its session so Interrupt (called by
@@ -263,7 +305,7 @@ func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
 		return
 	}
 
-	if state.client == nil && state.command == nil {
+	if state.private == nil && state.client == nil && state.command == nil {
 		acpProvider, _ := msg["acp_provider"].(string)
 		command, err := provider.ResolveCommand(acpProvider, stringSlice(msg["acp_command"]))
 		if err != nil {
@@ -284,6 +326,7 @@ func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
 		state.command = command
 	}
 
+	state.hasPriorTurns = state.hasPriorTurns || prior
 	state.turnRunning = true
 	state.currentConversationID = conversationID
 	state.currentProjectID = projectID
@@ -326,7 +369,7 @@ func (r *Runner) Interrupt(conversationID string) {
 		return
 	}
 
-	if client == nil {
+	if client == nil || sessionID == "" {
 		// Still spawning/initializing — nothing at the ACP level to
 		// cancel yet; aborting the turn's own context is enough to unwind
 		// the in-flight spawn/initialize/session/new sequence promptly.
@@ -364,9 +407,14 @@ func (r *Runner) Interrupt(conversationID string) {
 func (r *Runner) runTurn(ctx context.Context, state *conversationState, conversationID, projectID, message string) {
 	defer r.finishTurn(state)
 
+	state.updateMu.Lock()
 	state.mu.Lock()
 	state.turnCostUSD = nil
+	state.updatesEnabled = false
+	state.chunks.take("agent_message_chunk")
+	state.chunks.take("agent_thought_chunk")
 	state.mu.Unlock()
+	state.updateMu.Unlock()
 
 	client, sessionID, err := r.ensureSession(ctx, state, conversationID, projectID)
 	if err != nil {
@@ -379,13 +427,26 @@ func (r *Runner) runTurn(ctx context.Context, state *conversationState, conversa
 			return
 		}
 		r.log.Error("runner: failed to start ACP session", "conversation_id", conversationID, "error", err)
-		r.reportStatus(state, conversationID, projectID, "failed", err.Error())
+		r.reportStatus(state, conversationID, projectID, "failed", r.turnError(state, err))
 		return
 	}
 
+	if ctx.Err() != nil {
+		return
+	}
 	r.emitUserMessage(state, conversationID, projectID, message)
 
+	state.updateMu.Lock()
+	state.mu.Lock()
+	state.updatesEnabled = true
+	state.mu.Unlock()
+	state.updateMu.Unlock()
 	stopReason, usage, err := client.Prompt(ctx, sessionID, message)
+	state.updateMu.Lock()
+	state.mu.Lock()
+	state.updatesEnabled = false
+	state.mu.Unlock()
+	state.updateMu.Unlock()
 	// Whatever's still buffered when the turn ends — successfully,
 	// interrupted, or failed — is genuine partial output, not scratch
 	// state to discard.
@@ -400,7 +461,7 @@ func (r *Runner) runTurn(ctx context.Context, state *conversationState, conversa
 			return
 		}
 		r.log.Error("runner: conversation turn failed", "conversation_id", conversationID, "error", err)
-		r.reportStatus(state, conversationID, projectID, "failed", err.Error())
+		r.reportStatus(state, conversationID, projectID, "failed", r.turnError(state, err))
 		return
 	}
 
@@ -429,50 +490,133 @@ func (r *Runner) ensureSession(
 	client := state.client
 	sessionID := state.sessionID
 	state.mu.Unlock()
-	if client != nil {
+	if client != nil && client.Alive() {
+		if state.private != nil {
+			cwd := r.privateCWD(*state.private)
+			binding, err := loadSessionBinding(r.cfg.PrivateHermes.Root, *state.private, cwd)
+			if err != nil || binding.SessionID != sessionID {
+				if err == nil {
+					err = errors.New("live private session binding mismatch")
+				}
+				state.mu.Lock()
+				state.client = nil
+				state.sessionID = ""
+				state.generation++
+				state.mu.Unlock()
+				_ = client.Close()
+				return nil, "", err
+			}
+		}
 		return client, sessionID, nil
 	}
-
-	// The onUpdate closure must NOT capture conversationID/projectID: this
-	// subprocess outlives the turn that spawned it and, under task keying,
-	// serves later turns of other conversations. Read the conversation in
-	// flight from state at each callback instead, so every event is
-	// attributed to the right Paca conversation thread.
-	client, err := acpclient.Spawn(state.command, r.workspace, func(u acpclient.Update) {
-		cid, pid := state.currentIDs()
-		r.handleUpdate(state, cid, pid, u)
-	}, r.log)
-	if err != nil {
-		return nil, "", fmt.Errorf("spawning %v: %w", state.command, err)
-	}
-
-	if err := client.Initialize(ctx); err != nil {
+	if client != nil {
 		_ = client.Close()
-		return nil, "", err
 	}
+	ctx, cancel := context.WithTimeout(ctx, r.setupTimeout())
+	defer cancel()
+	state.updateMu.Lock()
+	state.mu.Lock()
+	state.client = nil
+	state.sessionID = ""
+	state.generation++
+	generation := state.generation
+	state.loading = true
+	state.loadedHistory = false
+	state.mu.Unlock()
+	state.updateMu.Unlock()
 
-	sessionID, modes, err := client.NewSession(ctx, r.workspace)
-	if err != nil {
-		_ = client.Close()
-		return nil, "", err
-	}
-
-	if mode := provider.PermissionMode(state.acpProvider); mode != "" && modes.Offers(mode) {
-		if err := client.SetMode(ctx, sessionID, mode); err != nil {
-			r.log.Warn("runner: failed to set permission-bypass session mode",
-				"conversation_id", conversationID, "mode", mode, "error", err)
+	cwd := r.workspace
+	var binding *sessionBinding
+	var err error
+	if state.private != nil {
+		cwd = r.privateCWD(*state.private)
+		binding, err = r.preparePrivate(*state.private, state.hasPriorTurns)
+		if err != nil {
+			return nil, "", err
+		}
+		if binding != nil {
+			state.mu.Lock()
+			state.sessionID = binding.SessionID
+			state.mu.Unlock()
 		}
 	}
-
+	onUpdate := func(u acpclient.Update) { r.dispatchUpdate(state, generation, u) }
+	if state.private != nil {
+		command, env := r.cfg.PrivateHermes.command(state.private.key())
+		client, err = acpclient.SpawnWithEnv(command, cwd, env, onUpdate, r.log)
+	} else {
+		client, err = acpclient.Spawn(state.command, cwd, onUpdate, r.log)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	ready := false
+	defer func() {
+		if !ready {
+			state.updateMu.Lock()
+			state.mu.Lock()
+			state.generation++
+			state.loading = false
+			state.sessionID = ""
+			state.mu.Unlock()
+			state.updateMu.Unlock()
+			_ = client.Close()
+		}
+	}()
+	if err := client.Initialize(ctx); err != nil {
+		return nil, "", err
+	}
+	var modes *acpclient.SessionModeState
+	if binding != nil {
+		sessionID = binding.SessionID
+		modes, err = client.LoadHermesSession(ctx, sessionID, cwd)
+		state.mu.Lock()
+		history := state.loadedHistory
+		state.mu.Unlock()
+		if err == nil && !history {
+			err = errors.New("native private session has no usable history")
+		}
+	} else {
+		sessionID, modes, err = client.NewSession(ctx, cwd)
+		if err == nil && state.private != nil {
+			err = saveSessionBinding(r.cfg.PrivateHermes.Root, *state.private, cwd, sessionID)
+		}
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if mode := provider.PermissionMode(state.acpProvider); mode != "" && modes.Offers(mode) {
+		if err := client.SetMode(ctx, sessionID, mode); err != nil {
+			r.log.Warn("runner: failed to set permission-bypass session mode", "conversation_id", conversationID, "mode", mode, "error", err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	state.updateMu.Lock()
 	state.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		state.mu.Unlock()
+		state.updateMu.Unlock()
+		return nil, "", err
+	}
 	state.client = client
 	state.sessionID = sessionID
+	state.loading = false
+	if state.private != nil {
+		state.hasPriorTurns = true
+	}
 	state.mu.Unlock()
+	state.updateMu.Unlock()
+	ready = true
 	return client, sessionID, nil
 }
 
 func (r *Runner) finishTurn(state *conversationState) {
+	state.updateMu.Lock()
+	defer state.updateMu.Unlock()
 	state.mu.Lock()
+	state.updatesEnabled = false
 	state.turnRunning = false
 	state.turnCancel = nil
 	state.lastActivity = time.Now()
@@ -484,22 +628,13 @@ func (r *Runner) finishTurn(state *conversationState) {
 	}
 }
 
-// currentIDs returns the conversation/project the session's turn is serving
-// right now, read under mu — see conversationState.currentConversationID.
-func (s *conversationState) currentIDs() (string, string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.currentConversationID, s.currentProjectID
-}
-
 // sweepIdle periodically reclaims sessions with no turn for longer than
 // r.idleTimeout, closing the ACP subprocess and forgetting the session (and
 // every convIndex entry pointing at it). Upstream never evicts, which is why
 // abandoned sessions pile up as long-lived CC processes; per-task keying
 // reduces the count but doesn't bound it, so the fork closes the leak. A
-// revisited task simply spawns a fresh session — durable per-task memory
-// across an eviction is a later concern (Paca's persistence_dir + ACP
-// session/load), deliberately out of scope here.
+// revisited shared task spawns a fresh session. Private conversations restore
+// their durable binding and native history on the next turn.
 func (r *Runner) sweepIdle() {
 	interval := r.idleTimeout / 2
 	if interval < time.Minute {
@@ -507,8 +642,13 @@ func (r *Runner) sweepIdle() {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		r.evictIdle(time.Now())
+	for {
+		select {
+		case <-r.done:
+			return
+		case <-ticker.C:
+			r.evictIdle(time.Now())
+		}
 	}
 }
 

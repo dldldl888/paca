@@ -305,7 +305,7 @@
           "when": "映射运行键",
           "then": "两者运行和原生会话独立，输出归各自 conversation",
           "sut": "sessionKeyFor",
-          "test": "apps/acp-bridge/internal/runner/session_scope_test.go::TestUS009PrivateKeys"
+          "test": "apps/acp-bridge/internal/runner/private_runtime_test.go::TestPrivateKeysIgnoreSharedScope"
         },
         {
           "id": "US-009-S2",
@@ -444,24 +444,24 @@
           "given": "原会话记住随机标记",
           "when": "重建 Runner/子进程，以及 idle eviction 后续聊",
           "then": "加载同一原生 session、记忆保留，历史不重复",
-          "sut": "ensureSession",
-          "test": "apps/acp-bridge/internal/runner/runner_test.go::TestUS013RestartAndEviction"
+          "sut": "StartTurn",
+          "test": "apps/acp-bridge/internal/runner/private_runtime_test.go::TestPrivateRecoveryAcrossProcessLoss"
         },
         {
           "id": "US-013-S2",
           "given": "load 发出历史用户/助手/工具重播，之后 prompt 发新输出",
           "when": "处理恢复及新一轮消息",
           "then": "历史不新增，旧工具不执行，新回复只记录一次",
-          "sut": "handleUpdate",
-          "test": "apps/acp-bridge/internal/runner/runner_test.go::TestUS013ReplayDedup"
+          "sut": "dispatchUpdate",
+          "test": "apps/acp-bridge/internal/runner/private_runtime_test.go::TestPrivateUpdateGuardsAllKinds"
         },
         {
           "id": "US-013-S3",
           "given": "原生会话丢失、映射缺失或 load 出错",
           "when": "同一旧会话续聊",
           "then": "本轮 failed，无空上下文 prompt，历史完整",
-          "sut": "runTurn",
-          "test": "apps/acp-bridge/internal/runner/runner_test.go::TestUS013FailClosed"
+          "sut": "StartTurn",
+          "test": "apps/acp-bridge/internal/runner/private_runtime_test.go::TestPrivateRecoveryFaultsNeverPrompt"
         }
       ],
       "acceptanceCriteria": [

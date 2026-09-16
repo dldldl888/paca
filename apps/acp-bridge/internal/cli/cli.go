@@ -71,6 +71,14 @@ func Main(argv []string, version string) int {
 	idleMinutes := fs.Int("session-idle-minutes", envIntOr("PACA_SESSION_IDLE_MINUTES", 30),
 		"Reclaim a session after this many idle minutes (0 disables). Or PACA_SESSION_IDLE_MINUTES.")
 
+	privateHermes := fs.Bool("private-hermes", false, "Use dedicated per-conversation native Hermes isolation")
+	instanceID := fs.String("instance-id", os.Getenv("PACA_INSTANCE_ID"), "Stable authenticated Paca instance ID")
+	privateRoot := fs.String("private-root", os.Getenv("PACA_PRIVATE_ROOT"), "Trusted private runtime root")
+	privateTemplate := fs.String("private-template", os.Getenv("PACA_PRIVATE_TEMPLATE"), "Trusted Hermes model configuration template directory")
+	privateLauncher := fs.String("private-launcher", os.Getenv("PACA_PRIVATE_LAUNCHER"), "Absolute pinned launch_hermes.py path")
+	privatePython := fs.String("private-python", os.Getenv("PACA_PRIVATE_PYTHON"), "Absolute pinned Hermes Python interpreter")
+	privateSource := fs.String("private-source", os.Getenv("PACA_PRIVATE_SOURCE"), "Absolute pinned Hermes source directory")
+
 	if err := fs.Parse(argv[1:]); err != nil {
 		return 2
 	}
@@ -96,7 +104,14 @@ func Main(argv []string, version string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg := runner.Config{Scope: *sessionScope, IdleTimeout: time.Duration(*idleMinutes) * time.Minute}
+	cfg := runner.Config{Scope: *sessionScope, IdleTimeout: time.Duration(*idleMinutes) * time.Minute, AgentID: *agentID, InstanceID: *instanceID}
+	if *privateHermes {
+		cfg.PrivateHermes = &runner.PrivateHermesConfig{Root: *privateRoot, Template: *privateTemplate, Launcher: *privateLauncher, Python: *privatePython, Source: *privateSource}
+	}
+	if err := cfg.Validate(); err != nil {
+		log.Error("invalid private Hermes configuration", "error", err)
+		return 2
+	}
 	log.Info("paca-acp-bridge starting", "version", version, "workspace", *workspace,
 		"session_scope", cfg.Scope, "session_idle_minutes", *idleMinutes)
 

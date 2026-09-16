@@ -124,6 +124,9 @@ func (c *Client) Send(ctx context.Context, msg map[string]any) error {
 // RunForever connects, reconnects with exponential backoff on any failure,
 // and dispatches inbound messages to the Handler until ctx is done.
 func (c *Client) RunForever(ctx context.Context) error {
+	if closer, ok := c.handler.(interface{ Close() }); ok {
+		defer closer.Close()
+	}
 	senderDone := make(chan struct{})
 	go func() { defer close(senderDone); c.senderLoop(ctx) }()
 	defer func() { <-senderDone }()

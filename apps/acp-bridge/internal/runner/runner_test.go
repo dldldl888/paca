@@ -354,6 +354,10 @@ func TestStringSlice(t *testing.T) {
 // interrupted mid-flight.
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 2 && os.Args[1] == "-I" {
+		runPrivateFakeAgent()
+		os.Exit(0)
+	}
 	if os.Getenv("PACA_ACPCLIENT_FAKE_AGENT") == "1" {
 		runFakeACPAgent(os.Getenv("PACA_ACPCLIENT_FAKE_AGENT_BEHAVIOR"))
 		os.Exit(0)

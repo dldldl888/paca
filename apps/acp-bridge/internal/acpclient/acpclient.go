@@ -222,12 +222,17 @@ func newClient(stdin io.WriteCloser, stdout io.Reader, wait func() error, kill f
 // on the wire (including, e.g., the response to whatever request is
 // currently in flight).
 func Spawn(command []string, workspace string, onUpdate func(Update), log *slog.Logger) (*Client, error) {
+	return SpawnWithEnv(command, workspace, os.Environ(), onUpdate, log)
+}
+
+// SpawnWithEnv uses exactly env, including an empty environment when nil.
+func SpawnWithEnv(command []string, workspace string, env []string, onUpdate func(Update), log *slog.Logger) (*Client, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("acpclient: empty command")
 	}
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = workspace
-	cmd.Env = os.Environ()
+	cmd.Env = append([]string{}, env...)
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()
@@ -297,6 +302,39 @@ func (c *Client) SupportsLoadSession() bool {
 // LoadSession restores an existing session. History updates are delivered to
 // onUpdate before this returns; callers decide how to handle that replay.
 func (c *Client) LoadSession(ctx context.Context, sessionID, cwd string) (*SessionModeState, error) {
+	result, err := c.loadSession(ctx, sessionID, cwd)
+	if err != nil {
+		return nil, err
+	}
+	return result.Modes, nil
+}
+
+// LoadHermesSession requires pinned native Hermes to prove which session it
+// found. A missing native row returns {}, valid for generic ACP but not recovery.
+func (c *Client) LoadHermesSession(ctx context.Context, sessionID, cwd string) (*SessionModeState, error) {
+	result, err := c.loadSession(ctx, sessionID, cwd)
+	if err != nil {
+		return nil, err
+	}
+	var meta struct {
+		Hermes struct {
+			SessionProvenance struct {
+				ACPSessionID string `json:"acpSessionId"`
+			} `json:"sessionProvenance"`
+		} `json:"hermes"`
+	}
+	if json.Unmarshal(result.Meta, &meta) != nil || meta.Hermes.SessionProvenance.ACPSessionID != sessionID {
+		return nil, fmt.Errorf("acpclient: session/load: missing or mismatched Hermes provenance")
+	}
+	return result.Modes, nil
+}
+
+type loadSessionResult struct {
+	Modes *SessionModeState `json:"modes,omitempty"`
+	Meta  json.RawMessage   `json:"_meta,omitempty"`
+}
+
+func (c *Client) loadSession(ctx context.Context, sessionID, cwd string) (*loadSessionResult, error) {
 	if !c.SupportsLoadSession() {
 		return nil, fmt.Errorf("acpclient: session/load: agent did not advertise loadSession")
 	}
@@ -314,16 +352,14 @@ func (c *Client) LoadSession(ctx context.Context, sessionID, cwd string) (*Sessi
 	if err != nil {
 		return nil, fmt.Errorf("acpclient: session/load: %w", err)
 	}
-	var result *struct {
-		Modes *SessionModeState `json:"modes,omitempty"`
-	}
+	var result *loadSessionResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("acpclient: session/load: decoding result: %w", err)
 	}
 	if result == nil {
 		return nil, fmt.Errorf("acpclient: session/load: expected result object")
 	}
-	return result.Modes, nil
+	return result, nil
 }
 
 // Alive reports whether the connection's read loop is still open.

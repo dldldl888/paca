@@ -112,3 +112,13 @@ from Paca — it reconnects automatically on a dropped connection.
 Pressing "stop" mid-turn sends the ACP CLI a real `session/cancel` — the
 same interruption a stop button would trigger if you were driving that CLI
 yourself in a terminal — rather than just disconnecting and hoping.
+
+### Dedicated private Hermes (macOS)
+
+Use `run --private-hermes --instance-id <stable instance ID> --private-root <absolute runtime root> --private-template <trusted template directory> --private-launcher <absolute scripts/launch_hermes.py> --private-python <pinned Hermes venv/bin/python> --private-source <pinned Hermes source>` with the existing authenticated `--agent-id`, `--token`, and `--server` options. These paths are local operator configuration. Their environment equivalents are `PACA_INSTANCE_ID`, `PACA_PRIVATE_ROOT`, `PACA_PRIVATE_TEMPLATE`, `PACA_PRIVATE_LAUNCHER`, `PACA_PRIVATE_PYTHON`, and `PACA_PRIVATE_SOURCE`; `--private-hermes` is an explicit mode flag.
+
+The backend must send explicit `owner_private` audience, matching agent/instance IDs, owner/conversation IDs, `project_id` (an explicit empty string denotes global), and boolean `has_prior_turns`. Task/agent session scopes do not merge private conversations. Incoming provider/command/workdir cannot select the private executable or workspace. Shared mode refuses private dispatches. The launcher receives only its fixed paths, a digest key, a fixed PATH and locale; bridge/internal credentials and ambient Python settings are never inherited.
+
+Private session bindings live under `<root>/bindings` outside model-writable homes/workspaces. A successful atomic save precedes the first user event and prompt. Existing bindings restore through native session/load after restart, subprocess loss or eviction, even with a stale false prior-turn flag. Matching native provenance and nonempty matching user/assistant replay are both required; missing, corrupt or empty native history fails without creating a replacement session. Replay is suppressed. Native deferred session-context usage is not attributed to a new turn; prompt response usage remains available. This does not certify completeness of partially truncated nonempty history or implement the subsequent current-authorization/revocation barrier.
+
+Shutdown closes native children while preserving bindings and state. Local logs contain diagnostic paths; outbound private failures are sanitized. The reviewed launcher requires macOS sandbox-exec and permits non-localhost TCP port 443 (not a domain allowlist); native runtime/configuration and private metadata parents must remain trusted operator storage.
