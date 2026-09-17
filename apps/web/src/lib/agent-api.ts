@@ -1253,8 +1253,8 @@ export async function stopConversation(
 
 // pauseConversation interrupts the in-flight turn only — the sandbox stays
 // alive and the conversation goes back to "paused", ready for another reply.
-// This is what the assistant-ui Cancel/Stop button calls; stopConversation
-// above is the full, permanent teardown.
+// LLM composers use pause; ACP composers use stopConversation to persist
+// the terminal status and remain replyable through the existing resume path.
 export async function pauseConversation(
 	projectId: string,
 	conversationId: string,

@@ -210,7 +210,10 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 
 	const onCancel = async () => {
 		if (!conversationId) return;
-		await pauseConversation(projectId, conversationId);
+		await (isACP ? stopConversation : pauseConversation)(
+			projectId,
+			conversationId,
+		);
 		invalidate();
 	};
 

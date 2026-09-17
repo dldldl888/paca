@@ -196,7 +196,9 @@ export function GlobalAIChatFloat() {
 
 	const onCancel = async () => {
 		if (!conversationId) return;
-		await pauseGlobalConversation(conversationId);
+		await (isACP ? stopGlobalConversation : pauseGlobalConversation)(
+			conversationId,
+		);
 		invalidate();
 	};
 

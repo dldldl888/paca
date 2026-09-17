@@ -109,10 +109,9 @@ function ConversationControls({
 	// stop action is always available, regardless of trigger type.
 	//
 	// ACP is the exception: its composer is now shown for every trigger type
-	// (see canReply below), so the composer's own Cancel/pause button is
-	// always reachable there — this header Stop button (a full teardown,
-	// distinct from pause) would just be redundant. A conversation attached
-	// to a static environment gets the same exception, for the same reason:
+	// (see canReply below), so the composer's own Stop button is always
+	// reachable there and uses the same durable stop endpoint. A conversation
+	// attached to a static environment gets the same exception, for the same reason:
 	// agent-runner now ends every one of its turns in a terminal status
 	// (never "paused" — see handler.Handle's own isChat/EnvironmentID
 	// branch), the same way an ACP conversation always has, so this is
@@ -335,9 +334,14 @@ export function ConversationView({
 	const onCancel = async () => {
 		if (!conversation) return;
 		if (projectId) {
-			await pauseConversation(projectId, conversation.id);
+			await (isACP ? stopConversation : pauseConversation)(
+				projectId,
+				conversation.id,
+			);
 		} else {
-			await pauseGlobalConversation(conversation.id);
+			await (isACP ? stopGlobalConversation : pauseGlobalConversation)(
+				conversation.id,
+			);
 		}
 		invalidate();
 	};
