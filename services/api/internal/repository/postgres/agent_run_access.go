@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/database"
 	"github.com/google/uuid"
@@ -133,4 +135,41 @@ func (r *AgentRepository) PrivateHistoryOwner(ctx context.Context, id uuid.UUID)
 		return uuid.Nil, agentdom.ErrConversationNotFound
 	}
 	return owner, err
+}
+
+// Selection is intentionally limited to private projects with human membership.
+// The service filters docs.read before applying any document count/content limit.
+func (r *AgentRepository) ListCompanyProjects(ctx context.Context, owner uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &ids, `SELECT DISTINCT p.id FROM projects p
+ JOIN project_members pm ON pm.project_id=p.id AND pm.member_type='human' AND pm.deleted_at IS NULL
+ JOIN users u ON u.id=pm.user_id AND u.deleted_at IS NULL
+ JOIN doc_folders f ON f.project_id=p.id AND f.parent_id IS NULL AND f.name='公司资料'
+ WHERE p.deleted_at IS NULL AND p.is_public=false AND u.id=$1 ORDER BY p.id`, owner)
+	return ids, err
+}
+func (r *AgentRepository) ListCompanyDocuments(ctx context.Context, projects []uuid.UUID, limit int) ([]*docdom.Document, error) {
+	out := []*docdom.Document{}
+	if len(projects) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(projects)+1)
+	placeholders := make([]string, len(projects))
+	for i, p := range projects {
+		args = append(args, p)
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	args = append(args, limit)
+	var records []documentRecord
+	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+documentCols+` FROM documents WHERE deleted_at IS NULL
+ AND project_id IN (`+strings.Join(placeholders, ",")+`) AND folder_id IN
+ (SELECT id FROM doc_folders WHERE project_id=documents.project_id AND parent_id IS NULL AND name='公司资料')
+ ORDER BY updated_at DESC,id ASC LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range records {
+		out = append(out, documentFromRecord(rec))
+	}
+	return out, nil
 }

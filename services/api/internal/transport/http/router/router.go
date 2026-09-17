@@ -69,6 +69,7 @@ func New(deps Deps) http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		if deps.AgentRun != nil {
 			r.Post("/internal/agent-runs/authorize", deps.AgentRun.Authorize)
+			r.Post("/internal/agent-runs/company-context", deps.AgentRun.CompanyContext)
 			r.Post("/internal/realtime/recipients", deps.AgentRun.Recipients)
 			r.Get("/internal/authorization-delivery/state", deps.AgentRun.Participant)
 			r.Post("/internal/authorization-delivery/participants", deps.AgentRun.Participant)

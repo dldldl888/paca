@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Paca-AI/agent-runner/internal/agent"
 	"github.com/Paca-AI/agent-runner/internal/runauth"
 	"github.com/google/uuid"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -94,5 +96,91 @@ func TestNativeAuthorizationACKUsesCurrentSocketAndFencedShutdown(t *testing.T) 
 		if err = <-done; err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestCompanyContextDispatchFailsClosed(t *testing.T) {
+	for _, mode := range []string{"valid", "blocked"} {
+		t.Run(mode, func(t *testing.T) {
+			registry, redis := newTestRegistry(t)
+			aid, cid := uuid.New(), uuid.New()
+			instance, owner := uuid.NewString(), uuid.NewString()
+			var contextRead bool
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Internal-Token") != "synthetic" {
+					t.Error("missing token")
+				}
+				data := map[string]any{"authorization_epoch": "1", "conversation_id": cid.String(), "agent_id": aid.String(), "instance_id": instance, "owner_user_id": owner}
+				switch r.URL.Path {
+				case "/api/internal/agent-runs/authorize":
+					var in struct {
+						Begin bool `json:"begin_turn"`
+					}
+					json.NewDecoder(r.Body).Decode(&in)
+					if in.Begin && !contextRead {
+						t.Error("native history latch began before context fetch succeeded")
+					}
+					data["project_id"] = ""
+					data["audience"] = "owner_private"
+					data["has_prior_turns"] = false
+					data["status"] = "running"
+					data["task_id"] = ""
+					data["comment_id"] = ""
+					data["chat_session_id"] = ""
+				case "/api/internal/agent-runs/company-context":
+					if mode == "blocked" {
+						w.WriteHeader(409)
+						return
+					}
+					contextRead = mode == "valid"
+					data["text"] = "合成验证资料 更新时间2026-09-17"
+					data["sources"] = []any{}
+					data["truncated"] = false
+				default:
+					t.Error("wrong path")
+				}
+				json.NewEncoder(w).Encode(map[string]any{"success": true, "data": data})
+			}))
+			defer api.Close()
+			auth := runauth.New(api.URL, "synthetic", instance)
+			auth.Gate = runauth.NewGate()
+			if err := auth.Gate.Update("1", false); err != nil {
+				t.Fatal(err)
+			}
+			// Subscribe to the actual dispatch channel: a failed read must not publish.
+			sub := redis.Subscribe(t.Context(), dispatchPrefix+aid.String())
+			defer sub.Close()
+			if _, err := sub.Receive(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := redis.Set(t.Context(), presencePrefix+aid.String(), "online", time.Minute).Err(); err != nil {
+				t.Fatal(err)
+			}
+			dispatcher := &Dispatcher{RunAuthorizer: auth, Registry: registry}
+			err := dispatcher.DispatchTrigger(t.Context(), agent.Trigger{ConversationID: cid, Message: "公司事实?"}, &agent.ACPConfig{ID: aid, ACPProvider: "hermes"})
+			if mode != "valid" {
+				if err == nil {
+					t.Fatal("unsafe dispatch accepted")
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+				defer cancel()
+				if msg, e := sub.ReceiveMessage(ctx); e == nil {
+					t.Fatal("unsafe body published", msg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			msg, err := sub.ReceiveMessage(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(msg.Payload, "合成验证资料") || strings.Contains(msg.Payload, "/paca") || strings.Contains(msg.Payload, "synthetic") {
+				t.Fatal(msg.Payload)
+			}
+		})
 	}
 }

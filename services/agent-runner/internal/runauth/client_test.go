@@ -101,3 +101,51 @@ func TestAuthorizeStrictResponseAndTrustedIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestCompanyContextRejectsMismatchedOrFailedResponse(t *testing.T) {
+	a := &Authorization{AuthorizationEpoch: "3", ConversationID: uuid.NewString(), AgentID: uuid.NewString(), InstanceID: uuid.NewString(), OwnerUserID: uuid.NewString(), Audience: "owner_private"}
+	for _, mode := range []string{"valid", "epoch", "owner", "instance", "conversation", "agent", "failed", "missing", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			data := map[string]any{"authorization_epoch": a.AuthorizationEpoch, "conversation_id": a.ConversationID, "agent_id": a.AgentID, "instance_id": a.InstanceID, "owner_user_id": a.OwnerUserID, "text": "暂无公司资料", "sources": []any{}, "truncated": false}
+			switch mode {
+			case "epoch":
+				data["authorization_epoch"] = "4"
+			case "owner":
+				data["owner_user_id"] = uuid.NewString()
+			case "instance":
+				data["instance_id"] = uuid.NewString()
+			case "conversation":
+				data["conversation_id"] = uuid.NewString()
+			case "agent":
+				data["agent_id"] = uuid.NewString()
+			case "missing":
+				delete(data, "sources")
+			case "unknown":
+				data["admin_token"] = "bad"
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/internal/agent-runs/company-context" || r.Header.Get("X-Internal-Token") != "synthetic" {
+					t.Error("wrong endpoint")
+				}
+				var request map[string]any
+				json.NewDecoder(r.Body).Decode(&request)
+				if len(request) != 2 || request["conversation_id"] != a.ConversationID || request["agent_id"] != a.AgentID {
+					t.Error("client owner or scope sent")
+				}
+				if mode == "failed" {
+					w.WriteHeader(500)
+					return
+				}
+				json.NewEncoder(w).Encode(map[string]any{"success": true, "data": data})
+			}))
+			defer srv.Close()
+			result, err := New(srv.URL, "synthetic", a.InstanceID).CompanyContext(context.Background(), a)
+			if (err == nil) != (mode == "valid") {
+				t.Fatal(result, err)
+			}
+			if err != nil && result != nil {
+				t.Fatal("body exposed on failure")
+			}
+		})
+	}
+}

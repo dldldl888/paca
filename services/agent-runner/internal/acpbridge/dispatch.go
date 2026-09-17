@@ -59,7 +59,7 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 
 	var authorization *runauth.Authorization
 	if d.RunAuthorizer != nil {
-		authorization, err = d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, true)
+		authorization, err = d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, cfg.ACPProvider != "hermes")
 		if errors.Is(err, runauth.ErrUnavailable) {
 			return err
 		}
@@ -77,11 +77,43 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 		return err
 	}
 
+	message := BuildACPMessage(trigger, cfg.ACPProvider)
+	if authorization != nil && cfg.ACPProvider == "hermes" {
+		company, contextErr := d.RunAuthorizer.CompanyContext(ctx, authorization)
+		if contextErr != nil {
+			if errors.Is(contextErr, runauth.ErrBlocked) {
+				return contextErr
+			}
+			failed, failErr := d.ConvRepo.FailIfNotTerminal(ctx, trigger.ConversationID, "公司资料暂时无法读取，请稍后重试。")
+			if failErr != nil {
+				return failErr
+			}
+			if !failed {
+				return nil
+			}
+			if publishErr := d.Publisher.PublishRealtime(ctx, trigger.ProjectID, trigger.ConversationID, "agent.conversation.failed", nil, trigger.ActorUserID); publishErr != nil {
+				d.Log.Warn("acpbridge: failed to publish company context failure", "conversation_id", trigger.ConversationID, "error", publishErr)
+			}
+			return d.Publisher.PublishConversationStatus(ctx, trigger.ConversationID, "failed")
+		}
+		// A failed context fetch must not claim a native turn that never existed.
+		begun, beginErr := d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, true)
+		if beginErr != nil {
+			return beginErr
+		}
+		identity := *begun
+		identity.HasPriorTurns = authorization.HasPriorTurns
+		if identity != *authorization {
+			return runauth.ErrUnavailable
+		}
+		authorization = begun
+		message = BuildPrivateCompanyMessage(trigger, company.Text)
+	}
 	payload := map[string]any{
 		"type":            "start_turn",
 		"conversation_id": trigger.ConversationID.String(),
 		"project_id":      projectIDOrEmpty(trigger.ProjectID),
-		"message":         BuildACPMessage(trigger, cfg.ACPProvider),
+		"message":         message,
 		"trigger_type":    string(trigger.TriggerType),
 		"acp_provider":    cfg.ACPProvider,
 		"acp_command":     cfg.ACPCommand,

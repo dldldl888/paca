@@ -140,3 +140,41 @@ func (h *AgentRunHandler) Participant(w http.ResponseWriter, r *http.Request) {
 	}
 	presenter.OK(w, r, state)
 }
+
+func (h *AgentRunHandler) CompanyContext(w http.ResponseWriter, r *http.Request) {
+	if h.InternalKey == "" || subtle.ConstantTimeCompare([]byte(h.InternalKey), []byte(r.Header.Get("X-Internal-Token"))) != 1 {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+	var input struct {
+		ConversationID string `json:"conversation_id"`
+		AgentID        string `json:"agent_id"`
+	}
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	d.DisallowUnknownFields()
+	var extra any
+	if d.Decode(&input) != nil || d.Decode(&extra) != io.EOF {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	cid, e1 := uuid.Parse(input.ConversationID)
+	aid, e2 := uuid.Parse(input.AgentID)
+	if e1 != nil || e2 != nil || cid == uuid.Nil || aid == uuid.Nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	result, err := h.Service.CompanyContext(r.Context(), cid, aid)
+	if errors.Is(err, delivery.ErrBlocked) {
+		http.Error(w, "authorization transition pending", 409)
+		return
+	}
+	if agentsvc.RunDenied(err) {
+		http.Error(w, "run authorization refused", 404)
+		return
+	}
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	presenter.OK(w, r, result)
+}

@@ -353,9 +353,9 @@ func (r *DocumentRepository) ListDocuments(ctx context.Context, projectID uuid.U
 }
 
 // FindDocumentByID returns a single non-deleted document.
-func (r *DocumentRepository) FindDocumentByID(_ context.Context, id uuid.UUID) (*docdom.Document, error) {
+func (r *DocumentRepository) FindDocumentByID(ctx context.Context, id uuid.UUID) (*docdom.Document, error) {
 	var rec documentRecord
-	if err := r.db.Get(&rec, `SELECT `+documentCols+` FROM documents WHERE id = $1 AND deleted_at IS NULL`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+documentCols+` FROM documents WHERE id = $1 AND deleted_at IS NULL`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, docdom.ErrDocNotFound
 		}
