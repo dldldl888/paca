@@ -1048,6 +1048,9 @@
 		}
 	},
 	"aiChat": {
+		"companyAssistantTitle": "公司助手 Hermes",
+		"companyAssistantUnavailable": "公司助手暂时不可用，请联系管理员。",
+		"companyAssistantHistory": "私人会话",
 		"chatWithAgent": "与 AI 智能体聊天",
 		"newConversation": "新建对话",
 		"agentLabel": "智能体",

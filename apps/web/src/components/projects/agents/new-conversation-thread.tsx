@@ -42,9 +42,11 @@ import { extractTextOnlyContent } from "./conversation-to-thread-messages";
 // before you can type. Same component used by the floating chat widget.
 export function NewConversationThread({
 	projectId,
+	companyAssistant = false,
 }: {
 	/** Absent for the global Conversations page (home/admin pages, no project). */
 	projectId?: string;
+	companyAssistant?: boolean;
 }) {
 	const { t } = useTranslation("projects");
 	const qc = useQueryClient();
@@ -163,11 +165,40 @@ export function NewConversationThread({
 		<AgentPickerContext.Provider value={pickerState}>
 			<EnvironmentPickerContext.Provider value={environmentPickerState}>
 				<AssistantRuntimeProvider runtime={runtime}>
-					<Thread components={{ ComposerStart: ComposerStartRow }} />
+					<Thread
+						components={{
+							ComposerStart: ComposerStartRow,
+							...(companyAssistant ? { Welcome: CompanyAssistantWelcome } : {}),
+						}}
+						viewportHeader={
+							companyAssistant &&
+							!globalPicker.agentsLoading &&
+							!globalPicker.companyAssistant &&
+							globalPicker.agents.length > 0 ? (
+								<p
+									role="status"
+									className="mb-4 text-center text-sm text-muted-foreground"
+								>
+									{t("aiChat.companyAssistantUnavailable")}
+								</p>
+							) : undefined
+						}
+					/>
 				</AssistantRuntimeProvider>
 			</EnvironmentPickerContext.Provider>
 			{agentBusyDialog}
 		</AgentPickerContext.Provider>
+	);
+}
+
+function CompanyAssistantWelcome() {
+	const { t } = useTranslation("projects");
+	return (
+		<div className="mb-6 px-4 text-center">
+			<h1 className="text-2xl font-semibold">
+				{t("aiChat.companyAssistantTitle")}
+			</h1>
+		</div>
 	);
 }
 

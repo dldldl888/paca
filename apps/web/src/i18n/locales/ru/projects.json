@@ -1064,6 +1064,9 @@
 		}
 	},
 	"aiChat": {
+		"companyAssistantTitle": "Помощник компании Hermes",
+		"companyAssistantUnavailable": "Помощник компании недоступен. Обратитесь к администратору.",
+		"companyAssistantHistory": "Личные беседы",
 		"chatWithAgent": "Чат с AI-агентом",
 		"newConversation": "Новый диалог",
 		"agentLabel": "Агент",

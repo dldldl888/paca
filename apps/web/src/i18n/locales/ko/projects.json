@@ -1048,6 +1048,9 @@
 		}
 	},
 	"aiChat": {
+		"companyAssistantTitle": "회사 도우미 Hermes",
+		"companyAssistantUnavailable": "회사 도우미를 사용할 수 없습니다. 관리자에게 문의하세요.",
+		"companyAssistantHistory": "비공개 대화",
 		"chatWithAgent": "AI 에이전트와 채팅",
 		"newConversation": "새 대화",
 		"agentLabel": "에이전트",

@@ -1048,6 +1048,9 @@
 		}
 	},
 	"aiChat": {
+		"companyAssistantTitle": "Trợ lý công ty Hermes",
+		"companyAssistantUnavailable": "Trợ lý công ty hiện không khả dụng. Vui lòng liên hệ quản trị viên.",
+		"companyAssistantHistory": "Hội thoại riêng",
 		"chatWithAgent": "Trò chuyện với AI Agent",
 		"newConversation": "Hội thoại mới",
 		"agentLabel": "Agent",

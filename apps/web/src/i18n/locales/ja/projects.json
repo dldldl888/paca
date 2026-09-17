@@ -1048,6 +1048,9 @@
 		}
 	},
 	"aiChat": {
+		"companyAssistantTitle": "会社アシスタント Hermes",
+		"companyAssistantUnavailable": "会社アシスタントを利用できません。管理者にお問い合わせください。",
+		"companyAssistantHistory": "プライベートな会話",
 		"chatWithAgent": "AIエージェントとチャット",
 		"newConversation": "新しい会話",
 		"agentLabel": "エージェント",

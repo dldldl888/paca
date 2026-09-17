@@ -1048,6 +1048,9 @@
 		}
 	},
 	"aiChat": {
+		"companyAssistantTitle": "Assistente da empresa Hermes",
+		"companyAssistantUnavailable": "O assistente da empresa está indisponível. Contate seu administrador.",
+		"companyAssistantHistory": "Conversas privadas",
 		"chatWithAgent": "Conversar com o agente de IA",
 		"newConversation": "Nova conversa",
 		"agentLabel": "Agente",

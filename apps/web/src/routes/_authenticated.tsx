@@ -81,9 +81,10 @@ function AuthenticatedLayout() {
 	// Global agent chat is available everywhere except inside a project
 	// (project pages already mount their own project-scoped AIChatFloat, see
 	// routes/_authenticated/projects/$projectId.tsx) or on the global
-	// Conversations page itself (see CONVERSATIONS_ROUTE_RE above).
+	// Conversations page itself or home, which both contain an inline thread.
 	const showGlobalChat =
 		!!user &&
+		!/^\/home(\/|$)/.test(pathname) &&
 		!PROJECT_ROUTE_RE.test(pathname) &&
 		!CONVERSATIONS_ROUTE_RE.test(pathname);
 

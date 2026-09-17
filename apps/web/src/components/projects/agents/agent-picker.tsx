@@ -48,6 +48,7 @@ export interface AgentPickerState {
 	/** Once a conversation has started, the agent is fixed for its lifetime —
 	 * lock the picker instead of implying a switch would do anything. */
 	disabled?: boolean;
+	emptyStateMessage?: string;
 	/** Link shown in the empty state ("no agents yet, create one") — null
 	 * hides that button entirely (e.g. a global-scope user without
 	 * permission to create a global agent has nowhere useful to send them). */
@@ -110,18 +111,27 @@ export function useGlobalAgentPicker(options?: {
 	disabled?: boolean;
 	enabled?: boolean;
 }) {
+	const { t } = useTranslation("projects");
 	const { hasPermission } = usePermissions();
 	const { data: agents = [], isLoading: agentsLoading } = useQuery({
 		...chattableAgentsQueryOptions,
 		enabled: options?.enabled ?? true,
 	});
 	const [agentId, setAgentId] = useState("");
+	const companyAssistant = agents.find(
+		(agent) =>
+			agent.agent_scope === "global" &&
+			agent.agent_type === "acp" &&
+			agent.acp_provider === "custom" &&
+			agent.handle === "hermes" &&
+			agent.name === "公司助手 Hermes",
+	);
 
 	useEffect(() => {
-		if (!agentId && agents.length === 1 && agents[0]) {
-			setAgentId(agents[0].id);
+		if (!agentId && companyAssistant) {
+			setAgentId(companyAssistant.id);
 		}
-	}, [agents, agentId]);
+	}, [companyAssistant, agentId]);
 
 	const disabled = options?.disabled;
 	const canCreate = hasPermission("agents.write");
@@ -132,14 +142,22 @@ export function useGlobalAgentPicker(options?: {
 			agentId,
 			onAgentChange: setAgentId,
 			disabled,
+			emptyStateMessage: t("aiChat.companyAssistantUnavailable"),
 			emptyStateLink: canCreate
 				? { to: "/admin/agents", search: { create: true } }
 				: null,
 		}),
-		[agents, agentsLoading, agentId, disabled, canCreate],
+		[agents, agentsLoading, agentId, disabled, canCreate, t],
 	);
 
-	return { agentId, setAgentId, agents, agentsLoading, pickerState };
+	return {
+		agentId,
+		setAgentId,
+		agents,
+		agentsLoading,
+		pickerState,
+		companyAssistant,
+	};
 }
 
 export function AgentPickerInline() {
@@ -153,6 +171,7 @@ export function AgentPickerInline() {
 		onAgentChange,
 		disabled,
 		emptyStateLink,
+		emptyStateMessage,
 	} = picker;
 
 	if (agentsLoading) {
@@ -162,7 +181,7 @@ export function AgentPickerInline() {
 		if (!emptyStateLink) {
 			return (
 				<span className="text-xs text-muted-foreground px-2">
-					{t("aiChat.noAgentsAvailable")}
+					{emptyStateMessage ?? t("aiChat.noAgentsAvailable")}
 				</span>
 			);
 		}
