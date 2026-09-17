@@ -113,7 +113,31 @@ describe("composer cancellation", () => {
 			true,
 			"/projects/project-1/conversations/conv-1/stop",
 		],
-	] as const)("clicking Stop generating uses the correct control in %s", async (_label, projectId, agentType, floating, controlPath) => {
+		[
+			"delayed global agent",
+			undefined,
+			"acp",
+			false,
+			"/agents/conversations/conv-1/stop",
+			true,
+		],
+		[
+			"delayed project agent",
+			"project-1",
+			"acp",
+			false,
+			"/projects/project-1/conversations/conv-1/stop",
+			true,
+		],
+		[
+			"delayed project floating agent",
+			"project-1",
+			"acp",
+			true,
+			"/projects/project-1/conversations/conv-1/stop",
+			true,
+		],
+	] as const)("clicking Stop generating uses the correct control in %s", async (_label, projectId, agentType, floating, controlPath, delayAgent: boolean = false) => {
 		const agent: Agent = {
 			...baseAgent,
 			agent_type: agentType as AgentType,
@@ -136,7 +160,16 @@ describe("composer cancellation", () => {
 			updated_at: "2026-09-17T00:00:00Z",
 		};
 		const envelope = (data: unknown) => ({ data: { success: true, data } });
+		let releaseAgent = () => {};
+		const agentResponse = new Promise<ReturnType<typeof envelope>>(
+			(resolve) => {
+				releaseAgent = () =>
+					resolve(envelope(projectId ? agent : { items: [agent] }));
+			},
+		);
 		get.mockImplementation(async (path: string) => {
+			if (path === "/agents" || path.endsWith("/agents/hermes"))
+				return agentResponse;
 			if (path.endsWith("/events"))
 				return envelope({
 					items: [],
@@ -173,17 +206,19 @@ describe("composer cancellation", () => {
 			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 		});
 		client.setQueryData(myPermissionsQueryOptions.queryKey, []);
-		client.setQueryData(chattableAgentsQueryOptions.queryKey, [agent]);
+		if (!delayAgent)
+			client.setQueryData(chattableAgentsQueryOptions.queryKey, [agent]);
 		const conversationOptions = projectId
 			? conversationQueryOptions(projectId, conversation.id)
 			: globalConversationQueryOptions(conversation.id);
 		client.setQueryData(conversationOptions.queryKey, conversation);
 		if (projectId) {
 			client.setQueryData(agentsQueryOptions(projectId).queryKey, [agent]);
-			client.setQueryData(
-				agentQueryOptions(projectId, agent.id).queryKey,
-				agent,
-			);
+			if (!delayAgent)
+				client.setQueryData(
+					agentQueryOptions(projectId, agent.id).queryKey,
+					agent,
+				);
 			client.setQueryData(
 				myProjectPermissionsQueryOptions(projectId).queryKey,
 				{ "conversations.write": true },
@@ -216,6 +251,12 @@ describe("composer cancellation", () => {
 		await user.click(
 			await screen.findByRole("button", { name: "Stop generating" }),
 		);
+		if (delayAgent) {
+			expect(post.mock.calls.some(([path]) => path.endsWith("/pause"))).toBe(
+				false,
+			);
+			releaseAgent();
+		}
 		await waitFor(() => expect(post).toHaveBeenCalledWith(controlPath));
 		await waitFor(() =>
 			expect(

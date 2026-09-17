@@ -195,10 +195,16 @@ export function GlobalAIChatFloat() {
 	};
 
 	const onCancel = async () => {
-		if (!conversationId) return;
-		await (isACP ? stopGlobalConversation : pauseGlobalConversation)(
-			conversationId,
-		);
+		if (!conversationId || !conversation) return;
+		const cancelAgent =
+			agent ??
+			(await qc.ensureQueryData(chattableAgentsQueryOptions)).find(
+				(a) => a.id === conversation.agent_id,
+			);
+		if (!cancelAgent) throw new Error(t("aiChat.noAgentsAvailable"));
+		await (cancelAgent.agent_type === "acp"
+			? stopGlobalConversation
+			: pauseGlobalConversation)(conversationId);
 		invalidate();
 	};
 

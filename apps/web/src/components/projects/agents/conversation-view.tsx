@@ -333,15 +333,24 @@ export function ConversationView({
 
 	const onCancel = async () => {
 		if (!conversation) return;
+		const cancelAgent =
+			agent ??
+			(projectId
+				? await qc.ensureQueryData(
+						agentQueryOptions(projectId, conversation.agent_id),
+					)
+				: (await qc.ensureQueryData(chattableAgentsQueryOptions)).find(
+						(a) => a.id === conversation.agent_id,
+					));
+		if (!cancelAgent) throw new Error(t("aiChat.noAgentsAvailable"));
 		if (projectId) {
-			await (isACP ? stopConversation : pauseConversation)(
-				projectId,
-				conversation.id,
-			);
+			await (cancelAgent.agent_type === "acp"
+				? stopConversation
+				: pauseConversation)(projectId, conversation.id);
 		} else {
-			await (isACP ? stopGlobalConversation : pauseGlobalConversation)(
-				conversation.id,
-			);
+			await (cancelAgent.agent_type === "acp"
+				? stopGlobalConversation
+				: pauseGlobalConversation)(conversation.id);
 		}
 		invalidate();
 	};

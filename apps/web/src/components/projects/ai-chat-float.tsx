@@ -209,11 +209,15 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 	};
 
 	const onCancel = async () => {
-		if (!conversationId) return;
-		await (isACP ? stopConversation : pauseConversation)(
-			projectId,
-			conversationId,
-		);
+		if (!conversationId || !conversation) return;
+		const cancelAgent =
+			agent ??
+			(await qc.ensureQueryData(
+				agentQueryOptions(projectId, conversation.agent_id),
+			));
+		await (cancelAgent.agent_type === "acp"
+			? stopConversation
+			: pauseConversation)(projectId, conversationId);
 		invalidate();
 	};
 
