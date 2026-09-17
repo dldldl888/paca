@@ -87,6 +87,32 @@ beforeEach(() => {
 });
 
 describe("NotificationBell", () => {
+	it("recovers persisted notifications on opening even when the cache is fresh and realtime was missed", async () => {
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		qc.setQueryData(["notifications"], {
+			pages: [{ items: [], page_size: 20, next_cursor: null, unread_count: 0 }],
+			pageParams: [undefined],
+		});
+		mocks.listNotificationsMock.mockResolvedValue({
+			items: [makeNotification({ task_title: "Recovered assignment" })],
+			page_size: 20,
+			next_cursor: null,
+			unread_count: 1,
+		});
+		render(
+			<QueryClientProvider client={qc}>
+				<NotificationBell />
+			</QueryClientProvider>,
+		);
+		await userEvent.click(
+			screen.getByRole("button", { name: "Notifications" }),
+		);
+		expect(await screen.findByText(/Recovered assignment/)).toBeInTheDocument();
+		qc.clear();
+	});
+
 	it("renders an actor's initials and the assigned/mentioned badge icon", async () => {
 		mocks.listNotificationsMock.mockResolvedValue({
 			items: [
@@ -130,7 +156,7 @@ describe("NotificationBell", () => {
 
 		await renderAndOpen();
 		expect(await screen.findByText("F")).toBeInTheDocument();
-		expect(mocks.listNotificationsMock).toHaveBeenCalledTimes(1);
+		const callsBeforeScroll = mocks.listNotificationsMock.mock.calls.length;
 
 		const list = screen.getByText("F").closest("div.overflow-y-auto");
 		if (!list) throw new Error("expected scrollable notification list");
@@ -149,7 +175,9 @@ describe("NotificationBell", () => {
 		list.dispatchEvent(new Event("scroll", { bubbles: true }));
 
 		await waitFor(() => {
-			expect(mocks.listNotificationsMock).toHaveBeenCalledTimes(2);
+			expect(mocks.listNotificationsMock).toHaveBeenCalledTimes(
+				callsBeforeScroll + 1,
+			);
 		});
 		expect(await screen.findByText("S")).toBeInTheDocument();
 	});

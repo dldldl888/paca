@@ -54,6 +54,9 @@ export const ApiErrorCode = {
 	// Task domain errors.
 	TaskNotFound: "TASK_NOT_FOUND",
 	TaskTitleInvalid: "TASK_TITLE_INVALID",
+	DraftNotFound: "DRAFT_NOT_FOUND",
+	DraftConflict: "DRAFT_CONFLICT",
+	DraftGenerationPending: "DRAFT_GENERATION_PENDING",
 
 	// Custom field domain errors.
 	CustomFieldNotFound: "CUSTOM_FIELD_NOT_FOUND",

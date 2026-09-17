@@ -12,6 +12,7 @@ import {
 	CheckCircle2,
 	ChevronDown,
 	ChevronRight,
+	ClipboardList,
 	Clock,
 	File,
 	FileText,
@@ -889,6 +890,7 @@ function NavItem({
 
 // ── Project Nav ───────────────────────────────────────────────────────────────
 const PROJECT_NAV_ITEMS = [
+	{ segment: "drafts", icon: ClipboardList, labelKey: "nav.drafts" },
 	{ segment: "agents", icon: Bot, labelKey: "nav.agents" },
 	{ segment: "environments", icon: Server, labelKey: "nav.environments" },
 	{
@@ -924,6 +926,7 @@ function ProjectNav() {
 }
 
 const ANON_HIDDEN_SEGMENTS = new Set([
+	"drafts",
 	"agents",
 	"environments",
 	"conversations",
@@ -940,6 +943,9 @@ function ProjectNavItems({
 	isAnonymous?: boolean;
 }) {
 	const { t } = useTranslation("appShell");
+	const { hasProjectPermission } = useProjectPermissions(projectId);
+	const canManageDrafts =
+		hasProjectPermission("tasks.write") && hasProjectPermission("tasks.manage");
 	const location = useRouterState({ select: (s) => s.location.pathname });
 
 	const [collapsed, setCollapsed] = useState(() => {
@@ -987,7 +993,9 @@ function ProjectNavItems({
 				<SidebarGroupContent>
 					<SidebarMenu>
 						{PROJECT_NAV_ITEMS.filter(
-							(item) => !isAnonymous || !ANON_HIDDEN_SEGMENTS.has(item.segment),
+							(item) =>
+								(!isAnonymous || !ANON_HIDDEN_SEGMENTS.has(item.segment)) &&
+								(item.segment !== "drafts" || canManageDrafts),
 						).map(({ segment, icon: Icon, labelKey }) => {
 							const href = segment
 								? `/projects/${projectId}/${segment}`

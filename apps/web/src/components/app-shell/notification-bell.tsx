@@ -119,7 +119,12 @@ export function NotificationBell() {
 	);
 
 	return (
-		<Popover>
+		<Popover
+			onOpenChange={(open) => {
+				if (open)
+					void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+			}}
+		>
 			<PopoverTrigger
 				className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 				aria-label={t("notifications.title")}

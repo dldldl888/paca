@@ -29,7 +29,8 @@
 		"automation": "Automatisation",
 		"team": "Équipe",
 		"settings": "Paramètres",
-		"changelog": "Nouveautés"
+		"changelog": "Nouveautés",
+		"drafts": "Work goals and drafts"
 	},
 	"projectSwitcher": {
 		"projects": "Projets",

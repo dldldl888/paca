@@ -27,6 +27,7 @@ import { Route as AuthenticatedAdminPluginsIndexRouteImport } from './routes/_au
 import { Route as AuthenticatedAdminGlobalRolesIndexRouteImport } from './routes/_authenticated/admin/global-roles/index'
 import { Route as AuthenticatedAdminChangelogIndexRouteImport } from './routes/_authenticated/admin/changelog/index'
 import { Route as AuthenticatedAdminAgentsIndexRouteImport } from './routes/_authenticated/admin/agents/index'
+import { Route as AuthenticatedProjectsProjectIdDraftsRouteImport } from './routes/_authenticated/projects/$projectId/drafts'
 import { Route as AuthenticatedProjectsProjectIdConversationsRouteImport } from './routes/_authenticated/projects/$projectId/conversations'
 import { Route as AuthenticatedProjectsProjectIdTeamIndexRouteImport } from './routes/_authenticated/projects/$projectId/team/index'
 import { Route as AuthenticatedProjectsProjectIdSettingsIndexRouteImport } from './routes/_authenticated/projects/$projectId/settings/index'
@@ -153,6 +154,12 @@ const AuthenticatedAdminAgentsIndexRoute =
     id: '/admin/agents/',
     path: '/admin/agents/',
     getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedProjectsProjectIdDraftsRoute =
+  AuthenticatedProjectsProjectIdDraftsRouteImport.update({
+    id: '/drafts',
+    path: '/drafts',
+    getParentRoute: () => AuthenticatedProjectsProjectIdRoute,
   } as any)
 const AuthenticatedProjectsProjectIdConversationsRoute =
   AuthenticatedProjectsProjectIdConversationsRouteImport.update({
@@ -321,6 +328,7 @@ export interface FileRoutesByFullPath {
   '/home/': typeof AuthenticatedHomeIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
   '/projects/$projectId/conversations': typeof AuthenticatedProjectsProjectIdConversationsRouteWithChildren
+  '/projects/$projectId/drafts': typeof AuthenticatedProjectsProjectIdDraftsRoute
   '/admin/agents/': typeof AuthenticatedAdminAgentsIndexRoute
   '/admin/changelog/': typeof AuthenticatedAdminChangelogIndexRoute
   '/admin/global-roles/': typeof AuthenticatedAdminGlobalRolesIndexRoute
@@ -361,6 +369,7 @@ export interface FileRoutesByTo {
   '/conversations': typeof AuthenticatedConversationsIndexRoute
   '/home': typeof AuthenticatedHomeIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
+  '/projects/$projectId/drafts': typeof AuthenticatedProjectsProjectIdDraftsRoute
   '/admin/agents': typeof AuthenticatedAdminAgentsIndexRoute
   '/admin/changelog': typeof AuthenticatedAdminChangelogIndexRoute
   '/admin/global-roles': typeof AuthenticatedAdminGlobalRolesIndexRoute
@@ -406,6 +415,7 @@ export interface FileRoutesById {
   '/_authenticated/home/': typeof AuthenticatedHomeIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
   '/_authenticated/projects/$projectId/conversations': typeof AuthenticatedProjectsProjectIdConversationsRouteWithChildren
+  '/_authenticated/projects/$projectId/drafts': typeof AuthenticatedProjectsProjectIdDraftsRoute
   '/_authenticated/admin/agents/': typeof AuthenticatedAdminAgentsIndexRoute
   '/_authenticated/admin/changelog/': typeof AuthenticatedAdminChangelogIndexRoute
   '/_authenticated/admin/global-roles/': typeof AuthenticatedAdminGlobalRolesIndexRoute
@@ -451,6 +461,7 @@ export interface FileRouteTypes {
     | '/home/'
     | '/profile/'
     | '/projects/$projectId/conversations'
+    | '/projects/$projectId/drafts'
     | '/admin/agents/'
     | '/admin/changelog/'
     | '/admin/global-roles/'
@@ -491,6 +502,7 @@ export interface FileRouteTypes {
     | '/conversations'
     | '/home'
     | '/profile'
+    | '/projects/$projectId/drafts'
     | '/admin/agents'
     | '/admin/changelog'
     | '/admin/global-roles'
@@ -535,6 +547,7 @@ export interface FileRouteTypes {
     | '/_authenticated/home/'
     | '/_authenticated/profile/'
     | '/_authenticated/projects/$projectId/conversations'
+    | '/_authenticated/projects/$projectId/drafts'
     | '/_authenticated/admin/agents/'
     | '/_authenticated/admin/changelog/'
     | '/_authenticated/admin/global-roles/'
@@ -701,6 +714,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/agents/'
       preLoaderRoute: typeof AuthenticatedAdminAgentsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/projects/$projectId/drafts': {
+      id: '/_authenticated/projects/$projectId/drafts'
+      path: '/drafts'
+      fullPath: '/projects/$projectId/drafts'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdDraftsRouteImport
+      parentRoute: typeof AuthenticatedProjectsProjectIdRoute
     }
     '/_authenticated/projects/$projectId/conversations': {
       id: '/_authenticated/projects/$projectId/conversations'
@@ -910,6 +930,7 @@ const AuthenticatedProjectsProjectIdConversationsRouteWithChildren =
 
 interface AuthenticatedProjectsProjectIdRouteChildren {
   AuthenticatedProjectsProjectIdConversationsRoute: typeof AuthenticatedProjectsProjectIdConversationsRouteWithChildren
+  AuthenticatedProjectsProjectIdDraftsRoute: typeof AuthenticatedProjectsProjectIdDraftsRoute
   AuthenticatedProjectsProjectIdIndexRoute: typeof AuthenticatedProjectsProjectIdIndexRoute
   AuthenticatedProjectsProjectIdAutomationAutomationIdRoute: typeof AuthenticatedProjectsProjectIdAutomationAutomationIdRoute
   AuthenticatedProjectsProjectIdDocsDocIdRoute: typeof AuthenticatedProjectsProjectIdDocsDocIdRoute
@@ -936,6 +957,8 @@ const AuthenticatedProjectsProjectIdRouteChildren: AuthenticatedProjectsProjectI
   {
     AuthenticatedProjectsProjectIdConversationsRoute:
       AuthenticatedProjectsProjectIdConversationsRouteWithChildren,
+    AuthenticatedProjectsProjectIdDraftsRoute:
+      AuthenticatedProjectsProjectIdDraftsRoute,
     AuthenticatedProjectsProjectIdIndexRoute:
       AuthenticatedProjectsProjectIdIndexRoute,
     AuthenticatedProjectsProjectIdAutomationAutomationIdRoute:
