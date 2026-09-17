@@ -541,25 +541,20 @@ func (a *App) Run() error {
 // Shutdown gracefully stops the server with the given timeout.
 func (a *App) Shutdown(ctx context.Context) error {
 	a.log.Info("shutting down server")
-	a.activityConsumer.Stop()
-	a.docActivityConsumer.Stop()
-	a.notificationConsumer.Stop()
-	a.pluginEventConsumer.Stop()
-	a.environmentConsumer.Stop()
-	a.automationConsumer.Stop()
-	a.agentQueueConsumer.Stop()
-	a.dueDateScheduler.Stop()
-	a.cronScheduler.Stop()
-	a.waitScheduler.Stop()
-	if a.deliveryStop != nil {
-		if err := a.deliveryStop(ctx); err != nil {
-			return err
-		}
+	var stops []func() error
+	for _, stop := range []func(){
+		a.activityConsumer.Stop, a.docActivityConsumer.Stop, a.notificationConsumer.Stop,
+		a.pluginEventConsumer.Stop, a.automationConsumer.Stop,
+		a.agentQueueConsumer.Stop, a.dueDateScheduler.Stop, a.cronScheduler.Stop, a.waitScheduler.Stop,
+	} {
+		stops = append(stops, func() error { stop(); return nil })
 	}
+	stops = append(stops, a.environmentConsumer.Stop)
+	var closePublisher func()
 	if a.publisher != nil {
-		a.publisher.Close()
+		closePublisher = a.publisher.Close
 	}
-	return a.server.Shutdown(ctx)
+	return shutdown(ctx, a.server, stops, a.deliveryStop, closePublisher)
 }
 
 // seedAdmin ensures the default admin account exists in the database.

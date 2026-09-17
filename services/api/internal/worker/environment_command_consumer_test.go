@@ -182,10 +182,9 @@ func TestStop_WaitsForInFlightCommand(t *testing.T) {
 	}()
 	close(c.doneCh) // simulate run()'s read loop having already exited
 
-	stopped := make(chan struct{})
+	stopped := make(chan error, 1)
 	go func() {
-		c.Stop()
-		close(stopped)
+		stopped <- c.Stop()
 	}()
 
 	select {
@@ -198,8 +197,8 @@ func TestStop_WaitsForInFlightCommand(t *testing.T) {
 	close(release)
 
 	select {
-	case <-stopped:
-		// good: Stop returned only after the in-flight command finished.
+	case err := <-stopped:
+		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Stop never returned after the in-flight command finished")
 	}
@@ -221,17 +220,18 @@ func TestStop_AbandonsAfterDrainTimeout(t *testing.T) {
 	c := NewEnvironmentCommandConsumer(client, &fakeLifecycleExecutor{}, discardLogger())
 
 	c.wg.Add(1) // deliberately never Done — simulates a command that never returns
+	defer c.wg.Done()
 	close(c.doneCh)
 
 	start := time.Now()
-	stopped := make(chan struct{})
+	stopped := make(chan error, 1)
 	go func() {
-		c.Stop()
-		close(stopped)
+		stopped <- c.Stop()
 	}()
 
 	select {
-	case <-stopped:
+	case err := <-stopped:
+		require.ErrorIs(t, err, context.DeadlineExceeded, "undrained commands must not be reported as a successful shutdown")
 		elapsed := time.Since(start)
 		if elapsed < environmentCommandDrainTimeout {
 			t.Errorf("Stop returned after %s, before environmentCommandDrainTimeout (%s) elapsed", elapsed, environmentCommandDrainTimeout)

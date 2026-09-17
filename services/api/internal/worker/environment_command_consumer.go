@@ -136,19 +136,9 @@ func (c *EnvironmentCommandConsumer) ensureGroup(ctx context.Context, startID st
 }
 
 // environmentCommandDrainTimeout bounds how long Stop will wait for
-// in-flight handle goroutines before giving up on them — see Stop's own
-// doc comment for why it waits at all. Deliberately NOT the full remaining
-// shutdown budget bootstrap.App.Shutdown's caller passes down to
-// a.server.Shutdown(ctx) (10s as of main.go) — Stop takes no ctx and isn't
-// given a share of that deadline, so a slow drain here can never crowd out
-// the HTTP server's own graceful drain, which runs right after every
-// consumer's Stop returns. Kept short enough to leave that server drain a
-// real remainder of a typical shutdown budget, long enough that a
-// same-environment BRPop wait that's already close to done (agent-runner's
-// own operations are usually fast — see aiAgentProvisionHTTPTimeout's own
-// doc comment) gets to actually finish rather than being cut off on
-// principle. If bootstrap.App.Shutdown's own budget is ever changed, revisit
-// this alongside it.
+// in-flight handle goroutines after the read loop exits. App.Shutdown
+// drains HTTP and all consumers concurrently under its overall deadline;
+// this additional bound does not imply the commands actually finished.
 const environmentCommandDrainTimeout = 5 * time.Second
 
 // Stop signals the consumer to stop reading new messages, then waits — up
@@ -175,7 +165,9 @@ const environmentCommandDrainTimeout = 5 * time.Second
 // replacement pod started under a new hostname will NOT automatically pick
 // those up (this package has no XAUTOCLAIM-style reclaim of another
 // consumer's PEL) — logged here so that's visible rather than silent.
-func (c *EnvironmentCommandConsumer) Stop() {
+// Stop returns an error in that case so shutdown cannot mistake abandoned
+// work for a completed drain and unregister the delivery participant.
+func (c *EnvironmentCommandConsumer) Stop() error {
 	close(c.stopCh)
 	<-c.doneCh
 
@@ -189,7 +181,9 @@ func (c *EnvironmentCommandConsumer) Stop() {
 	case <-drained:
 	case <-time.After(environmentCommandDrainTimeout):
 		c.log.Warn("environment command consumer: drain timeout reached before all in-flight commands finished — remaining commands were abandoned mid-flight, their stream messages left unacked in this consumer's own PEL")
+		return fmt.Errorf("environment command consumer: in-flight commands did not drain: %w", context.DeadlineExceeded)
 	}
+	return nil
 }
 
 // run is the main loop executed in a goroutine by Start.
