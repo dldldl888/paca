@@ -224,6 +224,7 @@ func derefOr(s *string, fallback string) string {
 }
 
 type acpAgentRecord struct {
+	Handle         string          `db:"handle"`
 	ID             uuid.UUID       `db:"id"`
 	ProjectID      *uuid.UUID      `db:"project_id"`
 	ACPProvider    *string         `db:"acp_provider"`
@@ -242,7 +243,7 @@ type acpAgentRecord struct {
 func (r *AgentRepository) FindByBridgeTokenHash(ctx context.Context, tokenHash string) (*agent.ACPConfig, error) {
 	var rec acpAgentRecord
 	err := r.db.GetContext(ctx, &rec, `
-		SELECT id, project_id, acp_provider, acp_command, timeout_minutes
+		SELECT id, handle, project_id, acp_provider, acp_command, timeout_minutes
 		FROM agents
 		WHERE acp_bridge_token_hash = $1 AND agent_type = 'acp' AND deleted_at IS NULL
 	`, tokenHash)
@@ -265,7 +266,7 @@ func (r *AgentRepository) FindByBridgeTokenHash(ctx context.Context, tokenHash s
 func (r *AgentRepository) FindACPByID(ctx context.Context, id uuid.UUID) (*agent.ACPConfig, error) {
 	var rec acpAgentRecord
 	err := r.db.GetContext(ctx, &rec, `
-		SELECT id, project_id, acp_provider, acp_command, timeout_minutes
+		SELECT id, handle, project_id, acp_provider, acp_command, timeout_minutes
 		FROM agents
 		WHERE id = $1 AND agent_type = 'acp' AND deleted_at IS NULL
 	`, id)
@@ -283,6 +284,7 @@ func (rec acpAgentRecord) toACPConfig() (*agent.ACPConfig, error) {
 		}
 	}
 	return &agent.ACPConfig{
+		Handle:         rec.Handle,
 		ID:             rec.ID,
 		ProjectID:      rec.ProjectID,
 		ACPProvider:    derefOr(rec.ACPProvider, ""),

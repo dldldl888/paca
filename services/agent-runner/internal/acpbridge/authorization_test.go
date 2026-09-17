@@ -99,8 +99,8 @@ func TestNativeAuthorizationACKUsesCurrentSocketAndFencedShutdown(t *testing.T) 
 	}
 }
 
-func TestCompanyContextDispatchFailsClosed(t *testing.T) {
-	for _, mode := range []string{"valid", "blocked"} {
+func TestCompanyContextDispatchSelectsExplicitHermes(t *testing.T) {
+	for _, mode := range []string{"valid", "other_custom", "handle_prefix", "other_provider"} {
 		t.Run(mode, func(t *testing.T) {
 			registry, redis := newTestRegistry(t)
 			aid, cid := uuid.New(), uuid.New()
@@ -117,7 +117,7 @@ func TestCompanyContextDispatchFailsClosed(t *testing.T) {
 						Begin bool `json:"begin_turn"`
 					}
 					json.NewDecoder(r.Body).Decode(&in)
-					if in.Begin && !contextRead {
+					if mode == "valid" && in.Begin && !contextRead {
 						t.Error("native history latch began before context fetch succeeded")
 					}
 					data["project_id"] = ""
@@ -128,9 +128,8 @@ func TestCompanyContextDispatchFailsClosed(t *testing.T) {
 					data["comment_id"] = ""
 					data["chat_session_id"] = ""
 				case "/api/internal/agent-runs/company-context":
-					if mode == "blocked" {
-						w.WriteHeader(409)
-						return
+					if mode != "valid" {
+						t.Error("unrelated ACP configuration read company context")
 					}
 					contextRead = mode == "valid"
 					data["text"] = "合成验证资料 更新时间2026-09-17"
@@ -157,18 +156,18 @@ func TestCompanyContextDispatchFailsClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			dispatcher := &Dispatcher{RunAuthorizer: auth, Registry: registry}
-			err := dispatcher.DispatchTrigger(t.Context(), agent.Trigger{ConversationID: cid, Message: "公司事实?"}, &agent.ACPConfig{ID: aid, ACPProvider: "hermes"})
-			if mode != "valid" {
-				if err == nil {
-					t.Fatal("unsafe dispatch accepted")
-				}
-				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-				defer cancel()
-				if msg, e := sub.ReceiveMessage(ctx); e == nil {
-					t.Fatal("unsafe body published", msg)
-				}
-				return
+			cfg := &agent.ACPConfig{ID: aid, Handle: "hermes", ACPProvider: "custom"}
+			if mode == "other_custom" {
+				cfg.Handle = "other"
 			}
+			if mode == "handle_prefix" {
+				cfg.Handle = "hermes-other"
+			}
+			if mode == "other_provider" {
+				cfg.ACPProvider = "claude-code"
+			}
+			err := dispatcher.DispatchTrigger(t.Context(), agent.Trigger{ConversationID: cid, Message: "公司事实?"}, cfg)
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,6 +176,12 @@ func TestCompanyContextDispatchFailsClosed(t *testing.T) {
 			msg, err := sub.ReceiveMessage(ctx)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if mode != "valid" {
+				if strings.Contains(msg.Payload, "合成验证资料") || !strings.Contains(msg.Payload, "/paca") {
+					t.Fatal("changed unrelated ACP prompt", msg.Payload)
+				}
+				return
 			}
 			if !strings.Contains(msg.Payload, "合成验证资料") || strings.Contains(msg.Payload, "/paca") || strings.Contains(msg.Payload, "synthetic") {
 				t.Fatal(msg.Payload)

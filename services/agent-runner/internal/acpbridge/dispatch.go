@@ -14,10 +14,8 @@ import (
 )
 
 const (
-	offlineMessage = "Local ACP bridge is not connected. Run `paca-acp-bridge run --agent-id " +
-		"<id> --token <token>` in your project folder, then try again."
-	timeoutMessage = "ACP turn timed out waiting for a result from the local bridge. Check " +
-		"that `paca-acp-bridge run` is still running and reachable, then retry."
+	offlineMessage = "助手当前离线，请联系管理员检查连接后重试。"
+	timeoutMessage = "助手响应超时，请稍后重试；若持续发生，请联系管理员。"
 )
 
 // Dispatcher routes triggers for acp-type agents to their connected local
@@ -57,9 +55,11 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 		return d.failOffline(ctx, trigger)
 	}
 
+	// Explicit persisted Hermes configuration; other custom ACP agents retain their provider behavior.
+	companyAssistant := cfg.ACPProvider == "custom" && cfg.Handle == "hermes"
 	var authorization *runauth.Authorization
 	if d.RunAuthorizer != nil {
-		authorization, err = d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, cfg.ACPProvider != "hermes")
+		authorization, err = d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, !companyAssistant)
 		if errors.Is(err, runauth.ErrUnavailable) {
 			return err
 		}
@@ -78,33 +78,21 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 	}
 
 	message := BuildACPMessage(trigger, cfg.ACPProvider)
-	if authorization != nil && cfg.ACPProvider == "hermes" {
+	if authorization != nil && companyAssistant {
 		company, contextErr := d.RunAuthorizer.CompanyContext(ctx, authorization)
 		if contextErr != nil {
-			if errors.Is(contextErr, runauth.ErrBlocked) {
-				return contextErr
-			}
-			failed, failErr := d.ConvRepo.FailIfNotTerminal(ctx, trigger.ConversationID, "公司资料暂时无法读取，请稍后重试。")
-			if failErr != nil {
-				return failErr
-			}
-			if !failed {
-				return nil
-			}
-			if publishErr := d.Publisher.PublishRealtime(ctx, trigger.ProjectID, trigger.ConversationID, "agent.conversation.failed", nil, trigger.ActorUserID); publishErr != nil {
-				d.Log.Warn("acpbridge: failed to publish company context failure", "conversation_id", trigger.ConversationID, "error", publishErr)
-			}
-			return d.Publisher.PublishConversationStatus(ctx, trigger.ConversationID, "failed")
+			return d.failCompanyContext(ctx, trigger)
 		}
+
 		// A failed context fetch must not claim a native turn that never existed.
 		begun, beginErr := d.RunAuthorizer.Authorize(ctx, trigger.ConversationID, cfg.ID, true)
 		if beginErr != nil {
-			return beginErr
+			return d.failCompanyContext(ctx, trigger)
 		}
 		identity := *begun
 		identity.HasPriorTurns = authorization.HasPriorTurns
 		if identity != *authorization {
-			return runauth.ErrUnavailable
+			return d.failCompanyContext(ctx, trigger)
 		}
 		authorization = begun
 		message = BuildPrivateCompanyMessage(trigger, company.Text)
@@ -212,4 +200,20 @@ func uuidPtrOrEmpty(id *uuid.UUID) string {
 		return ""
 	}
 	return id.String()
+}
+
+// This only terminates a run; it does not mutate authority. A delivery close may
+// wait on our lease while this conditional update preserves any existing terminal.
+func (d *Dispatcher) failCompanyContext(ctx context.Context, trigger agent.Trigger) error {
+	failed, err := d.ConvRepo.FailIfNotTerminal(ctx, trigger.ConversationID, "公司资料暂时无法读取，请稍后重试。")
+	if err != nil {
+		return err
+	}
+	if !failed {
+		return nil
+	}
+	if err = d.Publisher.PublishRealtime(ctx, trigger.ProjectID, trigger.ConversationID, "agent.conversation.failed", nil, trigger.ActorUserID); err != nil {
+		d.Log.Warn("acpbridge: failed to publish company context failure", "conversation_id", trigger.ConversationID, "error", err)
+	}
+	return d.Publisher.PublishConversationStatus(ctx, trigger.ConversationID, "failed")
 }

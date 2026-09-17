@@ -10,7 +10,8 @@ import "github.com/google/uuid"
 // Mirrors services/ai-agent's AgentConfig fields actually read by
 // acp_dispatch.py.
 type ACPConfig struct {
-	ID uuid.UUID
+	ID     uuid.UUID
+	Handle string
 	// ProjectID is nil for a global-scope ACP agent — mirrors
 	// find_agent_by_bridge_token_hash's (agent_id, project_id) return,
 	// where project_id is None for the same case.
