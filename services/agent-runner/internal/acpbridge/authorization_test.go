@@ -177,6 +177,17 @@ func TestCompanyContextDispatchSelectsExplicitHermes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "valid" {
+				if payload["display_message"] != "公司事实?" {
+					t.Fatalf("missing original display input: %v", payload["display_message"])
+				}
+			} else if _, exists := payload["display_message"]; exists {
+				t.Fatal("changed unrelated ACP display")
+			}
 			if mode != "valid" {
 				if strings.Contains(msg.Payload, "合成验证资料") || !strings.Contains(msg.Payload, "/paca") {
 					t.Fatal("changed unrelated ACP prompt", msg.Payload)

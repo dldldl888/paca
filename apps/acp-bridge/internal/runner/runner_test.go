@@ -377,6 +377,11 @@ func runFakeACPAgent(behavior string) {
 		var msg struct {
 			ID     json.RawMessage `json:"id,omitempty"`
 			Method string          `json:"method"`
+			Params struct {
+				Prompt []struct {
+					Text string `json:"text"`
+				} `json:"prompt"`
+			} `json:"params"`
 		}
 		if err := json.Unmarshal(in.Bytes(), &msg); err != nil {
 			continue
@@ -394,6 +399,14 @@ func runFakeACPAgent(behavior string) {
 		case "session/set_mode":
 			write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(msg.ID), "result": map[string]any{}})
 		case "session/prompt":
+			if behavior == "echo_prompt" {
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+					"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk",
+						"content": map[string]any{"type": "text", "text": msg.Params.Prompt[0].Text}},
+				}})
+				write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(msg.ID), "result": map[string]any{"stopReason": "end_turn"}})
+				continue
+			}
 			if behavior == "cancel" {
 				// Wait for the client to actually send session/cancel
 				// before answering, so the test's Interrupt call is what
@@ -667,5 +680,65 @@ func TestEndToEndInterruptDuringSessionSetupSuppressesTurnStatus(t *testing.T) {
 		if m["type"] == "turn_status" {
 			t.Fatalf("expected no turn_status for an interrupt during session setup, got %+v", m)
 		}
+	}
+}
+
+// Exercise StartTurn through the actual ACP subprocess wire: changing the
+// model input to display text, or displaying the model input, must both fail.
+func TestEndToEndDisplayMessageKeepsModelPromptAndLegacyFallback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a real subprocess")
+	}
+	setFakeAgentEnv(t, "echo_prompt")
+	for _, tc := range []struct {
+		name     string
+		display  any
+		wantUser string
+	}{
+		{"explicit", "请解释休假规定", "请解释休假规定"},
+		{"legacy", nil, "内部指令与合成公司资料\n用户请求：请解释休假规定"},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, sent := newTestRunner(t)
+			t.Cleanup(r.Close)
+			r.conversations["conv-1"] = &conversationState{chunks: newChunkBuffer(), acpProvider: "custom", command: []string{os.Args[0]}}
+			const modelPrompt = "内部指令与合成公司资料\n用户请求：请解释休假规定"
+			msg := map[string]any{"conversation_id": "conv-1", "project_id": "proj-1", "message": modelPrompt}
+			if tc.display != nil {
+				msg["display_message"] = tc.display
+			}
+			r.StartTurn(context.Background(), msg)
+			waitForStatus(t, sent, "finished")
+			var userTexts, modelTexts []string
+			for _, event := range sent.all() {
+				if event["event_type"] != "user_message" && event["event_type"] != "agent_message_chunk" {
+					continue
+				}
+				var payload struct {
+					Content struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				}
+				if err := json.Unmarshal(event["payload"].(json.RawMessage), &payload); err != nil {
+					t.Fatal(err)
+				}
+				if event["event_type"] == "user_message" {
+					userTexts = append(userTexts, payload.Content.Text)
+				} else {
+					modelTexts = append(modelTexts, payload.Content.Text)
+				}
+			}
+			if len(modelTexts) != 1 || modelTexts[0] != modelPrompt {
+				t.Fatalf("model received %q; want full prompt", modelTexts)
+			}
+			if tc.wantUser == "" {
+				if len(userTexts) != 0 {
+					t.Fatalf("empty display leaked prompt: %q", userTexts)
+				}
+			} else if len(userTexts) != 1 || userTexts[0] != tc.wantUser {
+				t.Fatalf("user history = %q, want %q", userTexts, tc.wantUser)
+			}
+		})
 	}
 }

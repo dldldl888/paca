@@ -264,6 +264,10 @@ func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
 	conversationID, _ := msg["conversation_id"].(string)
 	projectID, _ := msg["project_id"].(string)
 	message, _ := msg["message"].(string)
+	displayMessage, hasDisplayMessage := msg["display_message"].(string)
+	if !hasDisplayMessage {
+		displayMessage = message
+	}
 	if conversationID == "" {
 		return
 	}
@@ -353,7 +357,7 @@ func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
 	state.turnDone = make(chan struct{})
 	state.mu.Unlock()
 
-	go r.runTurn(turnCtx, state, conversationID, projectID, message)
+	go r.runTurn(turnCtx, state, conversationID, projectID, message, displayMessage)
 }
 
 // Interrupt handles a stop_turn/pause_turn message — both just interrupt
@@ -421,7 +425,7 @@ func (r *Runner) Interrupt(conversationID string) {
 	}()
 }
 
-func (r *Runner) runTurn(ctx context.Context, state *conversationState, conversationID, projectID, message string) {
+func (r *Runner) runTurn(ctx context.Context, state *conversationState, conversationID, projectID, message, displayMessage string) {
 	defer r.finishTurn(state)
 	if r.cfg.RequireAuthorization {
 		ctx = acpclient.WithRequestFence(ctx, func(method string) (func(), error) { return r.requestFence(ctx, state, method) })
@@ -454,7 +458,7 @@ func (r *Runner) runTurn(ctx context.Context, state *conversationState, conversa
 	if ctx.Err() != nil {
 		return
 	}
-	r.emitUserMessage(state, conversationID, projectID, message)
+	r.emitUserMessage(state, conversationID, projectID, displayMessage)
 
 	state.updateMu.Lock()
 	state.mu.Lock()

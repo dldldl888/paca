@@ -113,6 +113,9 @@ func (d *Dispatcher) DispatchTrigger(ctx context.Context, trigger agent.Trigger,
 		"comment_id":      uuidPtrOrEmpty(trigger.CommentID),
 		"chat_session_id": uuidPtrOrEmpty(trigger.ChatSessionID),
 	}
+	if authorization != nil && companyAssistant {
+		payload["display_message"] = trigger.Message
+	}
 	if authorization != nil {
 		payload["authorization_epoch"] = authorization.AuthorizationEpoch
 		payload["agent_id"] = authorization.AgentID
