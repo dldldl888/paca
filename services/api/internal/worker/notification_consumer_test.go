@@ -17,6 +17,7 @@ import (
 	notificationdom "github.com/Paca-AI/api/internal/domain/notification"
 	projectdom "github.com/Paca-AI/api/internal/domain/project"
 	userdom "github.com/Paca-AI/api/internal/domain/user"
+	"github.com/Paca-AI/api/internal/events"
 )
 
 func discardLogger() *slog.Logger {
@@ -149,12 +150,13 @@ type fakeNotificationSvc struct {
 	notificationdom.Service
 	called   bool
 	gotInput notificationdom.NotifyAssignedInput
+	failure  error
 }
 
 func (f *fakeNotificationSvc) NotifyAssigned(_ context.Context, in notificationdom.NotifyAssignedInput) error {
 	f.called = true
 	f.gotInput = in
-	return nil
+	return f.failure
 }
 
 func newTestNotificationConsumer(t *testing.T, memberRepo memberReader, agentSvc agentTaskTrigger) *NotificationConsumer {
@@ -292,5 +294,40 @@ func TestNotificationConsumer_AgentAssignsHuman_PassesActorAgentID(t *testing.T)
 	}
 	if notificationSvc.gotInput.ActorAgentID == nil || *notificationSvc.gotInput.ActorAgentID != actorAgentID {
 		t.Fatalf("expected ActorAgentID %v, got %v", actorAgentID, notificationSvc.gotInput.ActorAgentID)
+	}
+}
+
+func TestNotificationConsumerRetryKeepsStableSourceAndPending(t *testing.T) {
+	svc := &fakeNotificationSvc{failure: errors.New("synthetic pre-write outage")}
+	c := newTestNotificationConsumerWithNotificationSvc(t, svc, nil, nil)
+	c.consumerName = "synthetic-test"
+	ctx := context.Background()
+	msg := agentAssignmentMessage(t, assignmentStreamPayload{TaskID: uuid.NewString(), ProjectID: uuid.NewString(), NewAssigneeMemberID: uuid.NewString(), ActorUserID: uuid.NewString()})
+	id, err := c.client.XAdd(ctx, &redis.XAddArgs{Stream: events.StreamTaskAssignments, Values: msg.Values}).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.ensureGroup(ctx, "0"); err != nil {
+		t.Fatal(err)
+	}
+	streams, err := c.client.XReadGroup(ctx, &redis.XReadGroupArgs{Group: notificationConsumerGroup, Consumer: c.consumerName, Streams: []string{events.StreamTaskAssignments, ">"}, Count: 1}).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered := streams[0].Messages[0]
+	c.handle(delivered)
+	pending, err := c.client.XPending(ctx, events.StreamTaskAssignments, notificationConsumerGroup).Result()
+	if err != nil || pending.Count != 1 {
+		t.Fatal("failed notification ACKed", pending, err)
+	}
+	if svc.gotInput.SourceEventID != events.StreamTaskAssignments+":"+id {
+		t.Fatal("missing stable namespace+event", svc.gotInput.SourceEventID)
+	}
+	first := svc.gotInput.SourceEventID
+	svc.failure = nil
+	c.handle(delivered)
+	pending, err = c.client.XPending(ctx, events.StreamTaskAssignments, notificationConsumerGroup).Result()
+	if err != nil || pending.Count != 0 || svc.gotInput.SourceEventID != first {
+		t.Fatal("retry identity/ACK", pending, err)
 	}
 }

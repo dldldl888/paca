@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
@@ -126,14 +127,17 @@ func (r *NotificationRepository) Create(ctx context.Context, n *notificationdom.
 		s := n.TaskID.String()
 		taskID = &s
 	}
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO notifications (id, recipient_user_id, actor_member_id, type, task_id, project_id, read_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+	res, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
+		INSERT INTO notifications (id, recipient_user_id, actor_member_id, type, task_id, project_id, read_at, created_at, source_event_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (source_event_id,recipient_user_id) WHERE source_event_id IS NOT NULL DO NOTHING`,
 		n.ID.String(), n.RecipientUserID.String(), actorMemberID,
-		string(n.Type), taskID, n.ProjectID.String(), n.ReadAt, n.CreatedAt,
+		string(n.Type), taskID, n.ProjectID.String(), n.ReadAt, n.CreatedAt, n.SourceEventID,
 	)
 	if err != nil {
 		return fmt.Errorf("notification repo: create: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notificationdom.ErrDuplicate
 	}
 	return nil
 }
@@ -172,6 +176,9 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 	scopes := []taskdom.AccessScope{}
 	for _, project := range projects {
 		scope, err := policy.ResolveTaskAccess(authz.WithActorID(ctx, userID), project)
+		if errors.Is(err, taskdom.ErrTaskNotFound) || errors.Is(err, taskdom.ErrTaskForbidden) {
+			continue
+		}
 		if err != nil {
 			return nil, false, err
 		}

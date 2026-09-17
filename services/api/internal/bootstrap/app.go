@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Paca-AI/api/internal/platform/delivery"
+	draftsvc "github.com/Paca-AI/api/internal/service/draft"
 	"log/slog"
 	"net/http"
 	"time"
@@ -263,6 +264,7 @@ func New(cfg *config.Config) (*App, error) {
 		}
 	}
 	agentService.WithPrivateRuns(instanceID, agentRepo, docService, annotationService, automationService)
+	draftService := draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher)
 	var coordinator *pgRepo.AuthorizationDelivery
 	var deliveryStop func(context.Context) error
 	if instanceID != uuid.Nil {
@@ -270,6 +272,7 @@ func New(cfg *config.Config) (*App, error) {
 		coordinator = pgRepo.NewAuthorizationDelivery(db, redisClient, instanceID.String())
 		coordinator.Reconcile = agentService.ReconcilePrivateRuns
 		agentService.WithDeliveryGate(gate)
+		draftService.WithDeliveryGate(gate)
 		notificationService.WithCurrentDelivery(gate, taskService)
 		bootCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		deliveryStop, err = coordinator.StartParticipant(bootCtx, gate)
@@ -449,6 +452,7 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	deps := router.Deps{
+		Draft:                handler.NewDraftHandler(draftService),
 		TokenManager:         tokenManager,
 		APIKeyAuth:           apiKeyService,
 		Authorizer:           authorizer,

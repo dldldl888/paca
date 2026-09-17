@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	draftsvc "github.com/Paca-AI/api/internal/service/draft"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
@@ -259,6 +260,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		RefreshSessionTTL: e2eRefreshSessionTTL,
 	}
 	engine := router.New(router.Deps{
+		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher)),
 		TokenManager:         tm,
 		APIKeyAuth:           apiKeyService,
 		Authorizer:           authz.NewAuthorizer(authzStore),

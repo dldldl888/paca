@@ -2,7 +2,9 @@ package notificationsvc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"sort"
 	"sync"
 	"testing"
@@ -155,7 +157,7 @@ func (r *fakeMemberRepo) FindMemberByID(_ context.Context, id uuid.UUID) (*proje
 	defer r.mu.RUnlock()
 	m, ok := r.byID[id]
 	if !ok {
-		return nil, fmt.Errorf("member not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", projectdom.ErrMemberNotFound, id)
 	}
 	cp := *m
 	return &cp, nil
@@ -166,7 +168,7 @@ func (r *fakeMemberRepo) FindMemberByUserProject(_ context.Context, userID, proj
 	defer r.mu.RUnlock()
 	m, ok := r.byUser[userProjectKey{userID, projectID}]
 	if !ok {
-		return nil, fmt.Errorf("member not found for user %s project %s", userID, projectID)
+		return nil, fmt.Errorf("%w for user %s project %s", projectdom.ErrMemberNotFound, userID, projectID)
 	}
 	cp := *m
 	return &cp, nil
@@ -178,7 +180,7 @@ func (r *fakeMemberRepo) FindMemberByActor(ctx context.Context, projectID, actor
 		m, ok := r.byAgent[userProjectKey{*agentID, projectID}]
 		r.mu.RUnlock()
 		if !ok {
-			return nil, fmt.Errorf("member not found for agent %s project %s", *agentID, projectID)
+			return nil, fmt.Errorf("%w for agent %s project %s", projectdom.ErrMemberNotFound, *agentID, projectID)
 		}
 		cp := *m
 		return &cp, nil
@@ -1114,5 +1116,54 @@ func TestNotifyTaskDescriptionMentioned_MemberNotified(t *testing.T) {
 
 	if got := users.callCount(); got != 1 {
 		t.Errorf("expected the actor-name lookup to proceed for a mentioned project member, got %d calls", got)
+	}
+}
+
+type failingAssignmentMembers struct {
+	memberLookup
+	failure error
+	actor   bool
+}
+
+func (f failingAssignmentMembers) FindMemberByID(ctx context.Context, id uuid.UUID) (*projectdom.ProjectMember, error) {
+	if !f.actor {
+		return nil, f.failure
+	}
+	return f.memberLookup.FindMemberByID(ctx, id)
+}
+func (f failingAssignmentMembers) FindMemberByActor(ctx context.Context, pid, uid uuid.UUID, aid *uuid.UUID) (*projectdom.ProjectMember, error) {
+	if f.actor {
+		return nil, f.failure
+	}
+	return f.memberLookup.FindMemberByActor(ctx, pid, uid, aid)
+}
+
+type failingAssignmentAccess struct{ failure error }
+
+func (f failingAssignmentAccess) CheckTaskAccess(context.Context, uuid.UUID, uuid.UUID, taskdom.AccessAction) (*taskdom.Task, error) {
+	return nil, f.failure
+}
+func TestNotifyAssignedInfrastructureFailuresRemainRetryable(t *testing.T) {
+	outage := errors.New("synthetic database unavailable")
+	for _, stage := range []string{"recipient", "actor", "authority"} {
+		t.Run(stage, func(t *testing.T) {
+			members := newFakeMemberRepo()
+			recipient, actor, pid := uuid.New(), uuid.New(), uuid.New()
+			members.add(&projectdom.ProjectMember{ID: recipient, ProjectID: pid, UserID: uuid.New()})
+			repo := newFakeNotificationRepo()
+			svc := New(repo, members, nil)
+			if stage == "authority" {
+				svc.WithCurrentDelivery(nil, failingAssignmentAccess{outage})
+			} else {
+				svc.memberRepo = failingAssignmentMembers{members, outage, stage == "actor"}
+			}
+			err := svc.NotifyAssigned(context.Background(), notificationdom.NotifyAssignedInput{TaskID: uuid.New(), ProjectID: pid, NewAssigneeMemberID: recipient, ActorUserID: actor, SourceEventID: "stream:1-0"})
+			if !errors.Is(err, outage) {
+				t.Fatalf("infrastructure failure must prevent ACK, got %v", err)
+			}
+			if len(repo.data) != 0 {
+				t.Fatal("wrote after failed dependency")
+			}
+		})
 	}
 }

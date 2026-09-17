@@ -21,6 +21,7 @@ import (
 
 // Deps holds all handler and middleware dependencies.
 type Deps struct {
+	Draft                *handler.DraftHandler
 	AgentRun             *handler.AgentRunHandler
 	TokenManager         *jwttoken.Manager
 	APIKeyAuth           httpmw.APIKeyAuthenticator
@@ -368,6 +369,20 @@ func New(deps Deps) http.Handler {
 			r.Route("/projects/{projectId}", func(r chi.Router) {
 				r.Use(httpmw.OptionalAuthn(deps.TokenManager, deps.APIKeyAuth))
 				r.Use(httpmw.RequireFreshPassword())
+				if deps.Draft != nil {
+					r.Route("/drafts", func(r chi.Router) {
+						r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+						r.Use(httpmw.RequireJWTAuth())
+						r.Get("/", deps.Draft.List)
+						r.Post("/", deps.Draft.Create)
+						r.Get("/{draftId}", deps.Draft.Get)
+						r.Patch("/{draftId}", deps.Draft.Update)
+						r.Post("/{draftId}/preview", deps.Draft.Preview)
+						r.Post("/{draftId}/publish", deps.Draft.Publish)
+						r.Post("/{draftId}/generate", deps.Draft.Generate)
+						r.Post("/{draftId}/import", deps.Draft.Import)
+					})
+				}
 
 				r.With(httpmw.RequirePublicProjectOrPermissions(deps.ProjectVisibilitySvc, deps.Authorizer,
 					httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},

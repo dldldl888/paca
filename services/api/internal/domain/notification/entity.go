@@ -23,7 +23,8 @@ const (
 
 // Notification is a single notification entry.
 type Notification struct {
-	ID uuid.UUID
+	SourceEventID *string
+	ID            uuid.UUID
 	// RecipientUserID is the users.id of the user who receives this notification.
 	RecipientUserID uuid.UUID
 	// ActorMemberID is the project_members.id of the user who triggered the
@@ -124,8 +125,9 @@ type Service interface {
 
 // NotifyAssignedInput carries data for an assignment notification.
 type NotifyAssignedInput struct {
-	TaskID    uuid.UUID
-	ProjectID uuid.UUID
+	SourceEventID string
+	TaskID        uuid.UUID
+	ProjectID     uuid.UUID
 	// NewAssigneeMemberID is the project_members.id of the new assignee.
 	NewAssigneeMemberID uuid.UUID
 	// ActorUserID is the users.id of the person who made the assignment.
@@ -201,3 +203,5 @@ func DecodeNotificationCursor(s string) (*Cursor, error) {
 	c.CreatedAt = c.CreatedAt.UTC()
 	return &c, nil
 }
+
+var ErrDuplicate = errNotificationNotFound("notification event already handled")

@@ -15,6 +15,7 @@ import (
 	domainauth "github.com/Paca-AI/api/internal/domain/auth"
 	automationdom "github.com/Paca-AI/api/internal/domain/automation"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
+	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	environmentdom "github.com/Paca-AI/api/internal/domain/environment"
 	globalroledom "github.com/Paca-AI/api/internal/domain/globalrole"
 	notificationdom "github.com/Paca-AI/api/internal/domain/notification"
@@ -123,6 +124,12 @@ func statusAndCodeFor(err error) (int, apierr.Code) {
 
 	// Map domain sentinel errors to codes.
 	switch {
+	case errors.Is(err, draftdom.ErrNotFound):
+		return http.StatusNotFound, apierr.Code("DRAFT_NOT_FOUND")
+	case errors.Is(err, draftdom.ErrConflict):
+		return http.StatusConflict, apierr.Code("DRAFT_CONFLICT")
+	case errors.Is(err, draftdom.ErrPending):
+		return http.StatusConflict, apierr.Code("DRAFT_GENERATION_PENDING")
 	case errors.Is(err, domainauth.ErrInvalidCredentials):
 		return http.StatusUnauthorized, apierr.CodeInvalidCredentials
 	case errors.Is(err, domainauth.ErrTokenInvalid):

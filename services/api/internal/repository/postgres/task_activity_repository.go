@@ -126,7 +126,7 @@ func (r *TaskActivityRepository) CreateActivity(ctx context.Context, a *taskdom.
 		s := a.ActorID.String()
 		actorID = &s
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		INSERT INTO task_activities (id, task_id, actor_id, activity_type, content, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		a.ID.String(), a.TaskID.String(), actorID, string(a.ActivityType), content, a.CreatedAt, a.UpdatedAt,

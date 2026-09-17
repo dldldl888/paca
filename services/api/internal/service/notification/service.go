@@ -3,6 +3,7 @@ package notificationsvc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
@@ -144,11 +145,18 @@ func (s *Svc) NotifyAssigned(ctx context.Context, in notificationdom.NotifyAssig
 	// Resolve the new assignee's project-member record to get their user_id.
 	assigneeMember, err := s.memberRepo.FindMemberByID(ctx, in.NewAssigneeMemberID)
 	if err != nil {
-		// The member may have been removed; skip silently.
-		return nil
+		// A removed member is terminal; infrastructure failures must remain retryable.
+		if errors.Is(err, projectdom.ErrMemberNotFound) {
+			return nil
+		}
+		return err
 	}
 
-	if !s.canNotifyTask(ctx, assigneeMember.UserID, in.ProjectID, in.TaskID) {
+	allowed, err := s.canNotifyTask(ctx, assigneeMember.UserID, in.ProjectID, in.TaskID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
 		return nil
 	}
 	// Skip self-assignment (actor is the same user as the new assignee).
@@ -162,7 +170,10 @@ func (s *Svc) NotifyAssigned(ctx context.Context, in notificationdom.NotifyAssig
 	// and avatar instead of failing to find a human member.
 	actorMember, err := s.memberRepo.FindMemberByActor(ctx, in.ProjectID, in.ActorUserID, in.ActorAgentID)
 	if err != nil {
-		// Actor not found in project; still create the notification without actor attribution.
+		if !errors.Is(err, projectdom.ErrMemberNotFound) {
+			return err
+		}
+		// A deleted actor does not prevent delivery to the recipient.
 		actorMember = nil
 	}
 
@@ -179,8 +190,14 @@ func (s *Svc) NotifyAssigned(ctx context.Context, in notificationdom.NotifyAssig
 	}
 	taskID := in.TaskID
 	n.TaskID = &taskID
+	if in.SourceEventID != "" {
+		n.SourceEventID = &in.SourceEventID
+	}
 
 	if err := s.repo.Create(ctx, n); err != nil {
+		if errors.Is(err, notificationdom.ErrDuplicate) {
+			return nil
+		}
 		return err
 	}
 	s.publishCreated(ctx, n, assigneeMember.UserID)
@@ -243,7 +260,11 @@ func (s *Svc) NotifyMentioned(ctx context.Context, in notificationdom.NotifyMent
 	}
 	seen := make(map[uuid.UUID]bool) // avoid duplicate notifications
 	for _, mentionedUserID := range mentionedUserIDs {
-		if !s.canNotifyTask(ctx, mentionedUserID, in.ProjectID, in.TaskID) {
+		allowed, err := s.canNotifyTask(ctx, mentionedUserID, in.ProjectID, in.TaskID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
 			continue
 		}
 		// Skip self-mention.
@@ -257,7 +278,7 @@ func (s *Svc) NotifyMentioned(ctx context.Context, in notificationdom.NotifyMent
 		seen[mentionedUserID] = true
 
 		// Resolve the mentioned user's member ID for the notification
-		_, err := s.memberRepo.FindMemberByUserProject(ctx, mentionedUserID, in.ProjectID)
+		_, err = s.memberRepo.FindMemberByUserProject(ctx, mentionedUserID, in.ProjectID)
 		if err != nil {
 			continue // user not in project, skip
 		}
@@ -327,7 +348,7 @@ func (s *Svc) NotifyTaskDescriptionMentioned(ctx context.Context, mentionedUserI
 		return
 	}
 	defer leave()
-	if !s.canNotifyTask(ctx, mentionedUserID, projectID, taskID) {
+	if allowed, err := s.canNotifyTask(ctx, mentionedUserID, projectID, taskID); err != nil || !allowed {
 		return
 	}
 	if mentionedUserID == actorUserID {
@@ -408,10 +429,13 @@ func (s *Svc) enter(ctx context.Context) (context.Context, func(), error) {
 	ctx, _, leave, err := s.gate.Enter(ctx)
 	return ctx, leave, err
 }
-func (s *Svc) canNotifyTask(ctx context.Context, user, project, task uuid.UUID) bool {
+func (s *Svc) canNotifyTask(ctx context.Context, user, project, task uuid.UUID) (bool, error) {
 	if s.taskChecker == nil {
-		return s.gate == nil
+		return s.gate == nil, nil
 	}
 	_, err := s.taskChecker.CheckTaskAccess(authz.WithActorID(ctx, user), project, task, taskdom.AccessRead)
-	return err == nil
+	if errors.Is(err, taskdom.ErrTaskNotFound) || errors.Is(err, taskdom.ErrTaskForbidden) {
+		return false, nil
+	}
+	return err == nil, err
 }

@@ -153,11 +153,9 @@ func (c *NotificationConsumer) run() {
 			}
 			c.log.Error("notification consumer: xreadgroup error", "err", err)
 			if strings.Contains(err.Error(), "NOGROUP") {
-				// "$", not "0": recreating from the beginning here would
-				// redeliver the stream's retained history, and this
-				// handler generates fresh notification IDs with no
-				// event-level dedup — a replay would send duplicate
-				// notifications for assignments already handled.
+				// Human notifications now deduplicate stream IDs, but the agent
+				// assignment branch still starts executions. Preserve "$" here;
+				// replaying retained history would retrigger those agents.
 				recoverCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				geErr := c.ensureGroup(recoverCtx, "$")
 				cancel()
@@ -379,6 +377,7 @@ func (c *NotificationConsumer) handle(msg redis.XMessage) {
 	}
 
 	if err := c.notificationSvc.NotifyAssigned(ctx, notificationdom.NotifyAssignedInput{
+		SourceEventID:       events.StreamTaskAssignments + ":" + msg.ID,
 		TaskID:              taskID,
 		ProjectID:           projectID,
 		NewAssigneeMemberID: newAssigneeMemberID,
