@@ -340,8 +340,8 @@
 			"cancelledError": "消息未发送。"
 		},
 		"thread": {
-			"composerPlaceholder": "给代理发消息…",
-			"welcomeHeading": "今天我能帮你做些什么？",
+			"composerPlaceholder": "给小派发消息…",
+			"welcomeHeading": "你好，我是小派。今天一起完成什么工作？",
 			"messageInputAriaLabel": "消息输入框",
 			"voiceInput": "语音输入",
 			"startVoiceInputAriaLabel": "开始语音输入",
@@ -349,7 +349,7 @@
 			"stopVoiceInputAriaLabel": "停止语音输入",
 			"sendMessage": "发送消息",
 			"stopGeneratingAriaLabel": "停止生成",
-			"assistantWorkingAriaLabel": "代理正在处理",
+			"assistantWorkingAriaLabel": "小派正在处理",
 			"environmentInitializing": "正在设置环境…",
 			"thinking": "正在思考…",
 			"copy": "复制",
@@ -369,7 +369,7 @@
 			"usedTool": "使用的工具",
 			"cancelledTool": "已取消的工具",
 			"resultLabel": "结果：",
-			"errorLabel": "错误：",
+			"errorLabel": "小派提示：",
 			"cancelledReasonLabel": "取消原因：",
 			"approvedByUser": "用户已批准",
 			"deniedByUser": "用户拒绝执行该工具",
@@ -1048,9 +1048,9 @@
 		}
 	},
 	"aiChat": {
-		"companyAssistantTitle": "公司助手小派",
-		"companyAssistantUnavailable": "公司助手暂时不可用，请联系管理员。",
-		"companyAssistantHistory": "私人会话",
+		"companyAssistantTitle": "小派",
+		"companyAssistantUnavailable": "小派暂时不可用，请联系管理员。",
+		"companyAssistantHistory": "小派私人会话",
 		"chatWithAgent": "与 AI 智能体聊天",
 		"newConversation": "新建对话",
 		"agentLabel": "智能体",

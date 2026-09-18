@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import i18next from "i18next";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
+import { loadLanguage } from "@/i18n/config";
 import type { Notification } from "@/lib/notification-api";
 import { isNotificationSoundMuted } from "@/lib/notification-sound";
 
@@ -87,6 +88,32 @@ beforeEach(() => {
 });
 
 describe("NotificationBell", () => {
+	it("uses Xiaoxianpai task wording and opens the task from a Chinese notification", async () => {
+		await loadLanguage("zh-CN");
+		await i18next.changeLanguage("zh-CN");
+		mocks.listNotificationsMock.mockResolvedValue({
+			items: [makeNotification()],
+			page_size: 20,
+			next_cursor: null,
+			unread_count: 1,
+		});
+
+		render(<NotificationBell />, { wrapper });
+		await userEvent.click(screen.getByRole("button", { name: "通知" }));
+		expect(
+			await screen.findByText(
+				"Ada Lovelace 将芯鲜派任务 #42「Ship the thing」分配给您",
+			),
+		).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /芯鲜派任务/ }));
+		expect(mocks.navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/tasks/$taskId",
+			params: { projectId: "proj-a", taskId: "task-1" },
+		});
+		await loadLanguage("en");
+		await i18next.changeLanguage("en");
+	});
+
 	it("recovers persisted notifications on opening even when the cache is fresh and realtime was missed", async () => {
 		const qc = new QueryClient({
 			defaultOptions: { queries: { retry: false } },

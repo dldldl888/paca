@@ -31,6 +31,21 @@ import {
 import type { Environment, EnvironmentFolder } from "@/lib/environment-api";
 import { environmentsQueryOptions } from "@/lib/environment-api";
 
+export function getAgentDisplayName(agent: {
+	name: string;
+	agent_scope?: string;
+	agent_type?: string;
+	acp_provider?: string;
+	handle?: string;
+}) {
+	return agent.agent_scope === "global" &&
+		agent.agent_type === "acp" &&
+		agent.acp_provider === "custom" &&
+		agent.handle === "hermes"
+		? "小派"
+		: agent.name;
+}
+
 // ── Agent picker ──────────────────────────────────────────────────────────────
 //
 // Rendered inline in the composer's action row (`ThreadComponents.ComposerStart`)
@@ -87,7 +102,10 @@ export function useAgentPicker(
 	const disabled = options?.disabled;
 	const pickerState = useMemo<AgentPickerState>(
 		() => ({
-			agents,
+			agents: agents.map((agent) => ({
+				...agent,
+				name: getAgentDisplayName(agent),
+			})),
 			agentsLoading,
 			agentId,
 			onAgentChange: setAgentId,

@@ -6,8 +6,8 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
-import type { PropsWithChildren } from "react";
 import i18next from "i18next";
+import type { PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadLanguage } from "@/i18n/config";
 import { myPermissionsQueryOptions } from "@/lib/admin-api";
@@ -15,6 +15,7 @@ import { type Agent, chattableAgentsQueryOptions } from "@/lib/agent-api";
 import {
 	AgentPickerContext,
 	AgentPickerInline,
+	getAgentDisplayName,
 	useGlobalAgentPicker,
 } from "./agent-picker";
 import { NewConversationThread } from "./new-conversation-thread";
@@ -80,6 +81,14 @@ describe("useGlobalAgentPicker", () => {
 		expect(result.current.agentId).toBe("other");
 	});
 
+	it("labels only the known global Hermes agent as Xiaopai", () => {
+		expect(getAgentDisplayName(assistant)).toBe("小派");
+		expect(getAgentDisplayName(other)).toBe("Other assistant");
+		expect(getAgentDisplayName({ ...assistant, agent_scope: "project" })).toBe(
+			"公司助手 Hermes",
+		);
+	});
+
 	it.each([
 		["a lone unrelated agent", other],
 		[
@@ -129,9 +138,7 @@ describe("useGlobalAgentPicker", () => {
 		render(<NewConversationThread companyAssistant />, {
 			wrapper: harness([assistant]),
 		});
-		expect(
-			screen.getByRole("heading", { name: "公司助手 Hermes" }),
-		).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "小派" })).toBeInTheDocument();
 		expect(screen.getByRole("textbox")).toBeEnabled();
 	});
 });
