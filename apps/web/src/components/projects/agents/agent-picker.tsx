@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
+	type Agent,
 	agentQueryOptions,
 	agentsQueryOptions,
 	chattableAgentsQueryOptions,
@@ -31,13 +32,12 @@ import {
 import type { Environment, EnvironmentFolder } from "@/lib/environment-api";
 import { environmentsQueryOptions } from "@/lib/environment-api";
 
-export function getAgentDisplayName(agent: {
-	name: string;
-	agent_scope?: string;
-	agent_type?: string;
-	acp_provider?: string;
-	handle?: string;
-}) {
+export function getAgentDisplayName(
+	agent: Pick<
+		Agent,
+		"name" | "agent_scope" | "agent_type" | "acp_provider" | "handle"
+	>,
+) {
 	return agent.agent_scope === "global" &&
 		agent.agent_type === "acp" &&
 		agent.acp_provider === "custom" &&

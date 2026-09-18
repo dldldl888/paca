@@ -270,7 +270,7 @@ describe("DraftWorkspace", () => {
 		await screen.findByDisplayValue("准备报告");
 		expect(screen.getByRole("button", { name: "生成任务草稿" })).toBeDisabled();
 		expect(
-			screen.getByRole("option", { name: "暂无可用 Hermes" }),
+			screen.getByRole("option", { name: "暂无可用小派" }),
 		).toBeInTheDocument();
 	});
 
@@ -446,7 +446,7 @@ describe("DraftWorkspace", () => {
 		failPublish = false;
 		mount();
 		await screen.findByDisplayValue("准备报告");
-		expect(screen.getByLabelText("标题 1")).toBeDisabled();
+		await waitFor(() => expect(screen.getByLabelText("标题 1")).toBeDisabled());
 		await userEvent.click(screen.getByRole("button", { name: "员工预览" }));
 		await userEvent.click(
 			await screen.findByRole("button", { name: "确认并分派" }),
