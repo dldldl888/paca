@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { buttonVariants } from "@/components/ui/button";
+import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -20,7 +21,6 @@ export function LoginFormPanel() {
 	const [showPassword, setShowPassword] = useState(false);
 	const branding = useBranding();
 	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
-	const logoSrc = logoUrl ?? "/paca-logo.svg";
 	const brandName = branding?.brand_name;
 
 	return (
@@ -28,15 +28,13 @@ export function LoginFormPanel() {
 			<div className="relative">
 				{/* Mobile logo */}
 				<div className="mb-7 flex items-center gap-2.5 lg:hidden">
-					<img
-						src={logoSrc}
-						alt={t("brand.logoAlt")}
-						width={127}
-						height={175}
-						className="h-auto w-8"
-					/>
+					{logoUrl ? (
+						<img src={logoUrl} alt={t("brand.logoAlt")} width={127} height={175} className="h-auto w-8" />
+					) : (
+						<span className="text-xs font-bold text-(--sea-ink)">{DEFAULT_BRAND_NAME}</span>
+					)}
 					<span className="text-base font-bold tracking-tight text-(--sea-ink)">
-						{brandName ?? "paca"}
+						{brandName ?? DEFAULT_BRAND_NAME}
 					</span>
 				</div>
 

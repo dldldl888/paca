@@ -34,7 +34,7 @@
 	"home": {
 		"updateBanner": {
 			"title": "有可用更新",
-			"upstream": "Paca 发布了 {{version}}。",
+			"upstream": "芯鲜派发布了 {{version}}。",
 			"fork": "您的版本 {{version}} 已可用。",
 			"current": "您当前使用 {{version}}。",
 			"viewRelease": "查看发布",
@@ -96,7 +96,7 @@
 		"gettingStarted": {
 			"title": "快速开始",
 			"progress": "{{completed}} / {{total}}",
-			"subtitle": "完成以下步骤，解锁 Paca 的全部功能。",
+			"subtitle": "完成以下步骤，解锁芯鲜派的全部功能。",
 			"steps": {
 				"createProject": {
 					"title": "创建您的第一个项目",
@@ -132,7 +132,7 @@
 			}
 		},
 		"about": {
-			"title": "Paca 是如何运作的",
+			"title": "芯鲜派是如何运作的",
 			"descriptionLead": "在共享的 scrumban 看板上，将人类的创造力与 AI 的速度相结合。任务流经",
 			"workflow": "计划 → 执行 → 检查 → 调整",
 			"descriptionTrail": "并完全透明地展示是谁 — 人类还是 AI — 完成了什么。",

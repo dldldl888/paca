@@ -34,7 +34,7 @@
 	"home": {
 		"updateBanner": {
 			"title": "Update available",
-			"upstream": "Paca released {{version}}.",
+			"upstream": "芯鲜派 released {{version}}.",
 			"fork": "Your version {{version}} is available.",
 			"current": "You're on {{version}}.",
 			"viewRelease": "View release",
@@ -96,7 +96,7 @@
 		"gettingStarted": {
 			"title": "Get started",
 			"progress": "{{completed}} / {{total}}",
-			"subtitle": "Complete these steps to unlock the full power of Paca.",
+			"subtitle": "Complete these steps to unlock the full power of 芯鲜派.",
 			"steps": {
 				"createProject": {
 					"title": "Create your first project",
@@ -132,7 +132,7 @@
 			}
 		},
 		"about": {
-			"title": "How Paca works",
+			"title": "How 芯鲜派 works",
 			"descriptionLead": "Combine human creativity with AI speed on a shared scrumban board. Tasks flow through",
 			"workflow": "Plan → Act → Check → Adapt",
 			"descriptionTrail": "with full transparency over who — human or AI — did what.",

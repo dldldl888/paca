@@ -1,5 +1,6 @@
 import { BookOpen, Bot, Puzzle } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { useBranding } from "@/hooks/use-branding";
 
@@ -40,20 +41,22 @@ export function BrandPanel() {
 				{/* Logo + brand */}
 				<div className="mb-8 flex items-center gap-3">
 					<div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/6 shadow-sm shadow-black/40">
-						<img
-							src={logoUrl ?? "/paca-logo-dark.svg"}
-							alt={t("brand.logoAlt")}
-							width={127}
-							height={175}
-							className={
-								logoUrl
-									? "h-auto w-5 object-contain"
-									: "h-auto w-5 brightness-0 invert"
-							}
-						/>
+						{logoUrl ? (
+							<img
+								src={logoUrl}
+								alt={t("brand.logoAlt")}
+								width={127}
+								height={175}
+								className="h-auto w-5 object-contain"
+							/>
+						) : (
+							<span className="text-center text-[10px] font-bold leading-tight text-white">
+								{DEFAULT_BRAND_NAME}
+							</span>
+						)}
 					</div>
 					<span className="text-xl font-bold tracking-tight text-white">
-						{brandName ?? "paca"}
+						{brandName ?? DEFAULT_BRAND_NAME}
 					</span>
 					{brandName ? null : (
 						<span className="rounded-full border border-white/20 bg-white/8 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-white/60">

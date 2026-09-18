@@ -104,6 +104,7 @@ import {
 	projectsQueryOptions,
 } from "@/lib/project-api";
 import { cn } from "@/lib/utils";
+import { DEFAULT_BRAND_NAME } from "./branding-effects";
 import { UserMenu } from "./user-menu";
 
 // Shared by every inactive nav item (top-level, project, plugin, and
@@ -1563,7 +1564,6 @@ function ThemeSwitcher() {
 export function AppSidebar() {
 	const { t } = useTranslation("appShell");
 	const { hasPermission } = usePermissions();
-	const { resolvedMode } = useThemeMode();
 	const { projectId } = useParams({ strict: false });
 	const { data: user } = useQuery(currentUserQueryOptions);
 	const { getNavItems } = usePluginRegistry();
@@ -1609,39 +1609,22 @@ export function AppSidebar() {
 	const showPluginsSection = adminPluginNavItems.length > 0;
 	const isProjectContext = !!projectId;
 	const isAnonymous = !user;
+	const brandMark = logoUrl ? (
+		<img src={logoUrl} alt={t("brand.logoAlt")} className="size-8 shrink-0" />
+	) : (
+		<span className="flex size-8 shrink-0 items-center justify-center text-center text-[10px] font-bold leading-tight text-sidebar-foreground">
+			{DEFAULT_BRAND_NAME}
+		</span>
+	);
 
 	return (
 		<Sidebar collapsible="icon">
 			{/* Brand */}
 			<SidebarHeader className="gap-2 pb-2">
 				<div className="flex items-center gap-2.5 px-2 pt-1">
-					{user ? (
-						<Link to="/home">
-							<img
-								src={
-									logoUrl ??
-									(resolvedMode === "dark"
-										? "/paca-logo-dark.svg"
-										: "/paca-logo.svg")
-								}
-								alt={t("brand.logoAlt")}
-								className="size-8 shrink-0"
-							/>
-						</Link>
-					) : (
-						<img
-							src={
-								logoUrl ??
-								(resolvedMode === "dark"
-									? "/paca-logo-dark.svg"
-									: "/paca-logo.svg")
-							}
-							alt={t("brand.logoAlt")}
-							className="size-8 shrink-0"
-						/>
-					)}
+					{user ? <Link to="/home">{brandMark}</Link> : brandMark}
 					<span className="font-[Syne] font-bold text-base tracking-tight text-sidebar-foreground group-data-[collapsible=icon]:hidden">
-						{brandName ?? "paca"}
+						{brandName ?? DEFAULT_BRAND_NAME}
 					</span>
 				</div>
 				<div className="group-data-[collapsible=icon]:hidden">

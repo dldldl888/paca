@@ -1048,7 +1048,7 @@
 		}
 	},
 	"aiChat": {
-		"companyAssistantTitle": "Company Assistant Hermes",
+		"companyAssistantTitle": "Company Assistant 小派",
 		"companyAssistantUnavailable": "The company assistant is unavailable. Please contact your administrator.",
 		"companyAssistantHistory": "Private conversations",
 		"chatWithAgent": "Chat with AI Agent",
@@ -2007,7 +2007,7 @@
 		"publishedHelp": "This draft has been assigned. Employees can work and give feedback on existing task pages.",
 		"goal": "Work goal (private)",
 		"assistant": "Assistant",
-		"noAssistant": "No Hermes available",
+		"noAssistant": "No 小派 available",
 		"generate": "Generate task draft",
 		"regenerate": "Generate again",
 		"generation": "Generation status",

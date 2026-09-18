@@ -7,7 +7,8 @@ const DEFAULT_FAVICON_HREF = "/favicon.ico";
 // Exported so useDocumentTitle (see hooks/use-document-title.ts) can prefix
 // the same base title with an unread count/project name without hardcoding
 // it a second time.
-export const DEFAULT_TITLE = "Paca";
+export const DEFAULT_BRAND_NAME = "芯鲜派";
+export const DEFAULT_TITLE = DEFAULT_BRAND_NAME;
 
 // Exported for unit testing (see branding-effects.test.ts) — otherwise only
 // used within this module.

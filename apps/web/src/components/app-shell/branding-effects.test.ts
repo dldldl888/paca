@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { darken, foregroundFor, hexToRgb, rgbToHex } from "./branding-effects";
+import {
+	DEFAULT_BRAND_NAME,
+	DEFAULT_TITLE,
+	darken,
+	foregroundFor,
+	hexToRgb,
+	rgbToHex,
+} from "./branding-effects";
+
+describe("芯鲜派 branding defaults", () => {
+	it("uses the employee workspace name for the document title", () => {
+		expect(DEFAULT_TITLE).toBe("芯鲜派");
+	});
+
+	it("uses the employee workspace name for the no-logo fallback", () => {
+		expect(DEFAULT_BRAND_NAME).toBe("芯鲜派");
+	});
+});
 
 describe("hexToRgb", () => {
 	it("parses a lowercase hex color", () => {

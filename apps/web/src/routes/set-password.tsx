@@ -2,10 +2,12 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { PartyPopper, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
 import { SetPasswordForm } from "@/components/auth/SetPasswordForm";
 import LanguageToggle from "@/components/LanguageToggle";
 import ThemeToggle from "@/components/ThemeToggle";
 import { buttonVariants } from "@/components/ui/button";
+import { useBranding } from "@/hooks/use-branding";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/set-password")({
@@ -17,6 +19,9 @@ export const Route = createFileRoute("/set-password")({
 
 function SetPasswordPage() {
 	const { t } = useTranslation("auth");
+	const branding = useBranding();
+	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
+	const brandName = branding?.brand_name ?? DEFAULT_BRAND_NAME;
 	const { token } = Route.useSearch();
 	const [state, setState] = useState<"form" | "success" | "invalid">(
 		token ? "form" : "invalid",
@@ -44,16 +49,20 @@ function SetPasswordPage() {
 							<div className="relative">
 								<div className="mb-10 flex items-center gap-3">
 									<div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/6 shadow-sm shadow-black/40">
-										<img
-											src="/paca-logo-dark.svg"
-											alt={t("brand.logoAlt")}
-											width={127}
-											height={175}
-											className="h-auto w-5 brightness-0 invert"
-										/>
+										{logoUrl ? (
+											<img
+												src={logoUrl}
+												alt={t("brand.logoAlt")}
+												className="h-auto w-5 object-contain"
+											/>
+										) : (
+											<span className="text-center text-[10px] font-bold leading-tight text-white">
+												{brandName}
+											</span>
+										)}
 									</div>
 									<span className="text-xl font-bold tracking-tight text-white">
-										paca
+										{brandName}
 									</span>
 								</div>
 
@@ -84,7 +93,7 @@ function SetPasswordPage() {
 										<Sparkles className="size-3.5 text-(--lagoon)" />
 									</div>
 									<span className="text-sm font-bold tracking-tight text-(--sea-ink)">
-										paca
+										{brandName}
 									</span>
 								</div>
 

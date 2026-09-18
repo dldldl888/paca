@@ -2,10 +2,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { KeyRound, LogOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
 import LanguageToggle from "@/components/LanguageToggle";
 import { ChangePasswordForm } from "@/components/profile/ChangePasswordForm";
 import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
+import { useBranding } from "@/hooks/use-branding";
 import { isPasswordChangeRequired } from "@/lib/api-error";
 import { currentUserQueryOptions, logout } from "@/lib/auth-api";
 
@@ -45,6 +47,9 @@ export const Route = createFileRoute("/change-password")({
 
 function ChangePasswordPage() {
 	const { t } = useTranslation("auth");
+	const branding = useBranding();
+	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
+	const brandName = branding?.brand_name ?? DEFAULT_BRAND_NAME;
 	const router = useRouter();
 	const queryClient = useQueryClient();
 
@@ -92,16 +97,20 @@ function ChangePasswordPage() {
 							<div className="relative">
 								<div className="mb-10 flex items-center gap-3">
 									<div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/6 shadow-sm shadow-black/40">
-										<img
-											src="/paca-logo-dark.svg"
-											alt={t("brand.logoAlt")}
-											width={127}
-											height={175}
-											className="h-auto w-5 brightness-0 invert"
-										/>
+										{logoUrl ? (
+											<img
+												src={logoUrl}
+												alt={t("brand.logoAlt")}
+												className="h-auto w-5 object-contain"
+											/>
+										) : (
+											<span className="text-center text-[10px] font-bold leading-tight text-white">
+												{brandName}
+											</span>
+										)}
 									</div>
 									<span className="text-xl font-bold tracking-tight text-white">
-										paca
+										{brandName}
 									</span>
 								</div>
 
@@ -156,7 +165,7 @@ function ChangePasswordPage() {
 										<KeyRound className="size-3.5 text-(--lagoon)" />
 									</div>
 									<span className="text-sm font-bold tracking-tight text-(--sea-ink)">
-										paca
+										{brandName}
 									</span>
 								</div>
 

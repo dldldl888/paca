@@ -1048,7 +1048,7 @@
 		}
 	},
 	"aiChat": {
-		"companyAssistantTitle": "公司助手 Hermes",
+		"companyAssistantTitle": "公司助手小派",
 		"companyAssistantUnavailable": "公司助手暂时不可用，请联系管理员。",
 		"companyAssistantHistory": "私人会话",
 		"chatWithAgent": "与 AI 智能体聊天",
@@ -2007,7 +2007,7 @@
 		"publishedHelp": "这份草稿已经分派。员工通过现有任务页面执行与反馈。",
 		"goal": "工作目标（私人）",
 		"assistant": "生成助手",
-		"noAssistant": "暂无可用 Hermes",
+		"noAssistant": "暂无可用小派",
 		"generate": "生成任务草稿",
 		"regenerate": "重新生成",
 		"generation": "生成状态",
