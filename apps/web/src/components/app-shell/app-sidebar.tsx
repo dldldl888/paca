@@ -944,9 +944,27 @@ function ProjectNavItems({
 	isAnonymous?: boolean;
 }) {
 	const { t } = useTranslation("appShell");
+	const { hasPermission } = usePermissions();
 	const { hasProjectPermission } = useProjectPermissions(projectId);
 	const canManageDrafts =
 		hasProjectPermission("tasks.write") && hasProjectPermission("tasks.manage");
+	const canManageTechnical = (permission: string) =>
+		hasPermission(permission) || hasProjectPermission(permission);
+	const canShowProjectItem = (
+		segment: (typeof PROJECT_NAV_ITEMS)[number]["segment"],
+	) =>
+		segment === "drafts"
+			? canManageDrafts
+			: segment === "agents"
+				? canManageTechnical("agents.write")
+				: segment === "environments"
+					? canManageTechnical("environments.write")
+					: segment === "automation"
+						? canManageTechnical("workflows.write")
+						: segment === "settings"
+							? canManageTechnical("projects.write") ||
+								canManageTechnical("project.roles.write")
+							: true;
 	const location = useRouterState({ select: (s) => s.location.pathname });
 
 	const [collapsed, setCollapsed] = useState(() => {
@@ -996,7 +1014,7 @@ function ProjectNavItems({
 						{PROJECT_NAV_ITEMS.filter(
 							(item) =>
 								(!isAnonymous || !ANON_HIDDEN_SEGMENTS.has(item.segment)) &&
-								(item.segment !== "drafts" || canManageDrafts),
+								canShowProjectItem(item.segment),
 						).map(({ segment, icon: Icon, labelKey }) => {
 							const href = segment
 								? `/projects/${projectId}/${segment}`
@@ -1039,8 +1057,12 @@ function ProjectNavItems({
 function PluginProjectPages({ projectId }: { projectId: string }) {
 	const { t } = useTranslation("appShell");
 	const { getNavItems } = usePluginRegistry();
+	const { hasPermission } = usePermissions();
 	const { hasProjectPermission } = useProjectPermissions(projectId);
 	const location = useRouterState({ select: (s) => s.location.pathname });
+	const canManageProject =
+		hasPermission("projects.write") || hasProjectPermission("projects.write");
+	if (!canManageProject) return null;
 	const navItems = getNavItems("project").filter(
 		(item) =>
 			!item.requiredPermission || hasProjectPermission(item.requiredPermission),

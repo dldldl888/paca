@@ -42,7 +42,7 @@ function ManagerProjectLinks({
 					{t("home.manager.tasks", { project: project.name })}
 				</Link>
 				<Link
-					to="/projects/$projectId/team"
+					to="/projects/$projectId/interactions/backlog"
 					params={{ projectId: project.id }}
 					className="flex items-center gap-2 rounded-md border border-border/50 px-3 py-2 text-sm hover:border-primary/40 hover:text-primary"
 				>

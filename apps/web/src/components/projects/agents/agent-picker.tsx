@@ -38,12 +38,22 @@ export function getAgentDisplayName(
 		"name" | "agent_scope" | "agent_type" | "acp_provider" | "handle"
 	>,
 ) {
-	return agent.agent_scope === "global" &&
+	return isCompanyAssistant(agent) ? "小派" : agent.name;
+}
+
+export function isCompanyAssistant(
+	agent: Pick<
+		Agent,
+		"name" | "agent_scope" | "agent_type" | "acp_provider" | "handle"
+	>,
+) {
+	return (
+		agent.agent_scope === "global" &&
 		agent.agent_type === "acp" &&
 		agent.acp_provider === "custom" &&
-		agent.handle === "hermes"
-		? "小派"
-		: agent.name;
+		agent.handle === "hermes" &&
+		agent.name === "公司助手 Hermes"
+	);
 }
 
 // ── Agent picker ──────────────────────────────────────────────────────────────
@@ -136,14 +146,7 @@ export function useGlobalAgentPicker(options?: {
 		enabled: options?.enabled ?? true,
 	});
 	const [agentId, setAgentId] = useState("");
-	const companyAssistant = agents.find(
-		(agent) =>
-			agent.agent_scope === "global" &&
-			agent.agent_type === "acp" &&
-			agent.acp_provider === "custom" &&
-			agent.handle === "hermes" &&
-			agent.name === "公司助手 Hermes",
-	);
+	const companyAssistant = agents.find(isCompanyAssistant);
 
 	useEffect(() => {
 		if (!agentId && companyAssistant) {

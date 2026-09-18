@@ -91,6 +91,9 @@ describe("useGlobalAgentPicker", () => {
 		expect(getAgentDisplayName({ ...assistant, agent_scope: "project" })).toBe(
 			"公司助手 Hermes",
 		);
+		expect(getAgentDisplayName({ ...assistant, name: "Hermes" })).toBe(
+			"Hermes",
+		);
 	});
 
 	it.each([

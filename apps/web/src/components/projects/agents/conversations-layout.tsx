@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useParams } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
-import { Clock, Coins, MessageSquare, Plus } from "lucide-react";
+import { Clock, Coins, MessageSquare, PanelLeft, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -172,6 +172,7 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 		!projectId || hasProjectPermission("conversations.write");
 
 	const [filters, setFilters] = useState<ConversationFiltersState>({});
+	const [historyOpen, setHistoryOpen] = useState(false);
 
 	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useInfiniteQuery(
@@ -221,8 +222,13 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 		: "/conversations";
 
 	return (
-		<div className="flex flex-1 min-h-0">
-			<div className="w-80 shrink-0 border-r border-border/50 flex flex-col min-h-0">
+		<div className="relative flex flex-1 min-h-0">
+			<div
+				className={cn(
+					"absolute inset-0 z-10 hidden flex-col bg-background md:static md:z-auto md:flex md:w-80 md:shrink-0 md:border-r md:border-border/50",
+					historyOpen && "flex",
+				)}
+			>
 				<div className="shrink-0 border-b border-border/50 px-4 py-3 flex items-center justify-between gap-2">
 					<h2 className="text-sm font-semibold">
 						{t("conversationsPage.title")}
@@ -238,6 +244,15 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 							{t("aiChat.newConversation")}
 						</Button>
 					)}
+					<Button
+						size="icon-sm"
+						variant="ghost"
+						className="md:hidden"
+						onClick={() => setHistoryOpen(false)}
+						aria-label={t("conversationsPage.closeHistory")}
+					>
+						<X className="size-4" />
+					</Button>
 				</div>
 				<ConversationFilters
 					agents={displayAgents}
@@ -290,7 +305,16 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 				</div>
 			</div>
 
-			<div className="flex-1 min-h-0">
+			<div className="relative flex flex-1 min-h-0">
+				<Button
+					size="icon-sm"
+					variant="ghost"
+					className="absolute left-2 top-2 z-10 md:hidden"
+					onClick={() => setHistoryOpen(true)}
+					aria-label={t("conversationsPage.openHistory")}
+				>
+					<PanelLeft className="size-4" />
+				</Button>
 				<Outlet />
 			</div>
 		</div>

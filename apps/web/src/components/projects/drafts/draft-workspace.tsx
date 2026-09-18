@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { getAgentDisplayName } from "@/components/projects/agents/agent-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -487,7 +488,7 @@ export function DraftWorkspace({
 											)}
 											{agents.map((agent) => (
 												<option key={agent.id} value={agent.id}>
-													{agent.name}
+													{getAgentDisplayName(agent)}
 												</option>
 											))}
 										</select>

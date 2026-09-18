@@ -89,7 +89,7 @@ describe("ManagerWorkspaceEntry", () => {
 		).toHaveAttribute("href", "/projects/engineering/interactions/backlog");
 		expect(
 			screen.getByRole("link", { name: "成员反馈 · 工程部" }),
-		).toHaveAttribute("href", "/projects/engineering/team");
+		).toHaveAttribute("href", "/projects/engineering/interactions/backlog");
 		expect(screen.queryByText("财务部")).not.toBeInTheDocument();
 	});
 

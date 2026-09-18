@@ -62,16 +62,10 @@ export function OrganizationNavigation() {
 			<h2 id="organization-navigation-title" className="text-lg font-semibold">
 				芯鲜派集团
 			</h2>
-			<div
-				role="tree"
-				aria-label="芯鲜派集团组织导航"
-				className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
-			>
+			<ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
 				{departments.map((department) => (
-					<div
+					<li
 						key={department.name}
-						role="treeitem"
-						tabIndex={0}
 						className="rounded-lg border border-border/60 p-3"
 					>
 						<div className="flex items-center justify-between gap-3">
@@ -99,9 +93,9 @@ export function OrganizationNavigation() {
 						<p className="mt-1 text-sm text-muted-foreground">
 							负责人：{department.leader}
 						</p>
-					</div>
+					</li>
 				))}
-			</div>
+			</ul>
 		</section>
 	);
 }

@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { getAgentDisplayName } from "@/components/projects/agents/agent-picker";
 import { conversationTriggerLabel } from "@/components/projects/agents/conversations-layout";
 import {
 	type AgentConversation,
@@ -229,10 +230,10 @@ export function useContextItemSearch(
 		const rawItems = data?.pages.flatMap((page) => page.items) ?? [];
 		if (type !== "conversation") return rawItems as ContextSearchResult[];
 		return (rawItems as AgentConversation[]).map((conv) => {
-			const agentName = agentsById.get(conv.agent_id)?.name;
+			const agent = agentsById.get(conv.agent_id);
 			return {
 				id: conv.id,
-				title: agentName ?? conv.agent_id.slice(0, 8),
+				title: agent ? getAgentDisplayName(agent) : conv.agent_id.slice(0, 8),
 				subtitle: `${conversationTriggerLabel(conv, t)} · ${new Date(
 					conv.created_at,
 				).toLocaleDateString()}`,

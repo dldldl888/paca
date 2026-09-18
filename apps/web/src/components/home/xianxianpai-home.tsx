@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { NotificationBell } from "@/components/app-shell/notification-bell";
 import { OrganizationNavigation } from "@/components/company/organization-navigation";
 import { AssignedTasksList } from "@/components/home/assigned-tasks-list";
+import { isCompanyAssistant } from "@/components/projects/agents/agent-picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { chattableAgentsQueryOptions } from "@/lib/agent-api";
 import { currentUserQueryOptions } from "@/lib/auth-api";
@@ -44,11 +45,9 @@ export function XianxianpaiHome() {
 		enabled: !!companyProject && !projectsPending && !projectsError,
 	});
 	const unreadCount = notifications?.pages[0]?.unread_count ?? 0;
-	const xiaopaiOffline = chattableAgentsError;
 	const xiaopaiUnavailable =
 		!chattableAgentsPending &&
-		!chattableAgentsError &&
-		chattableAgents?.length === 0;
+		(chattableAgentsError || !chattableAgents?.some(isCompanyAssistant));
 	const hasNotifications = (notifications?.pages ?? []).some(
 		(page) => page.items.length > 0,
 	);
@@ -114,11 +113,9 @@ export function XianxianpaiHome() {
 						<CardContent className="pt-0 text-sm text-muted-foreground">
 							{chattableAgentsPending
 								? t("home.workbench.xiaopaiLoading")
-								: xiaopaiOffline
-									? t("home.workbench.xiaopaiOffline")
-									: xiaopaiUnavailable
-										? t("home.workbench.xiaopaiUnavailable")
-										: t("home.workbench.xiaopaiDescription")}
+								: xiaopaiUnavailable
+									? t("home.workbench.xiaopaiUnavailable")
+									: t("home.workbench.xiaopaiDescription")}
 						</CardContent>
 					</Link>
 				</Card>

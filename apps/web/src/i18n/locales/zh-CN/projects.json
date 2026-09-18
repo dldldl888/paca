@@ -1456,6 +1456,8 @@
 	},
 	"conversationsPage": {
 		"title": "对话",
+		"openHistory": "打开对话历史",
+		"closeHistory": "关闭对话历史",
 		"triggerChat": "聊天",
 		"triggerWriteDescription": "编写描述",
 		"triggerTask": "任务",

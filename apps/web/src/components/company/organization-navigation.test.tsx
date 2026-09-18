@@ -141,7 +141,8 @@ describe("OrganizationNavigation", () => {
 		mocks.canManage = false;
 		renderNavigation([project("board", "董事会")]);
 
-		expect(await screen.findByRole("tree")).toBeInTheDocument();
+		expect(await screen.findByRole("list")).toBeInTheDocument();
+		expect(screen.queryByRole("tree")).not.toBeInTheDocument();
 		expect(screen.getByText("董事会").closest("a")).toHaveAttribute(
 			"href",
 			"/projects/board",

@@ -48,6 +48,10 @@ vi.mock("@/lib/agent-api", () => ({
 		queryFn: async () => [],
 	},
 }));
+vi.mock("@/components/projects/agents/agent-picker", () => ({
+	isCompanyAssistant: (agent: { handle?: string; name?: string }) =>
+		agent.handle === "hermes" && agent.name === "公司助手 Hermes",
+}));
 vi.mock("@/lib/notification-api", () => ({
 	notificationsQueryOptions: {
 		queryKey: ["notifications"],
@@ -129,7 +133,9 @@ describe("XianxianpaiHome", () => {
 			"auth,me": { full_name: "员工甲" },
 			projects: { items: [{ id: "company", name: "公司资料" }], total: 1 },
 			"docs,company": [{ id: "doc-1", title: "员工手册" }],
-			"global-agents,chattable": [{ id: "xiaopai" }],
+			"global-agents,chattable": [
+				{ id: "xiaopai", handle: "hermes", name: "公司助手 Hermes" },
+			],
 			notifications: {
 				pages: [{ items: [], unread_count: 2 }],
 				pageParams: [undefined],
@@ -165,6 +171,23 @@ describe("XianxianpaiHome", () => {
 		expect(within(main).getByTestId("assigned-tasks")).toBeInTheDocument();
 		expect(
 			within(main).getByTestId("organization-navigation"),
+		).toBeInTheDocument();
+	});
+
+	it("does not treat an unrelated agent as Xiaopai", async () => {
+		renderHome({
+			projects: { items: [], total: 0 },
+			"global-agents,chattable": [
+				{ id: "other", handle: "other", name: "Other" },
+			],
+			notifications: {
+				pages: [{ items: [], unread_count: 0 }],
+				pageParams: [undefined],
+			},
+		});
+
+		expect(
+			await screen.findByText("小派当前不可用，请稍后再试"),
 		).toBeInTheDocument();
 	});
 
