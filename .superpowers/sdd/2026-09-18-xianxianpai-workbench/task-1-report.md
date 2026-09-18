@@ -35,3 +35,9 @@ Round 1 verification: focused Vitest remains **16 passed**, Biome passes on chan
 - The shared focused test covers custom names plus empty and whitespace-only values, proving the fallback behavior used by the component.
 
 Round 2 verification: focused Vitest **16 passed**, Biome passed, and `git diff --check` passed.
+
+## Review fix round 3
+
+- Fixed the BrandPanel adjacent wordmark to use its existing resolved `brandName`, removing the stale `DEFAULT_BRAND_NAME` reference.
+
+Round 3 verification: focused Vitest **16 passed** and `pnpm exec tsc --noEmit` passed. Generated `routeTree.gen.ts` was restored.

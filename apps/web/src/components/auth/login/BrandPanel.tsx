@@ -56,7 +56,7 @@ export function BrandPanel() {
 						)}
 					</div>
 					<span className="text-xl font-bold tracking-tight text-white">
-						{brandName ?? DEFAULT_BRAND_NAME}
+						{brandName}
 					</span>
 					{branding?.brand_name ? null : (
 						<span className="rounded-full border border-white/20 bg-white/8 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-white/60">
