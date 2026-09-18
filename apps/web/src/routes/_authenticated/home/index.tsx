@@ -16,10 +16,10 @@ import {
 } from "lucide-react";
 import { type ComponentType, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { OrganizationNavigation } from "@/components/company/organization-navigation";
 import { AssignedTasksList } from "@/components/home/assigned-tasks-list";
+import { ManagerWorkspaceEntry } from "@/components/home/manager-workspace-entry";
 import { UpdateBanner } from "@/components/home/UpdateBanner";
-import { NewConversationThread } from "@/components/projects/agents/new-conversation-thread";
+import { XianxianpaiHome } from "@/components/home/xianxianpai-home";
 import { EntityAvatarContent } from "@/components/shared/entity-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -450,7 +450,6 @@ const GETTING_STARTED = [
 
 function HomePage() {
 	const { t } = useTranslation("shared");
-	const { t: tProjects } = useTranslation("projects");
 	const { data: user } = useQuery(currentUserQueryOptions);
 	const { data: projectsResult } = useQuery(projectsQueryOptions());
 	const { data: workspaceStats } = useQuery(workspaceStatsQueryOptions());
@@ -478,23 +477,8 @@ function HomePage() {
 	return (
 		<div className="flex flex-col">
 			<UpdateBanner />
-			<section
-				className="border-b border-border/50"
-				aria-label={tProjects("aiChat.companyAssistantTitle")}
-			>
-				<div className="flex justify-end px-6 pt-4">
-					<Link
-						to="/conversations"
-						className="text-sm text-muted-foreground hover:text-foreground"
-					>
-						{tProjects("aiChat.companyAssistantHistory")}
-					</Link>
-				</div>
-				<div className="h-[340px] sm:h-[360px]">
-					<NewConversationThread companyAssistant />
-				</div>
-			</section>
-			<OrganizationNavigation />
+			<XianxianpaiHome />
+			<ManagerWorkspaceEntry />
 			{/* Hero banner */}
 			<div className="relative overflow-hidden border-b border-border/50">
 				<div

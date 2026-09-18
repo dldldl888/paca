@@ -32,6 +32,34 @@
 		"added": "已添加"
 	},
 	"home": {
+		"workbench": {
+			"title": "芯鲜派员工工作台",
+			"welcome": "欢迎回来，{{name}}",
+			"welcomeFallback": "欢迎来到芯鲜派",
+			"subtitle": "从这里开始今天的工作。",
+			"tasks": "我的待办",
+			"notifications": "通知",
+			"notificationsLoading": "通知加载中",
+			"unreadNotifications": "{{count}} 条未读通知",
+			"notificationsEmpty": "暂无新通知",
+			"notificationsOffline": "通知暂时无法加载，请稍后再试。",
+			"xiaopai": "小派",
+			"xiaopaiDescription": "询问公司资料，获得工作帮助。",
+			"xiaopaiLoading": "小派连接中",
+			"xiaopaiOffline": "小派暂时离线，请稍后再试。",
+			"xiaopaiUnavailable": "小派当前不可用，请稍后再试。",
+			"companyDocs": "公司资料",
+			"companyDocsDescription": "查看已授权的公司知识。",
+			"companyDocsEmpty": "公司资料暂不可用，请联系负责人。",
+			"companyDocsLoading": "公司资料加载中",
+			"companyDocsError": "公司资料暂时无法加载，请稍后再试。"
+		},
+		"manager": {
+			"title": "负责人工作台",
+			"goals": "团队目标与草稿 · {{project}}",
+			"tasks": "团队任务 · {{project}}",
+			"feedback": "成员反馈 · {{project}}"
+		},
 		"updateBanner": {
 			"title": "有可用更新",
 			"upstream": "芯鲜派发布了 {{version}}。",

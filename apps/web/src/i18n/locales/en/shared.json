@@ -32,6 +32,34 @@
 		"added": "Added"
 	},
 	"home": {
+		"workbench": {
+			"title": "芯鲜派 employee workbench",
+			"welcome": "Welcome back, {{name}}",
+			"welcomeFallback": "Welcome to 芯鲜派",
+			"subtitle": "Start today's work here.",
+			"tasks": "My tasks",
+			"notifications": "Notifications",
+			"notificationsLoading": "Loading notifications",
+			"unreadNotifications": "{{count}} unread notifications",
+			"notificationsEmpty": "No new notifications",
+			"notificationsOffline": "Notifications are temporarily unavailable. Try again later.",
+			"xiaopai": "小派",
+			"xiaopaiDescription": "Ask about company materials and get help with your work.",
+			"xiaopaiLoading": "Connecting to 小派",
+			"xiaopaiOffline": "小派 is temporarily offline. Try again later.",
+			"xiaopaiUnavailable": "小派 is currently unavailable. Try again later.",
+			"companyDocs": "Company materials",
+			"companyDocsDescription": "View company knowledge you are allowed to access.",
+			"companyDocsEmpty": "Company materials are not available yet. Contact your manager.",
+			"companyDocsLoading": "Loading company materials",
+			"companyDocsError": "Company materials could not be loaded. Try again later."
+		},
+		"manager": {
+			"title": "Manager workspace",
+			"goals": "Team goals and drafts · {{project}}",
+			"tasks": "Team tasks · {{project}}",
+			"feedback": "Member feedback · {{project}}"
+		},
 		"updateBanner": {
 			"title": "Update available",
 			"upstream": "芯鲜派 released {{version}}.",
