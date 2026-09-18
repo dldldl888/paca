@@ -20,3 +20,11 @@ The supplied original Logo was unavailable. The implementation therefore does no
 ## Concerns
 
 Some technical Paca references remain in project locale hints, paths, shell titles, and browser-extension copy because they are upstream/internal identifiers rather than the brand shell. GitHub URLs, API-key prefixes, and internal Hermes handles were preserved as required.
+
+## Review fix round 1
+
+- Added and used `resolveBrandName()` so the no-logo mark and adjacent wordmark share the same dynamic workspace brand fallback.
+- Expanded the focused test to exercise empty, whitespace, default, and custom brand names.
+- Removed employee-visible Paca product prose from the English and Simplified Chinese project locale copy. Internal workspace paths and shell titles remain unchanged.
+
+Round 1 verification: focused Vitest remains **16 passed**, Biome passes on changed source files, and `git diff --check` passes.

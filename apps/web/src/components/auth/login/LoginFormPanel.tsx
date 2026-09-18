@@ -1,9 +1,8 @@
 import { AlertCircle, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-
-import { buttonVariants } from "@/components/ui/button";
 import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
+import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -29,9 +28,17 @@ export function LoginFormPanel() {
 				{/* Mobile logo */}
 				<div className="mb-7 flex items-center gap-2.5 lg:hidden">
 					{logoUrl ? (
-						<img src={logoUrl} alt={t("brand.logoAlt")} width={127} height={175} className="h-auto w-8" />
+						<img
+							src={logoUrl}
+							alt={t("brand.logoAlt")}
+							width={127}
+							height={175}
+							className="h-auto w-8"
+						/>
 					) : (
-						<span className="text-xs font-bold text-(--sea-ink)">{DEFAULT_BRAND_NAME}</span>
+						<span className="text-xs font-bold text-(--sea-ink)">
+							{DEFAULT_BRAND_NAME}
+						</span>
 					)}
 					<span className="text-base font-bold tracking-tight text-(--sea-ink)">
 						{brandName ?? DEFAULT_BRAND_NAME}

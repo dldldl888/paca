@@ -10,6 +10,10 @@ const DEFAULT_FAVICON_HREF = "/favicon.ico";
 export const DEFAULT_BRAND_NAME = "芯鲜派";
 export const DEFAULT_TITLE = DEFAULT_BRAND_NAME;
 
+export function resolveBrandName(brandName?: string | null): string {
+	return brandName?.trim() || DEFAULT_BRAND_NAME;
+}
+
 // Exported for unit testing (see branding-effects.test.ts) — otherwise only
 // used within this module.
 export function hexToRgb(hex: string): [number, number, number] | null {

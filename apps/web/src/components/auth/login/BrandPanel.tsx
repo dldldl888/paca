@@ -1,6 +1,6 @@
 import { BookOpen, Bot, Puzzle } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
+import { resolveBrandName } from "@/components/app-shell/branding-effects";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { useBranding } from "@/hooks/use-branding";
 
@@ -26,7 +26,7 @@ export function BrandPanel() {
 	const { t } = useTranslation("auth");
 	const branding = useBranding();
 	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
-	const brandName = branding?.brand_name;
+	const brandName = resolveBrandName(branding?.brand_name);
 
 	return (
 		<div className="relative hidden flex-col justify-between overflow-hidden rounded-l-xl bg-[#0a0a0a] p-10 lg:flex">
@@ -51,14 +51,14 @@ export function BrandPanel() {
 							/>
 						) : (
 							<span className="text-center text-[10px] font-bold leading-tight text-white">
-								{DEFAULT_BRAND_NAME}
+								{brandName}
 							</span>
 						)}
 					</div>
 					<span className="text-xl font-bold tracking-tight text-white">
 						{brandName ?? DEFAULT_BRAND_NAME}
 					</span>
-					{brandName ? null : (
+					{branding?.brand_name ? null : (
 						<span className="rounded-full border border-white/20 bg-white/8 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-white/60">
 							{t("brand.ossBadge")}
 						</span>

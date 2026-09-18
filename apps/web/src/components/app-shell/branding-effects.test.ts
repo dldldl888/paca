@@ -5,6 +5,7 @@ import {
 	darken,
 	foregroundFor,
 	hexToRgb,
+	resolveBrandName,
 	rgbToHex,
 } from "./branding-effects";
 
@@ -14,7 +15,9 @@ describe("芯鲜派 branding defaults", () => {
 	});
 
 	it("uses the employee workspace name for the no-logo fallback", () => {
-		expect(DEFAULT_BRAND_NAME).toBe("芯鲜派");
+		expect(resolveBrandName()).toBe(DEFAULT_BRAND_NAME);
+		expect(resolveBrandName("  ")).toBe(DEFAULT_BRAND_NAME);
+		expect(resolveBrandName("柑橘实验室")).toBe("柑橘实验室");
 	});
 });
 

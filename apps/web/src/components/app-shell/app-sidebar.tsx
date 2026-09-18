@@ -104,7 +104,7 @@ import {
 	projectsQueryOptions,
 } from "@/lib/project-api";
 import { cn } from "@/lib/utils";
-import { DEFAULT_BRAND_NAME } from "./branding-effects";
+import { resolveBrandName } from "./branding-effects";
 import { UserMenu } from "./user-menu";
 
 // Shared by every inactive nav item (top-level, project, plugin, and
@@ -1569,7 +1569,7 @@ export function AppSidebar() {
 	const { getNavItems } = usePluginRegistry();
 	const branding = useBranding();
 	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
-	const brandName = branding?.brand_name;
+	const brandName = resolveBrandName(branding?.brand_name);
 
 	const canAccessGlobalRoles =
 		hasPermission("global_roles.read") || hasPermission("global_roles.write");
@@ -1613,7 +1613,7 @@ export function AppSidebar() {
 		<img src={logoUrl} alt={t("brand.logoAlt")} className="size-8 shrink-0" />
 	) : (
 		<span className="flex size-8 shrink-0 items-center justify-center text-center text-[10px] font-bold leading-tight text-sidebar-foreground">
-			{DEFAULT_BRAND_NAME}
+			{brandName}
 		</span>
 	);
 
@@ -1624,7 +1624,7 @@ export function AppSidebar() {
 				<div className="flex items-center gap-2.5 px-2 pt-1">
 					{user ? <Link to="/home">{brandMark}</Link> : brandMark}
 					<span className="font-[Syne] font-bold text-base tracking-tight text-sidebar-foreground group-data-[collapsible=icon]:hidden">
-						{brandName ?? DEFAULT_BRAND_NAME}
+						{brandName}
 					</span>
 				</div>
 				<div className="group-data-[collapsible=icon]:hidden">
