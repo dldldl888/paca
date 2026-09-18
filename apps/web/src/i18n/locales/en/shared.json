@@ -58,7 +58,7 @@
 			"title": "Manager workspace",
 			"goals": "Team goals and drafts · {{project}}",
 			"tasks": "Team tasks · {{project}}",
-			"feedback": "Member feedback · {{project}}"
+			"feedback": "View feedback from tasks · {{project}}"
 		},
 		"updateBanner": {
 			"title": "Update available",

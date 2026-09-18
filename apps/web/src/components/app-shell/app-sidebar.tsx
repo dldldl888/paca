@@ -904,6 +904,33 @@ const PROJECT_NAV_ITEMS = [
 	{ segment: "settings", icon: Settings, labelKey: "nav.settings" },
 ] as const;
 
+type ProjectNavSegment = (typeof PROJECT_NAV_ITEMS)[number]["segment"];
+
+export function canShowProjectNavItem(
+	segment: ProjectNavSegment,
+	{
+		canManageDrafts,
+		canManageProject,
+		canManageAgents,
+		canManageEnvironments,
+		canManageWorkflows,
+	}: {
+		canManageDrafts: boolean;
+		canManageProject: boolean;
+		canManageAgents: boolean;
+		canManageEnvironments: boolean;
+		canManageWorkflows: boolean;
+	},
+) {
+	if (segment === "drafts") return canManageDrafts;
+	if (segment === "agents") return canManageProject && canManageAgents;
+	if (segment === "environments")
+		return canManageProject && canManageEnvironments;
+	if (segment === "automation") return canManageProject && canManageWorkflows;
+	if (segment === "settings") return canManageProject;
+	return true;
+}
+
 function ProjectNav() {
 	const { t } = useTranslation("appShell");
 	return (
@@ -950,21 +977,15 @@ function ProjectNavItems({
 		hasProjectPermission("tasks.write") && hasProjectPermission("tasks.manage");
 	const canManageTechnical = (permission: string) =>
 		hasPermission(permission) || hasProjectPermission(permission);
-	const canShowProjectItem = (
-		segment: (typeof PROJECT_NAV_ITEMS)[number]["segment"],
-	) =>
-		segment === "drafts"
-			? canManageDrafts
-			: segment === "agents"
-				? canManageTechnical("agents.write")
-				: segment === "environments"
-					? canManageTechnical("environments.write")
-					: segment === "automation"
-						? canManageTechnical("workflows.write")
-						: segment === "settings"
-							? canManageTechnical("projects.write") ||
-								canManageTechnical("project.roles.write")
-							: true;
+	const projectNavAccess = {
+		canManageDrafts,
+		canManageProject:
+			canManageTechnical("projects.write") ||
+			canManageTechnical("project.roles.write"),
+		canManageAgents: canManageTechnical("agents.write"),
+		canManageEnvironments: canManageTechnical("environments.write"),
+		canManageWorkflows: canManageTechnical("workflows.write"),
+	};
 	const location = useRouterState({ select: (s) => s.location.pathname });
 
 	const [collapsed, setCollapsed] = useState(() => {
@@ -1014,7 +1035,7 @@ function ProjectNavItems({
 						{PROJECT_NAV_ITEMS.filter(
 							(item) =>
 								(!isAnonymous || !ANON_HIDDEN_SEGMENTS.has(item.segment)) &&
-								canShowProjectItem(item.segment),
+								canShowProjectNavItem(item.segment, projectNavAccess),
 						).map(({ segment, icon: Icon, labelKey }) => {
 							const href = segment
 								? `/projects/${projectId}/${segment}`

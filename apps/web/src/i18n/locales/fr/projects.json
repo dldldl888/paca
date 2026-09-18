@@ -1456,6 +1456,8 @@
 	},
 	"conversationsPage": {
 		"title": "Conversations",
+		"openHistory": "Open conversation history",
+		"closeHistory": "Close conversation history",
 		"triggerChat": "Discussion",
 		"triggerWriteDescription": "Rédaction de description",
 		"triggerTask": "Tâche",

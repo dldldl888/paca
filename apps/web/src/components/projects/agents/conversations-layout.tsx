@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGlobalAgentRealtime } from "@/hooks/use-global-agent-realtime";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useProjectPermissions } from "@/hooks/use-project-permissions";
 import { useProjectRealtime } from "@/hooks/use-project-realtime";
 import {
@@ -155,6 +156,7 @@ function ConversationListItem({
 
 export function ConversationsLayout({ projectId }: { projectId?: string }) {
 	const { t } = useTranslation("projects");
+	const isMobile = useIsMobile();
 	const { conversationId: activeConversationId } = useParams({
 		strict: false,
 	});
@@ -173,6 +175,26 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 
 	const [filters, setFilters] = useState<ConversationFiltersState>({});
 	const [historyOpen, setHistoryOpen] = useState(false);
+	const historyTriggerRef = useRef<HTMLButtonElement>(null);
+	const closeHistoryRef = useRef<HTMLButtonElement>(null);
+	const restoreHistoryTriggerFocusRef = useRef(false);
+	const isHistoryOpen = historyOpen && isMobile;
+
+	useEffect(() => {
+		if (isHistoryOpen) {
+			closeHistoryRef.current?.focus();
+			return;
+		}
+		if (restoreHistoryTriggerFocusRef.current) {
+			restoreHistoryTriggerFocusRef.current = false;
+			historyTriggerRef.current?.focus();
+		}
+	}, [isHistoryOpen]);
+
+	const closeHistory = () => {
+		restoreHistoryTriggerFocusRef.current = true;
+		setHistoryOpen(false);
+	};
 
 	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useInfiniteQuery(
@@ -226,7 +248,7 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 			<div
 				className={cn(
 					"absolute inset-0 z-10 hidden flex-col bg-background md:static md:z-auto md:flex md:w-80 md:shrink-0 md:border-r md:border-border/50",
-					historyOpen && "flex",
+					isHistoryOpen && "flex",
 				)}
 			>
 				<div className="shrink-0 border-b border-border/50 px-4 py-3 flex items-center justify-between gap-2">
@@ -248,7 +270,8 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 						size="icon-sm"
 						variant="ghost"
 						className="md:hidden"
-						onClick={() => setHistoryOpen(false)}
+						ref={closeHistoryRef}
+						onClick={closeHistory}
 						aria-label={t("conversationsPage.closeHistory")}
 					>
 						<X className="size-4" />
@@ -305,11 +328,16 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 				</div>
 			</div>
 
-			<div className="relative flex flex-1 min-h-0">
+			<div
+				className="relative flex w-full min-w-0 flex-1 min-h-0 flex-col"
+				aria-hidden={isHistoryOpen || undefined}
+				inert={isHistoryOpen || undefined}
+			>
 				<Button
 					size="icon-sm"
 					variant="ghost"
 					className="absolute left-2 top-2 z-10 md:hidden"
+					ref={historyTriggerRef}
 					onClick={() => setHistoryOpen(true)}
 					aria-label={t("conversationsPage.openHistory")}
 				>

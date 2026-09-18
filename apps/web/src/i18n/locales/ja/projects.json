@@ -1456,6 +1456,8 @@
 	},
 	"conversationsPage": {
 		"title": "会話",
+		"openHistory": "Open conversation history",
+		"closeHistory": "Close conversation history",
 		"triggerChat": "チャット",
 		"triggerWriteDescription": "説明の作成",
 		"triggerTask": "タスク",

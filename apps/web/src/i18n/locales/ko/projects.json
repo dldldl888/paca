@@ -1456,6 +1456,8 @@
 	},
 	"conversationsPage": {
 		"title": "대화",
+		"openHistory": "Open conversation history",
+		"closeHistory": "Close conversation history",
 		"triggerChat": "채팅",
 		"triggerWriteDescription": "설명 작성",
 		"triggerTask": "작업",

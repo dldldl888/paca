@@ -45,7 +45,7 @@ vi.mock("react-i18next", () => ({
 				"home.manager.title": "负责人工作台",
 				"home.manager.goals": `团队目标与草稿 · ${values?.project}`,
 				"home.manager.tasks": `团队任务 · ${values?.project}`,
-				"home.manager.feedback": `成员反馈 · ${values?.project}`,
+				"home.manager.feedback": `从任务查看反馈 · ${values?.project}`,
 			})[key] ?? key,
 	}),
 }));
@@ -88,7 +88,7 @@ describe("ManagerWorkspaceEntry", () => {
 			screen.getByRole("link", { name: "团队任务 · 工程部" }),
 		).toHaveAttribute("href", "/projects/engineering/interactions/backlog");
 		expect(
-			screen.getByRole("link", { name: "成员反馈 · 工程部" }),
+			screen.getByRole("link", { name: "从任务查看反馈 · 工程部" }),
 		).toHaveAttribute("href", "/projects/engineering/interactions/backlog");
 		expect(screen.queryByText("财务部")).not.toBeInTheDocument();
 	});
@@ -103,7 +103,7 @@ describe("ManagerWorkspaceEntry", () => {
 			screen.queryByRole("region", { name: "负责人工作台" }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("link", { name: /团队目标|团队任务|成员反馈/ }),
+			screen.queryByRole("link", { name: /团队目标|团队任务|从任务查看反馈/ }),
 		).not.toBeInTheDocument();
 	});
 });

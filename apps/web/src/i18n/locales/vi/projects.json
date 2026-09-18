@@ -1456,6 +1456,8 @@
 	},
 	"conversationsPage": {
 		"title": "Hội thoại",
+		"openHistory": "Open conversation history",
+		"closeHistory": "Close conversation history",
 		"triggerChat": "Trò chuyện",
 		"triggerWriteDescription": "Viết mô tả",
 		"triggerTask": "Nhiệm vụ",

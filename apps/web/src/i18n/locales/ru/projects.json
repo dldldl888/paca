@@ -1474,6 +1474,8 @@
 	},
 	"conversationsPage": {
 		"title": "Диалоги",
+		"openHistory": "Open conversation history",
+		"closeHistory": "Close conversation history",
 		"triggerChat": "Чат",
 		"triggerWriteDescription": "Написать описание",
 		"triggerTask": "Задача",

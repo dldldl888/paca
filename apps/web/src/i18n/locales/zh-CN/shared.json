@@ -58,7 +58,7 @@
 			"title": "负责人工作台",
 			"goals": "团队目标与草稿 · {{project}}",
 			"tasks": "团队任务 · {{project}}",
-			"feedback": "成员反馈 · {{project}}"
+			"feedback": "从任务查看反馈 · {{project}}"
 		},
 		"updateBanner": {
 			"title": "有可用更新",
