@@ -77,6 +77,10 @@ describe("useGlobalAgentPicker", () => {
 			wrapper: harness([other, assistant]),
 		});
 		await waitFor(() => expect(result.current.agentId).toBe("hermes"));
+		expect(result.current.pickerState.agents).toEqual([
+			{ id: "other", name: "Other assistant" },
+			{ id: "hermes", name: "小派" },
+		]);
 		act(() => result.current.setAgentId("other"));
 		expect(result.current.agentId).toBe("other");
 	});

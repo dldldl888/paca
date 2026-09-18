@@ -155,7 +155,10 @@ export function useGlobalAgentPicker(options?: {
 	const canCreate = hasPermission("agents.write");
 	const pickerState = useMemo<AgentPickerState>(
 		() => ({
-			agents,
+			agents: agents.map((agent) => ({
+				id: agent.id,
+				name: getAgentDisplayName(agent),
+			})),
 			agentsLoading,
 			agentId,
 			onAgentChange: setAgentId,

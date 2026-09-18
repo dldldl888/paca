@@ -25,6 +25,7 @@ import {
 import { formatCompactTokens, formatUsageCost } from "@/lib/format-usage";
 import { resolveAgentAvatarUrl } from "@/lib/provider-logos";
 import { cn } from "@/lib/utils";
+import { getAgentDisplayName } from "./agent-picker";
 import { ConversationFilters } from "./conversation-filters";
 
 // Shared between the project-scoped Conversations page
@@ -82,7 +83,8 @@ function ConversationListItem({
 	const statusColor = CONVERSATION_STATUS_COLORS[conv.status];
 	const statusLabel = CONVERSATION_STATUS_LABELS[conv.status];
 	const triggerLabel = conversationTriggerLabel(conv, t);
-	const initials = (agent?.name ?? "?")
+	const displayName = agent ? getAgentDisplayName(agent) : undefined;
+	const initials = (displayName ?? "?")
 		.split(" ")
 		.map((w) => w[0])
 		.join("")
@@ -112,7 +114,7 @@ function ConversationListItem({
 					</AvatarFallback>
 				</Avatar>
 				<span className="text-sm font-medium truncate flex-1">
-					{agent?.name ?? conv.agent_id.slice(0, 8)}
+					{displayName ?? conv.agent_id.slice(0, 8)}
 				</span>
 				<Badge
 					variant="outline"
@@ -181,6 +183,10 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 		projectId ? agentsQueryOptions(projectId) : chattableAgentsQueryOptions,
 	);
 	const agentsById = new Map(agents.map((a) => [a.id, a]));
+	const displayAgents = agents.map((agent) => ({
+		id: agent.id,
+		name: getAgentDisplayName(agent),
+	}));
 
 	// Pages are fetched newest-first (offset-paginated, ordered by created_at
 	// DESC on the backend), so concatenating them in fetch order already
@@ -234,7 +240,7 @@ export function ConversationsLayout({ projectId }: { projectId?: string }) {
 					)}
 				</div>
 				<ConversationFilters
-					agents={agents}
+					agents={displayAgents}
 					filters={filters}
 					onFiltersChange={setFilters}
 				/>
