@@ -33,11 +33,8 @@ function matchesProject(departmentName: string, projectName: string): boolean {
 	const project = normalizeName(projectName);
 	if (department === project) return true;
 	return (
-		(department === normalizeName("AI效能部/品宣部") &&
-			["AI效能部", "品宣部"].some(
-				(alias) => normalizeName(alias) === project,
-			)) ||
-		(department !== "" && project.includes(department))
+		department === normalizeName("AI效能部/品宣部") &&
+		["AI效能部", "品宣部"].some((alias) => normalizeName(alias) === project)
 	);
 }
 

@@ -118,6 +118,7 @@ describe("getOrganizationDepartments", () => {
 		const departments = getOrganizationDepartments([
 			project("board", "董事会"),
 			project("engineering", "工程部"),
+			project("old-r-and-d", "研发部历史"),
 		]);
 
 		expect(departments.find(({ name }) => name === "董事会")?.project?.id).toBe(
@@ -128,6 +129,9 @@ describe("getOrganizationDepartments", () => {
 		);
 		expect(
 			departments.find(({ name }) => name === "财务部")?.project,
+		).toBeUndefined();
+		expect(
+			departments.find(({ name }) => name === "研发部")?.project,
 		).toBeUndefined();
 	});
 });
