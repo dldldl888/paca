@@ -1,7 +1,7 @@
 import { AlertCircle, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
+import { resolveBrandName } from "@/components/app-shell/branding-effects";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,7 +20,7 @@ export function LoginFormPanel() {
 	const [showPassword, setShowPassword] = useState(false);
 	const branding = useBranding();
 	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
-	const brandName = branding?.brand_name;
+	const brandName = resolveBrandName(branding?.brand_name);
 
 	return (
 		<div className="relative flex flex-col justify-center px-8 py-10 sm:px-10">
@@ -37,11 +37,11 @@ export function LoginFormPanel() {
 						/>
 					) : (
 						<span className="text-xs font-bold text-(--sea-ink)">
-							{DEFAULT_BRAND_NAME}
+							{brandName}
 						</span>
 					)}
 					<span className="text-base font-bold tracking-tight text-(--sea-ink)">
-						{brandName ?? DEFAULT_BRAND_NAME}
+						{brandName}
 					</span>
 				</div>
 

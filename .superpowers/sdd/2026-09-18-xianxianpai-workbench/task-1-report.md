@@ -28,3 +28,10 @@ Some technical Paca references remain in project locale hints, paths, shell titl
 - Removed employee-visible Paca product prose from the English and Simplified Chinese project locale copy. Internal workspace paths and shell titles remain unchanged.
 
 Round 1 verification: focused Vitest remains **16 passed**, Biome passes on changed source files, and `git diff --check` passes.
+
+## Review fix round 2
+
+- Updated `LoginFormPanel` to use `resolveBrandName()` for both the mobile no-logo mark and adjacent wordmark, matching the sidebar and desktop login panel.
+- The shared focused test covers custom names plus empty and whitespace-only values, proving the fallback behavior used by the component.
+
+Round 2 verification: focused Vitest **16 passed**, Biome passed, and `git diff --check` passed.
