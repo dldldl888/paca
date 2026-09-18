@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { type ComponentType, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { OrganizationNavigation } from "@/components/company/organization-navigation";
 import { AssignedTasksList } from "@/components/home/assigned-tasks-list";
 import { UpdateBanner } from "@/components/home/UpdateBanner";
 import { NewConversationThread } from "@/components/projects/agents/new-conversation-thread";
@@ -493,6 +494,7 @@ function HomePage() {
 					<NewConversationThread companyAssistant />
 				</div>
 			</section>
+			<OrganizationNavigation />
 			{/* Hero banner */}
 			<div className="relative overflow-hidden border-b border-border/50">
 				<div
