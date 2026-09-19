@@ -1,7 +1,11 @@
 import { AlertCircle, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { resolveBrandName } from "@/components/app-shell/branding-effects";
+import {
+	DEFAULT_LOGO_HREF,
+	resolveBrandLogo,
+	resolveBrandName,
+} from "@/components/app-shell/branding-effects";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +23,7 @@ export function LoginFormPanel() {
 	const { form, serverError } = useLoginForm();
 	const [showPassword, setShowPassword] = useState(false);
 	const branding = useBranding();
-	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
+	const logoUrl = resolveBrandLogo(branding);
 	const brandName = resolveBrandName(branding?.brand_name);
 
 	return (
@@ -27,22 +31,22 @@ export function LoginFormPanel() {
 			<div className="relative">
 				{/* Mobile logo */}
 				<div className="mb-7 flex items-center gap-2.5 lg:hidden">
-					{logoUrl ? (
+					{logoUrl && (
 						<img
 							src={logoUrl}
-							alt={t("brand.logoAlt")}
-							width={127}
-							height={175}
-							className="h-auto w-8"
+							alt={brandName}
+							className={
+								logoUrl === DEFAULT_LOGO_HREF
+									? "h-auto w-36 object-contain"
+									: "max-h-8 w-8 object-contain"
+							}
 						/>
-					) : (
-						<span className="text-xs font-bold text-(--sea-ink)">
+					)}
+					{logoUrl !== DEFAULT_LOGO_HREF && (
+						<span className="text-base font-bold tracking-tight text-(--sea-ink)">
 							{brandName}
 						</span>
 					)}
-					<span className="text-base font-bold tracking-tight text-(--sea-ink)">
-						{brandName}
-					</span>
 				</div>
 
 				{/* Heading */}

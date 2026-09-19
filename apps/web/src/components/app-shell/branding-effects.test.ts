@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_BRAND_NAME,
+	DEFAULT_LOGO_HREF,
 	DEFAULT_TITLE,
 	darken,
 	foregroundFor,
 	hexToRgb,
+	resolveBrandLogo,
 	resolveBrandName,
 	rgbToHex,
 } from "./branding-effects";
@@ -18,6 +20,21 @@ describe("芯鲜派 branding defaults", () => {
 		expect(resolveBrandName()).toBe(DEFAULT_BRAND_NAME);
 		expect(resolveBrandName("  ")).toBe(DEFAULT_BRAND_NAME);
 		expect(resolveBrandName("柑橘实验室")).toBe("柑橘实验室");
+	});
+
+	it("uses the supplied logo by default while preserving workspace overrides", () => {
+		expect(resolveBrandLogo()).toBe(DEFAULT_LOGO_HREF);
+		expect(resolveBrandLogo({ brand_name: " 芯鲜派 " })).toBe(
+			DEFAULT_LOGO_HREF,
+		);
+		expect(resolveBrandLogo({ logo_url: "/custom.png" })).toBe("/custom.png");
+		expect(
+			resolveBrandLogo({
+				logo_url: "/custom.png",
+				logo_thumb_url: "/thumb.png",
+			}),
+		).toBe("/thumb.png");
+		expect(resolveBrandLogo({ brand_name: "柑橘实验室" })).toBeUndefined();
 	});
 });
 

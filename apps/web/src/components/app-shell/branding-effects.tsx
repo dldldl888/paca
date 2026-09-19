@@ -1,9 +1,11 @@
 import { useEffect } from "react";
 import { useBranding } from "@/hooks/use-branding";
 import { useThemeMode } from "@/hooks/use-theme-mode";
+import type { BrandingResponse } from "@/lib/settings-api";
 
 const FAVICON_LINK_ID = "app-favicon";
-const DEFAULT_FAVICON_HREF = "/favicon.ico";
+export const DEFAULT_LOGO_HREF = "/brand/xianxianpai-logo.png";
+const DEFAULT_FAVICON_HREF = DEFAULT_LOGO_HREF;
 // Exported so useDocumentTitle (see hooks/use-document-title.ts) can prefix
 // the same base title with an unread count/project name without hardcoding
 // it a second time.
@@ -12,6 +14,18 @@ export const DEFAULT_TITLE = DEFAULT_BRAND_NAME;
 
 export function resolveBrandName(brandName?: string | null): string {
 	return brandName?.trim() || DEFAULT_BRAND_NAME;
+}
+
+export function resolveBrandLogo(
+	branding?: BrandingResponse,
+): string | undefined {
+	return (
+		branding?.logo_thumb_url ||
+		branding?.logo_url ||
+		(resolveBrandName(branding?.brand_name) === DEFAULT_BRAND_NAME
+			? DEFAULT_LOGO_HREF
+			: undefined)
+	);
 }
 
 // Exported for unit testing (see branding-effects.test.ts) — otherwise only
@@ -116,7 +130,7 @@ export function BrandingEffects() {
 			link.type = "image/png";
 		} else {
 			link.href = DEFAULT_FAVICON_HREF;
-			link.type = "image/x-icon";
+			link.type = "image/png";
 		}
 	}, [faviconUrl]);
 

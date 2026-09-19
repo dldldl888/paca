@@ -104,7 +104,11 @@ import {
 	projectsQueryOptions,
 } from "@/lib/project-api";
 import { cn } from "@/lib/utils";
-import { resolveBrandName } from "./branding-effects";
+import {
+	DEFAULT_LOGO_HREF,
+	resolveBrandLogo,
+	resolveBrandName,
+} from "./branding-effects";
 import { UserMenu } from "./user-menu";
 
 // Shared by every inactive nav item (top-level, project, plugin, and
@@ -1611,7 +1615,7 @@ export function AppSidebar() {
 	const { data: user } = useQuery(currentUserQueryOptions);
 	const { getNavItems } = usePluginRegistry();
 	const branding = useBranding();
-	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
+	const logoUrl = resolveBrandLogo(branding);
 	const brandName = resolveBrandName(branding?.brand_name);
 
 	const canAccessGlobalRoles =
@@ -1653,7 +1657,15 @@ export function AppSidebar() {
 	const isProjectContext = !!projectId;
 	const isAnonymous = !user;
 	const brandMark = logoUrl ? (
-		<img src={logoUrl} alt={t("brand.logoAlt")} className="size-8 shrink-0" />
+		<img
+			src={logoUrl}
+			alt={brandName}
+			className={
+				logoUrl === DEFAULT_LOGO_HREF
+					? "h-auto w-32 shrink-0 object-contain group-data-[collapsible=icon]:w-8"
+					: "size-8 shrink-0 object-contain"
+			}
+		/>
 	) : (
 		<span className="flex size-8 shrink-0 items-center justify-center text-center text-[10px] font-bold leading-tight text-sidebar-foreground">
 			{brandName}
@@ -1666,9 +1678,11 @@ export function AppSidebar() {
 			<SidebarHeader className="gap-2 pb-2">
 				<div className="flex items-center gap-2.5 px-2 pt-1">
 					{user ? <Link to="/home">{brandMark}</Link> : brandMark}
-					<span className="font-[Syne] font-bold text-base tracking-tight text-sidebar-foreground group-data-[collapsible=icon]:hidden">
-						{brandName}
-					</span>
+					{logoUrl !== DEFAULT_LOGO_HREF && (
+						<span className="font-[Syne] font-bold text-base tracking-tight text-sidebar-foreground group-data-[collapsible=icon]:hidden">
+							{brandName}
+						</span>
+					)}
 				</div>
 				<div className="group-data-[collapsible=icon]:hidden">
 					<ProjectSwitcher

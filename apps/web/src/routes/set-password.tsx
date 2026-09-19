@@ -2,7 +2,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { PartyPopper, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { DEFAULT_BRAND_NAME } from "@/components/app-shell/branding-effects";
+import {
+	DEFAULT_LOGO_HREF,
+	resolveBrandLogo,
+	resolveBrandName,
+} from "@/components/app-shell/branding-effects";
 import { SetPasswordForm } from "@/components/auth/SetPasswordForm";
 import LanguageToggle from "@/components/LanguageToggle";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -20,8 +24,8 @@ export const Route = createFileRoute("/set-password")({
 function SetPasswordPage() {
 	const { t } = useTranslation("auth");
 	const branding = useBranding();
-	const logoUrl = branding?.logo_thumb_url ?? branding?.logo_url;
-	const brandName = branding?.brand_name ?? DEFAULT_BRAND_NAME;
+	const logoUrl = resolveBrandLogo(branding);
+	const brandName = resolveBrandName(branding?.brand_name);
 	const { token } = Route.useSearch();
 	const [state, setState] = useState<"form" | "success" | "invalid">(
 		token ? "form" : "invalid",
@@ -48,22 +52,22 @@ function SetPasswordPage() {
 							<div className="pointer-events-none absolute right-0 top-1/2 h-64 w-64 -translate-y-1/2 translate-x-[42%] rounded-full border border-white/7" />
 							<div className="relative">
 								<div className="mb-10 flex items-center gap-3">
-									<div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/6 shadow-sm shadow-black/40">
-										{logoUrl ? (
-											<img
-												src={logoUrl}
-												alt={t("brand.logoAlt")}
-												className="h-auto w-5 object-contain"
-											/>
-										) : (
-											<span className="text-center text-[10px] font-bold leading-tight text-white">
-												{brandName}
-											</span>
-										)}
-									</div>
-									<span className="text-xl font-bold tracking-tight text-white">
-										{brandName}
-									</span>
+									{logoUrl && (
+										<img
+											src={logoUrl}
+											alt={brandName}
+											className={
+												logoUrl === DEFAULT_LOGO_HREF
+													? "h-auto w-40 object-contain"
+													: "max-h-9 max-w-24 object-contain"
+											}
+										/>
+									)}
+									{logoUrl !== DEFAULT_LOGO_HREF && (
+										<span className="text-xl font-bold tracking-tight text-white">
+											{brandName}
+										</span>
+									)}
 								</div>
 
 								<div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1">
@@ -89,12 +93,22 @@ function SetPasswordPage() {
 
 							<div className="relative">
 								<div className="mb-7 flex items-center gap-2.5 lg:hidden">
-									<div className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-(--chip-line) bg-(--chip-bg)">
-										<Sparkles className="size-3.5 text-(--lagoon)" />
-									</div>
-									<span className="text-sm font-bold tracking-tight text-(--sea-ink)">
-										{brandName}
-									</span>
+									{logoUrl && (
+										<img
+											src={logoUrl}
+											alt={brandName}
+											className={
+												logoUrl === DEFAULT_LOGO_HREF
+													? "h-auto w-36 object-contain"
+													: "max-h-8 w-8 object-contain"
+											}
+										/>
+									)}
+									{logoUrl !== DEFAULT_LOGO_HREF && (
+										<span className="text-sm font-bold tracking-tight text-(--sea-ink)">
+											{brandName}
+										</span>
+									)}
 								</div>
 
 								{state === "invalid" ? (
