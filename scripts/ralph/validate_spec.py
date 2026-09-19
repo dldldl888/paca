@@ -1,4 +1,4 @@
-"""Bind scenarios to real test bodies and execute native Go/Bun/unittest tests."""
+"""Bind scenarios to real test bodies and execute their native test runner."""
 import argparse
 import ast
 import json
@@ -12,6 +12,9 @@ import sys
 
 class SpecError(ValueError):
     pass
+
+
+PASSED_PLAYWRIGHT_BINDINGS = set()
 
 
 PYTHON_TEST_RUNNER = """
@@ -77,10 +80,52 @@ def python_binding(path, node, sut):
         raise SpecError(f'{node}: test body must call {sut} and assert behavior')
 
 
-def validate_scenario(root, scenario):
-    sid, sut = scenario['id'], scenario['sut']
+def package_runner(module):
+    package = json.loads((module / 'package.json').read_text())
+    dependencies = package.get('dependencies', {}) | package.get('devDependencies', {})
+    if 'vitest' in dependencies:
+        return 'vitest'
+    if '@playwright/test' in dependencies:
+        return 'playwright'
+    return 'bun'
+
+
+def playwright_specs(suites, prefix=()):
+    for suite in suites:
+        title = suite.get('title', '')
+        nested = prefix if title.endswith(('.spec.ts', '.spec.tsx', '.spec.js', '.spec.jsx')) else prefix + (title,)
+        for spec in suite.get('specs', []):
+            yield ' '.join((*nested, spec['title'])), spec
+        yield from playwright_specs(suite.get('suites', []), nested)
+
+
+def report_path(filename, module):
+    path = Path(filename)
+    return (path if path.is_absolute() else module / path).resolve()
+
+
+def vitest_assertions(report, node, path, module):
+    return [
+        assertion
+        for result in report.get('testResults', [])
+        if report_path(result.get('name', ''), module) == path
+        for assertion in result.get('assertionResults', [])
+        if assertion.get('fullName') == node
+    ]
+
+
+def playwright_matches(report, node, path, module):
+    test_dir = report_path(report.get('config', {}).get('rootDir', str(module)), module)
+    return [
+        spec for title, spec in playwright_specs(report.get('suites', []))
+        if title == node and report_path(spec.get('file', ''), test_dir) == path
+    ]
+
+
+def validate_binding(root, sid, binding):
+    sut = binding['sut']
     try:
-        filename, node = scenario['test'].split('::', 1)
+        filename, node = binding['test'].split('::', 1)
         path = (root / filename).resolve()
         path.relative_to(root)
         if not path.is_file():
@@ -103,15 +148,45 @@ def validate_scenario(root, scenario):
             records = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
             if not any(r.get('Test') == node and r.get('Action') == 'pass' for r in records) or any(r.get('Action') in ('fail', 'skip') for r in records):
                 raise SpecError('missing, failed or skipped Go test')
-        elif path.suffix in ('.ts', '.js'):
+        elif path.suffix in ('.ts', '.tsx', '.js', '.jsx'):
             module = next((p for p in path.parents if (p / 'package.json').is_file()), None)
             if module is None:
-                raise SpecError('test has no Bun package')
+                raise SpecError('test has no JavaScript package')
+            runner = package_runner(module)
             helper = os.path.relpath(root / 'scripts/ralph/check_ts_binding.cjs', module)
-            native(root, module, ['bun', helper, str(path.relative_to(module)), node, sut])
-            output = native(root, module, ['bun', 'test', str(path.relative_to(module)), '--test-name-pattern', '^' + re.escape(node) + '$'])
-            if not re.search(r'\b[1-9][0-9]* pass\b', output) or re.search(r'\b[1-9][0-9]* (skip|fail)\b', output):
-                raise SpecError('missing, failed or skipped Bun test')
+            helper_runtime = 'bun' if runner == 'bun' else 'node'
+            native(root, module, [helper_runtime, helper, str(path.relative_to(module)), node, sut, runner])
+            pattern = '^' + re.escape(node) + '$'
+            if runner == 'vitest':
+                cli = module / 'node_modules/vitest/vitest.mjs'
+                output = native(root, module, ['node', str(cli), 'run', str(path.relative_to(module)), '--testNamePattern', pattern, '--reporter=json'], timeout=90, stdout_only=True)
+                report = json.loads(output)
+                matches = vitest_assertions(report, node, path, module)
+                if len(matches) != 1 or matches[0].get('status') != 'passed':
+                    raise SpecError('missing, failed or skipped Vitest test')
+            elif runner == 'playwright':
+                cli = module / 'node_modules/@playwright/test/cli.js'
+                command = ['node', str(cli), 'test', str(path.relative_to(module)), '--grep', re.escape(node) + '$',
+                           '--reporter=json', '--project=chromium', '--workers=1', '--retries=0']
+                config_bytes = b''
+                if binding.get('config'):
+                    config = (module / binding['config']).resolve()
+                    config.relative_to(module)
+                    command.extend(['--config', str(config.relative_to(module))])
+                    config_bytes = config.read_bytes()
+                cache_key = (path, path.read_bytes(), node, sut, config_bytes)
+                if cache_key in PASSED_PLAYWRIGHT_BINDINGS:
+                    return sid
+                report = json.loads(native(root, module, command, stdout_only=True))
+                matches = playwright_matches(report, node, path, module)
+                results = [result for spec in matches for test in spec.get('tests', []) for result in test.get('results', [])]
+                if len(matches) != 1 or not results or any(result.get('status') != 'passed' for result in results):
+                    raise SpecError('missing, failed or skipped Playwright test')
+                PASSED_PLAYWRIGHT_BINDINGS.add(cache_key)
+            else:
+                output = native(root, module, ['bun', 'test', str(path.relative_to(module)), '--test-name-pattern', pattern])
+                if not re.search(r'\b[1-9][0-9]* pass\b', output) or re.search(r'\b[1-9][0-9]* (skip|fail)\b', output):
+                    raise SpecError('missing, failed or skipped Bun test')
         else:
             raise SpecError(f'unsupported native test language: {path.suffix}')
     except (ValueError, KeyError, SyntaxError, StopIteration, OSError, subprocess.TimeoutExpired) as exc:
@@ -119,8 +194,18 @@ def validate_scenario(root, scenario):
     return sid
 
 
+def validate_scenario(root, scenario):
+    sid = scenario['id']
+    validate_binding(root, sid, scenario)
+    for index, binding in enumerate(scenario.get('additionalTests', []), 1):
+        validate_binding(root, f'{sid}.additionalTests[{index}]', scenario | binding)
+    return sid
+
+
 def validate_story(root, story):
     root = Path(root).resolve()
+    if 'scenarios' not in story:
+        return []
     scenarios = [s for s in story.get('scenarios', []) if s.get('active', True)]
     if not scenarios:
         raise SpecError(f"{story['id']}: no scenarios")
