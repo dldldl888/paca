@@ -146,6 +146,7 @@ describe("useGlobalAgentPicker", () => {
 			wrapper: harness([assistant]),
 		});
 		expect(screen.getByRole("heading", { name: "小派" })).toBeInTheDocument();
+		expect(screen.getByText(/公司资料|工作/)).toBeInTheDocument();
 		expect(screen.getByRole("textbox")).toBeEnabled();
 	});
 });

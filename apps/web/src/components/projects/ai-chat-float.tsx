@@ -56,11 +56,7 @@ const THREAD_COMPONENTS = {
  * messages. The Thread shows nothing for such a conversation; without this
  * banner the user would see a blank chat panel with no feedback.
  */
-function FloatingChatFailedBanner({
-	message,
-}: {
-	message: string | null | undefined;
-}) {
+function FloatingChatFailedBanner() {
 	const { t } = useTranslation("projects");
 	return (
 		<div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
@@ -72,7 +68,7 @@ function FloatingChatFailedBanner({
 					{t("agents.conversationView.failed")}
 				</p>
 				<p className="text-xs text-muted-foreground wrap-break-word">
-					{message ?? t("agents.conversationView.noOutput")}
+					{t("agents.conversationView.safeError")}
 				</p>
 			</div>
 		</div>
@@ -355,7 +351,7 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 
 					<div className="min-h-0 flex-1 overflow-y-auto">
 						{showFailedBanner ? (
-							<FloatingChatFailedBanner message={conversation?.error_message} />
+							<FloatingChatFailedBanner />
 						) : (
 							<AgentPickerContext.Provider value={pickerState}>
 								<AssistantRuntimeProvider runtime={runtime}>
@@ -372,9 +368,7 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 										// failure with a visible message still explains itself.
 										viewportOverlay={
 											conversation?.error_message ? (
-												<ConversationErrorBox
-													message={conversation.error_message}
-												/>
+												<ConversationErrorBox />
 											) : undefined
 										}
 									/>

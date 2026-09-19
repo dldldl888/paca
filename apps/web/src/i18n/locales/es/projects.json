@@ -325,6 +325,7 @@
 			"conversationEnded": "Esta conversación ha finalizado.",
 			"textOnlyMessage": "Solo se admiten mensajes de texto.",
 			"failed": "La conversación falló",
+			"safeError": "Unable to complete the reply. Please retry, or contact an administrator if the problem continues.",
 			"noOutput": "El agente no produjo ninguna salida.",
 			"loadingOlder": "Cargando…",
 			"newBelow_one": "{{count}} mensaje nuevo",

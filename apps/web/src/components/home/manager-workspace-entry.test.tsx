@@ -21,7 +21,10 @@ vi.mock("@/hooks/use-project-permissions", () => ({
 	}),
 }));
 vi.mock("@/lib/project-api", () => ({
-	projectsQueryOptions: () => ({ queryKey: ["manager-projects"] }),
+	projectsQueryOptions: () => ({
+		queryKey: ["manager-projects"],
+		queryFn: async () => ({ items: [], total: 0 }),
+	}),
 }));
 vi.mock("@tanstack/react-router", () => ({
 	Link: ({
@@ -52,18 +55,16 @@ vi.mock("react-i18next", () => ({
 
 import { ManagerWorkspaceEntry } from "./manager-workspace-entry";
 
-function renderEntry(projects: unknown[]) {
+function renderEntry(component: ReactNode, projects: unknown[]) {
 	const queryClient = new QueryClient({
-		defaultOptions: { queries: { retry: false } },
+		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
 	queryClient.setQueryData(["manager-projects"], {
 		items: projects,
 		total: projects.length,
 	});
 	return render(
-		<QueryClientProvider client={queryClient}>
-			<ManagerWorkspaceEntry />
-		</QueryClientProvider>,
+		<QueryClientProvider client={queryClient}>{component}</QueryClientProvider>,
 	);
 }
 
@@ -73,7 +74,7 @@ describe("ManagerWorkspaceEntry", () => {
 	it("shows role-scoped management links for a project manager", async () => {
 		mocks.globalManage = false;
 		mocks.projectManage = new Set(["engineering"]);
-		renderEntry([
+		const scopedView = renderEntry(<ManagerWorkspaceEntry />, [
 			project("engineering", "工程部"),
 			project("finance", "财务部"),
 		]);
@@ -91,12 +92,24 @@ describe("ManagerWorkspaceEntry", () => {
 			screen.getByRole("link", { name: "从任务查看反馈 · 工程部" }),
 		).toHaveAttribute("href", "/projects/engineering/interactions/backlog");
 		expect(screen.queryByText("财务部")).not.toBeInTheDocument();
+		scopedView.unmount();
+		mocks.globalManage = true;
+		renderEntry(<ManagerWorkspaceEntry />, [
+			project("engineering", "工程部"),
+			project("finance", "财务部"),
+		]);
+		expect(
+			await screen.findByRole("link", { name: "团队目标与草稿 · 财务部" }),
+		).toHaveAttribute("href", "/projects/finance/drafts");
+		expect(
+			screen.getByRole("link", { name: "团队目标与草稿 · 工程部" }),
+		).toBeInTheDocument();
 	});
 
 	it("hides all management links for an employee even when leaders are present", async () => {
 		mocks.globalManage = false;
 		mocks.projectManage = new Set();
-		renderEntry([project("engineering", "工程部")]);
+		renderEntry(<ManagerWorkspaceEntry />, [project("engineering", "工程部")]);
 
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(

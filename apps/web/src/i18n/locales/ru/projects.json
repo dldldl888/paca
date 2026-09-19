@@ -331,6 +331,7 @@
 			"conversationEnded": "Этот диалог завершён.",
 			"textOnlyMessage": "Поддерживаются только текстовые сообщения.",
 			"failed": "Диалог завершился с ошибкой",
+			"safeError": "Unable to complete the reply. Please retry, or contact an administrator if the problem continues.",
 			"noOutput": "Агент не выдал результат.",
 			"loadingOlder": "Загрузка…",
 			"newBelow_one": "{{count}} новое сообщение",

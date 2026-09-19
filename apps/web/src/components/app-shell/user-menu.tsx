@@ -31,6 +31,7 @@ import {
 	SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { useLocale } from "@/hooks/use-locale";
+import { usePermissions } from "@/hooks/use-permissions";
 import { currentUserQueryOptions, logout } from "@/lib/auth-api";
 import { useShortcutHelpStore } from "@/lib/shortcuts/help-dialog-store";
 import { getInitials } from "@/lib/utils";
@@ -43,6 +44,7 @@ export function UserMenu() {
 	const { data: user } = useQuery(currentUserQueryOptions);
 	const [isLoggingOut, setIsLoggingOut] = useState(false);
 	const { locale, set: setLocale } = useLocale();
+	const { hasPermission } = usePermissions();
 	const openShortcutHelp = useShortcutHelpStore((s) => s.setOpen);
 
 	if (!user) {
@@ -132,12 +134,14 @@ export function UserMenu() {
 							<User className="size-4" />
 							{t("userMenu.myProfile")}
 						</DropdownMenuItem>
-						<DropdownMenuItem
-							onClick={() => void navigate({ to: "/profile/api-keys" })}
-						>
-							<Key className="size-4" />
-							{t("userMenu.apiKeys")}
-						</DropdownMenuItem>
+						{hasPermission("settings.write") && (
+							<DropdownMenuItem
+								onClick={() => void navigate({ to: "/profile/api-keys" })}
+							>
+								<Key className="size-4" />
+								{t("userMenu.apiKeys")}
+							</DropdownMenuItem>
+						)}
 						<DropdownMenuItem onClick={() => openShortcutHelp(true)}>
 							<Keyboard className="size-4" />
 							{tShortcuts("dialog.menuLabel")}

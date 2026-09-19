@@ -198,6 +198,9 @@ function CompanyAssistantWelcome() {
 			<h1 className="text-2xl font-semibold">
 				{t("aiChat.companyAssistantTitle")}
 			</h1>
+			<p className="mt-2 text-sm text-muted-foreground">
+				{t("agents.thread.welcomeHeading")}
+			</p>
 		</div>
 	);
 }

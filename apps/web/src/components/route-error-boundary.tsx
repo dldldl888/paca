@@ -12,12 +12,13 @@ import { Button } from "@/components/ui/button";
  * Providing an `errorComponent` / `defaultErrorComponent` short-circuits that
  * crash and renders this fallback instead.
  */
-export function RouteErrorComponent({ error }: { error: Error }) {
+export function RouteErrorComponent({ error }: { error: unknown }) {
 	const { t } = useTranslation();
+	const message = error instanceof Error ? error.message : "";
 
 	const isNotFound =
-		error?.message?.toLowerCase().includes("not found") ||
-		error?.message?.toLowerCase().includes("404");
+		message.toLowerCase().includes("not found") ||
+		message.toLowerCase().includes("404");
 
 	return (
 		<div className="flex flex-col h-full items-center justify-center gap-4 p-6">
@@ -30,9 +31,9 @@ export function RouteErrorComponent({ error }: { error: Error }) {
 						? t("common.notFound", "Not found")
 						: t("common.somethingWentWrong", "Something went wrong")}
 				</p>
-				{error?.message && (
+				{message && (
 					<p className="text-xs text-muted-foreground wrap-break-word">
-						{error.message}
+						{message}
 					</p>
 				)}
 			</div>

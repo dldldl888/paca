@@ -325,6 +325,7 @@
 			"conversationEnded": "この会話は終了しました。",
 			"textOnlyMessage": "テキストメッセージのみサポートされています。",
 			"failed": "会話が失敗しました",
+			"safeError": "Unable to complete the reply. Please retry, or contact an administrator if the problem continues.",
 			"noOutput": "エージェントは出力を生成しませんでした。",
 			"loadingOlder": "読み込み中…",
 			"newBelow_one": "新着メッセージ{{count}}件",

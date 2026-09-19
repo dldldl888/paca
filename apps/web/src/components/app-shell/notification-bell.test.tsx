@@ -98,7 +98,7 @@ describe("NotificationBell", () => {
 			unread_count: 1,
 		});
 
-		render(<NotificationBell />, { wrapper });
+		const view = render(<NotificationBell />, { wrapper });
 		await userEvent.click(screen.getByRole("button", { name: "通知" }));
 		expect(
 			await screen.findByText(
@@ -110,6 +110,7 @@ describe("NotificationBell", () => {
 			to: "/projects/$projectId/tasks/$taskId",
 			params: { projectId: "proj-a", taskId: "task-1" },
 		});
+		view.unmount();
 		await loadLanguage("en");
 		await i18next.changeLanguage("en");
 	});

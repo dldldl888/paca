@@ -470,8 +470,7 @@ export function ConversationView({
 						{t("agents.conversationView.failed")}
 					</p>
 					<p className="text-xs text-muted-foreground wrap-break-word">
-						{conversation.error_message ??
-							t("agents.conversationView.noOutput")}
+						{t("agents.conversationView.safeError")}
 					</p>
 				</div>
 			</div>
@@ -558,9 +557,7 @@ export function ConversationView({
 						}
 						viewportOverlay={
 							<>
-								{conversation.error_message && (
-									<ConversationErrorBox message={conversation.error_message} />
-								)}
+								{conversation.error_message && <ConversationErrorBox />}
 								<TailFollowIndicator
 									newBelow={newBelow}
 									following={following}

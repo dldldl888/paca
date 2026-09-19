@@ -325,6 +325,7 @@
 			"conversationEnded": "Cuộc trò chuyện này đã kết thúc.",
 			"textOnlyMessage": "Chỉ hỗ trợ tin nhắn văn bản.",
 			"failed": "Cuộc trò chuyện thất bại",
+			"safeError": "Unable to complete the reply. Please retry, or contact an administrator if the problem continues.",
 			"noOutput": "Agent không tạo ra kết quả nào.",
 			"loadingOlder": "Đang tải…",
 			"newBelow_one": "{{count}} tin nhắn mới",

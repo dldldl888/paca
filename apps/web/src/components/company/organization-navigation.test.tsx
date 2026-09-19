@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -59,7 +59,7 @@ const project = (id: string, name: string): Project => ({
 	created_at: "2026-01-01T00:00:00Z",
 });
 
-function renderNavigation(projects: Project[]) {
+function renderNavigation(component: ReactNode, projects: Project[]) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
@@ -70,9 +70,7 @@ function renderNavigation(projects: Project[]) {
 		page_size: 50,
 	});
 	return render(
-		<QueryClientProvider client={queryClient}>
-			<OrganizationNavigation />
-		</QueryClientProvider>,
+		<QueryClientProvider client={queryClient}>{component}</QueryClientProvider>,
 	);
 }
 
@@ -137,9 +135,34 @@ describe("getOrganizationDepartments", () => {
 });
 
 describe("OrganizationNavigation", () => {
+	it("renders seeded departments and leaders", () => {
+		mocks.canManage = false;
+		renderNavigation(<OrganizationNavigation />, [project("board", "董事会")]);
+		const departments = screen.getAllByRole("listitem");
+		expect(departments).toHaveLength(11);
+		const expected = [
+			["董事会", "柯人元"],
+			["总经办", "柯人元"],
+			["人事行政部", "李帅"],
+			["财务部", "郭长青"],
+			["项目部", "陈柏霖"],
+			["工程部", "程环"],
+			["研发部", "张家伟"],
+			["投融部", "李弘皓"],
+			["AI效能部/品宣部", "张家伟"],
+			["贸易部", "柯敏"],
+			["采购部", "魏杜秋"],
+		];
+		for (const [index, [name, leader]] of expected.entries()) {
+			expect(within(departments[index]).getByText(name)).toBeInTheDocument();
+			expect(
+				within(departments[index]).getByText(`负责人：${leader}`),
+			).toBeInTheDocument();
+		}
+	});
 	it("hides management links without tasks.manage and never creates missing project links", async () => {
 		mocks.canManage = false;
-		renderNavigation([project("board", "董事会")]);
+		renderNavigation(<OrganizationNavigation />, [project("board", "董事会")]);
 
 		expect(await screen.findByRole("list")).toBeInTheDocument();
 		expect(screen.queryByRole("tree")).not.toBeInTheDocument();
@@ -153,7 +176,7 @@ describe("OrganizationNavigation", () => {
 
 	it("shows the manager entry only when tasks.manage is available", async () => {
 		mocks.canManage = true;
-		renderNavigation([project("board", "董事会")]);
+		renderNavigation(<OrganizationNavigation />, [project("board", "董事会")]);
 
 		expect(await screen.findByRole("link", { name: /管理/ })).toHaveAttribute(
 			"href",
