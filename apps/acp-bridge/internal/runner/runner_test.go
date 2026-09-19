@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"reflect"
 	"sync"
@@ -407,7 +408,14 @@ func runFakeACPAgent(behavior string) {
 				write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(msg.ID), "result": map[string]any{"stopReason": "end_turn"}})
 				continue
 			}
-			if behavior == "cancel" {
+			if behavior == "uncancellable" && msg.Params.Prompt[0].Text == "resume" {
+				write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(msg.ID), "result": map[string]any{"stopReason": "end_turn"}})
+				continue
+			}
+			if behavior == "cancel" || behavior == "uncancellable" {
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+					"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "started", "title": "Prompt started"},
+				}})
 				// Wait for the client to actually send session/cancel
 				// before answering, so the test's Interrupt call is what
 				// unblocks Prompt — not a race with an immediate reply.
@@ -416,6 +424,9 @@ func runFakeACPAgent(behavior string) {
 						Method string `json:"method"`
 					}
 					if json.Unmarshal(in.Bytes(), &note) == nil && note.Method == "session/cancel" {
+						if behavior == "uncancellable" {
+							time.Sleep(time.Hour)
+						}
 						break
 					}
 				}
@@ -561,6 +572,211 @@ func TestEndToEndTurnEmitsTurnUsageWithTokensAndCost(t *testing.T) {
 	}
 	if decoded.InputTokens != 100 || decoded.OutputTokens != 50 || decoded.TotalTokens != 150 || decoded.CostUSD != 0.0042 {
 		t.Fatalf("unexpected payload: %+v", decoded)
+	}
+}
+
+// Hold the real worker at its completion boundary so resume deterministically
+// arrives after Stop dispatch but before the old turn has released its session.
+func TestImmediateResumeWaitsForInterruptedWorker(t *testing.T) {
+	for _, action := range []string{"resume", "duplicate", "distinct", "second_stop", "revoke", "reauthorize", "same_epoch", "disconnect", "shutdown"} {
+		t.Run(action, func(t *testing.T) {
+			setFakeAgentEnv(t, "cancel")
+			r, sent := newTestRunner(t)
+			t.Cleanup(r.Close)
+			r.cfg.RequireAuthorization = true
+			if err := r.AuthorizationBarrier(context.Background(), "open", "1", nil); err != nil {
+				t.Fatal(err)
+			}
+			msg := map[string]any{"conversation_id": "conv-resume", "message": "first", "acp_provider": "custom", "acp_command": []any{os.Args[0]}, "authorization_epoch": "1"}
+			r.StartTurn(context.Background(), msg)
+			waitForEventType(t, sent, "tool_call")
+			r.mu.Lock()
+			state := r.conversations["conv-resume"]
+			r.mu.Unlock()
+			state.mu.Lock()
+			oldDone := state.turnDone
+			state.mu.Unlock()
+			state.updateMu.Lock()
+			r.Interrupt("conv-resume")
+			resume := maps.Clone(msg)
+			resume["message"] = "resume"
+			r.StartTurn(context.Background(), resume)
+			state.mu.Lock()
+			pending := state.pendingTurn
+			state.mu.Unlock()
+			switch action {
+			case "duplicate":
+				r.StartTurn(context.Background(), resume)
+			case "distinct":
+				distinct := maps.Clone(resume)
+				distinct["message"] = "different request"
+				r.StartTurn(context.Background(), distinct)
+			case "second_stop":
+				r.Interrupt("conv-resume")
+			case "revoke", "reauthorize":
+				if err := r.AuthorizationBarrier(context.Background(), "close", "2", nil); err != nil {
+					state.updateMu.Unlock()
+					t.Fatal(err)
+				}
+			case "same_epoch", "shutdown":
+				if err := r.AuthorizationBarrier(context.Background(), "close", "1", nil); err != nil {
+					state.updateMu.Unlock()
+					t.Fatal(err)
+				}
+			case "disconnect":
+				r.AuthorizationDisconnected()
+			}
+			select {
+			case <-oldDone:
+				state.updateMu.Unlock()
+				t.Fatal("old worker released before its completion boundary")
+			default:
+			}
+			state.updateMu.Unlock()
+			if action == "revoke" || action == "reauthorize" {
+				allowed := []string{}
+				if action == "reauthorize" {
+					allowed = []string{"conv-resume"}
+				}
+				if err := r.AuthorizationBarrier(context.Background(), "reconcile", "2", allowed); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.AuthorizationBarrier(context.Background(), "open", "2", nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if action == "disconnect" {
+				r.Interrupt("conv-resume")
+			}
+			if action == "same_epoch" {
+				if err := r.AuthorizationBarrier(context.Background(), "reconcile", "1", []string{"conv-resume"}); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.AuthorizationBarrier(context.Background(), "open", "1", nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if action == "shutdown" {
+				closed := make(chan struct{})
+				go func() { r.Close(); close(closed) }()
+				select {
+				case <-closed:
+				case <-time.After(testTimeout):
+					t.Fatal("Close deadlocked on pending resume behind authorization barrier")
+				}
+			}
+			if pending == nil {
+				t.Fatal("immediate resume was rejected instead of awaiting interrupted worker")
+			}
+			select {
+			case <-pending.done:
+			case <-time.After(testTimeout):
+				t.Fatal("resume admission did not finish")
+			}
+			select {
+			case <-oldDone:
+			default:
+				t.Fatal("resume admitted before interrupted worker exited")
+			}
+			wantMessages := 1
+			if action == "resume" || action == "duplicate" || action == "same_epoch" {
+				state.mu.Lock()
+				running := state.turnRunning
+				state.mu.Unlock()
+				if !running {
+					t.Fatal("authorized pending resume was dropped")
+				}
+				result := waitFor(t, sent, func(m map[string]any) bool { return m["type"] == "turn_status" || m["event_type"] == "tool_call" })
+				if result["type"] == "turn_status" {
+					t.Fatalf("immediate resume failed: %v", result)
+				}
+				state.mu.Lock()
+				nextDone := state.turnDone
+				state.mu.Unlock()
+				r.Interrupt("conv-resume")
+				select {
+				case <-nextDone:
+				case <-time.After(testTimeout):
+					t.Fatal("resumed worker did not stop")
+				}
+				wantMessages = 2
+			}
+			if action == "reauthorize" {
+				failure := waitForStatus(t, sent, "failed")
+				if failure["authorization_epoch"] != "2" {
+					t.Fatal("retry status used stale authority")
+				}
+				if failure["error_message"] != "The conversation changed while stopping; please send your message again." {
+					t.Fatalf("unsafe retry status: %v", failure)
+				}
+			}
+			// Drain the actual outbound FIFO before counting, without a timing sleep.
+			state.outbound <- map[string]any{"type": "test_barrier"}
+			waitFor(t, sent, func(m map[string]any) bool { return m["type"] == "test_barrier" })
+			messages, failures := 0, 0
+			for _, m := range sent.all() {
+				if m["type"] == "turn_status" {
+					if (action != "distinct" && action != "reauthorize") || m["status"] != "failed" {
+						t.Fatalf("unexpected terminal failure/status: %v", m)
+					}
+					failures++
+				}
+				if m["event_type"] == "user_message" {
+					messages++
+				}
+			}
+			if (action == "distinct" || action == "reauthorize") && failures != 1 {
+				t.Fatalf("different same-conversation request silently dropped; failure count %d", failures)
+			}
+			if messages != wantMessages {
+				t.Fatalf("user messages = %d, want %d", messages, wantMessages)
+			}
+		})
+	}
+}
+
+func TestImmediateResumeWaitsForForcedSubprocessClose(t *testing.T) {
+	setFakeAgentEnv(t, "uncancellable")
+	r, sent := newTestRunner(t)
+	t.Cleanup(r.Close)
+	msg := map[string]any{"conversation_id": "conv-forced", "message": "first", "acp_provider": "custom", "acp_command": []any{os.Args[0]}}
+	r.StartTurn(context.Background(), msg)
+	waitForEventType(t, sent, "tool_call")
+	r.mu.Lock()
+	state := r.conversations["conv-forced"]
+	r.mu.Unlock()
+	state.mu.Lock()
+	oldDone, oldClient := state.turnDone, state.client
+	state.mu.Unlock()
+	r.Interrupt("conv-forced")
+	resume := maps.Clone(msg)
+	resume["message"] = "resume"
+	r.StartTurn(context.Background(), resume)
+	select {
+	case <-oldDone:
+	case <-time.After(testTimeout):
+		t.Fatal("forced cancellation did not finish old worker")
+	}
+	// The old Prompt goroutine is gone, but the uncooperative native process
+	// still owns the session until Close's kill-and-wait completes.
+	if !oldClient.Alive() {
+		t.Fatal("fake subprocess exited before the hard-close barrier could be tested")
+	}
+	state.mu.Lock()
+	running, pending := state.turnRunning, state.pendingTurn
+	state.mu.Unlock()
+	if running || pending == nil {
+		t.Fatal("resume escaped before the old subprocess was closed")
+	}
+	waitForStatus(t, sent, "finished")
+	if oldClient.Alive() {
+		t.Fatal("new prompt completed while old subprocess was still alive")
+	}
+	state.mu.Lock()
+	newClient := state.client
+	state.mu.Unlock()
+	if newClient == oldClient {
+		t.Fatal("resumed using the terminated client")
 	}
 }
 

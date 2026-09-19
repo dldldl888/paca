@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
@@ -449,9 +454,218 @@ func TestEvict_UnregisteredAgentIsANoOp(t *testing.T) {
 	}
 }
 
-func TestHeartbeat_UnregisteredAgentDoesNotError(t *testing.T) {
+func TestHeartbeat_MissingPresenceRequiresReconnect(t *testing.T) {
 	r, _ := newTestRegistry(t)
-	if err := r.Heartbeat(context.Background(), uuid.New()); err != nil {
-		t.Fatalf("Heartbeat: %v", err)
+	if err := r.Heartbeat(context.Background(), uuid.New(), "missing-session"); err == nil {
+		t.Fatal("missing presence was accepted as a healthy heartbeat")
+	}
+}
+
+func TestUnregister_DelayedCleanupCannotDeleteNewPresence(t *testing.T) {
+	r, client := newTestRegistry(t)
+	ctx := t.Context()
+	agentID := uuid.New()
+	oldSession, err := r.Register(ctx, agentID, nil, newFakeConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupStarted, releaseCleanup := make(chan struct{}), make(chan struct{})
+	r.mu.Lock()
+	entry := r.connections[agentID]
+	cancel := entry.cancel
+	entry.cancel = func() {
+		cancel()
+		close(cleanupStarted)
+		<-releaseCleanup
+	}
+	r.mu.Unlock()
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		r.Unregister(context.Background(), agentID, nil, oldSession)
+	}()
+	<-cleanupStarted
+	defer func() {
+		close(releaseCleanup)
+		<-cleanupDone
+	}()
+	newSession, err := r.Register(ctx, agentID, nil, newFakeConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := client.Subscribe(ctx, messaging.ChannelRealtime)
+	defer status.Close()
+	if _, err = status.Receive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Release the old cleanup before checking the new session's presence.
+	releaseCleanup <- struct{}{}
+	<-cleanupDone
+	defer r.Unregister(context.Background(), agentID, nil, newSession)
+	if online, err := r.IsOnline(ctx, agentID); err != nil || !online {
+		t.Fatalf("old cleanup deleted new presence: online=%v, error=%v", online, err)
+	}
+	if ttl := client.TTL(ctx, presenceKey(agentID)).Val(); ttl <= 0 {
+		t.Fatalf("new session lost its presence TTL: %v", ttl)
+	}
+	if err = client.Publish(ctx, messaging.ChannelRealtime, "after-cleanup").Err(); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := status.ReceiveMessage(ctx)
+	if err != nil || msg.Payload != "after-cleanup" {
+		t.Fatalf("stale cleanup emitted offline for its successor: %v, %v", msg, err)
+	}
+}
+
+func TestUnregister_ExpiredPresenceStillPublishesOffline(t *testing.T) {
+	r, client := newTestRegistry(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	agentID, projectID := uuid.New(), uuid.New()
+	session, err := r.Register(ctx, agentID, &projectID, newFakeConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.Expire(ctx, presenceKey(agentID), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	status := client.Subscribe(ctx, messaging.ChannelRealtime)
+	defer status.Close()
+	if _, err = status.Receive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r.Unregister(ctx, agentID, &projectID, session)
+	if err = client.Publish(ctx, messaging.ChannelRealtime, "after-cleanup").Err(); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := status.ReceiveMessage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ProjectID string `json:"project_id"`
+			AgentID   string `json:"agent_id"`
+			Connected *bool  `json:"connected"`
+		} `json:"payload"`
+	}
+	if err = json.Unmarshal([]byte(msg.Payload), &event); err != nil {
+		t.Fatalf("missing offline event before cleanup completed: %s", msg.Payload)
+	}
+	if event.Type != "agent.acp_bridge.status" || event.Payload.AgentID != agentID.String() || event.Payload.ProjectID != projectID.String() || event.Payload.Connected == nil || *event.Payload.Connected {
+		t.Fatalf("incorrect offline event: %s", msg.Payload)
+	}
+}
+
+func TestUnregister_SupersededReplicaCannotDeletePresence(t *testing.T) {
+	old, client := newTestRegistry(t)
+	current := New(client, messaging.NewPublisher(client), old.log)
+	ctx := t.Context()
+	agentID := uuid.New()
+	oldSession, err := old.Register(ctx, agentID, nil, newFakeConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSession, err := current.Register(ctx, agentID, nil, newFakeConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Unregister(context.Background(), agentID, nil, newSession)
+	old.Unregister(ctx, agentID, nil, oldSession)
+	if online, err := current.IsOnline(ctx, agentID); err != nil || !online {
+		t.Fatalf("superseded replica deleted current presence: online=%v, error=%v", online, err)
+	}
+}
+
+func TestHeartbeat_SupersededReplicaCannotRefreshPresence(t *testing.T) {
+	old, client := newTestRegistry(t)
+	current := New(client, messaging.NewPublisher(client), old.log)
+	ctx := t.Context()
+	agentID := uuid.New()
+	oldSession, err := old.Register(ctx, agentID, nil, newFakeConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Unregister(context.Background(), agentID, nil, oldSession)
+	newSession, err := current.Register(ctx, agentID, nil, newFakeConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Unregister(context.Background(), agentID, nil, newSession)
+	if err = client.Expire(ctx, presenceKey(agentID), 5*time.Second).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err = old.Heartbeat(ctx, agentID, oldSession); err == nil {
+		t.Error("superseded session heartbeat was accepted")
+	}
+	if ttl := client.TTL(ctx, presenceKey(agentID)).Val(); ttl != 5*time.Second {
+		t.Fatalf("superseded session refreshed current presence TTL: %v", ttl)
+	}
+}
+
+func TestRelayMessages_ExpiredPresenceClosesSocketForReconnect(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := New(client, messaging.NewPublisher(client), log)
+	s := &Server{Registry: r, Log: log}
+	agentID := uuid.New()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := websocket.Accept(w, req, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		session, err := r.Register(req.Context(), agentID, nil, wsConn{conn})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer r.Unregister(context.Background(), agentID, nil, session)
+		if err = wsjson.Write(req.Context(), conn, map[string]string{"type": "hello_ack"}); err != nil {
+			return
+		}
+		s.relayMessages(req.Context(), conn, agentID, session)
+	}))
+	defer server.Close()
+	for attempt := 0; attempt < 2; attempt++ {
+		conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.CloseNow()
+		var msg map[string]any
+		if err = wsjson.Read(ctx, conn, &msg); err != nil || msg["type"] != "hello_ack" {
+			t.Fatalf("registration: %v, %v", msg, err)
+		}
+		if err = wsjson.Write(ctx, conn, map[string]string{"type": "ping"}); err != nil {
+			t.Fatal(err)
+		}
+		if err = wsjson.Read(ctx, conn, &msg); err != nil || msg["type"] != "pong" {
+			t.Fatalf("healthy heartbeat: %v, %v", msg, err)
+		}
+		if online, err := r.IsOnline(ctx, agentID); err != nil || !online {
+			t.Fatalf("registered bridge is offline: %v", err)
+		}
+		if attempt == 0 {
+			mr.FastForward(time.Minute)
+			if err = wsjson.Write(ctx, conn, map[string]string{"type": "ping"}); err != nil {
+				t.Fatal(err)
+			}
+			if err = wsjson.Read(ctx, conn, &msg); websocket.CloseStatus(err) != websocket.StatusInternalError {
+				t.Fatalf("expired presence must close for reconnect; got %v, %v", msg, err)
+			}
+		} else {
+			if sent, err := r.Dispatch(ctx, agentID, map[string]any{"type": "start_turn"}); err != nil || !sent {
+				t.Fatalf("dispatch after reconnect: sent=%v, error=%v", sent, err)
+			}
+			if err = wsjson.Read(ctx, conn, &msg); err != nil || msg["type"] != "start_turn" {
+				t.Fatalf("reconnected bridge did not receive dispatch: %v, %v", msg, err)
+			}
+		}
 	}
 }

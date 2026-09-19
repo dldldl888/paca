@@ -42,6 +42,13 @@ func (r *Runner) AuthorizationBarrier(ctx context.Context, phase, epoch string, 
 	r.mu.Lock()
 	for _, s := range r.conversations {
 		s.mu.Lock()
+		if phase == "reconcile" && s.pendingTurn != nil {
+			if keep[s.pendingTurn.conversationID] {
+				s.pendingTurn.authorizationEpoch = epoch
+			} else {
+				s.pendingTurn = nil
+			}
+		}
 		stop := phase == "reconcile" && !keep[s.currentConversationID]
 		if stop {
 			if s.turnCancel != nil {

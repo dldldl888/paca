@@ -161,6 +161,22 @@ func presenceKey(agentID uuid.UUID) string     { return presencePrefix + agentID
 func dispatchChannel(agentID uuid.UUID) string { return dispatchPrefix + agentID.String() }
 func controlChannel(agentID uuid.UUID) string  { return controlPrefix + agentID.String() }
 
+// Redis ownership must be checked atomically: local locks cannot fence another replica.
+var releasePresence = redis.NewScript(`
+local owner = redis.call('GET', KEYS[1])
+if not owner or owner == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+    redis.call('PUBLISH', ARGV[2], ARGV[3])
+    return 1
+end
+return 0`)
+
+var refreshPresence = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+return 0`)
+
 // Register marks agentID's local bridge as connected on this process.
 // Publishes an "agent.acp_bridge.status" realtime event so the frontend can
 // react immediately instead of polling the status endpoint.
@@ -184,7 +200,7 @@ func (r *Registry) Register(ctx context.Context, agentID uuid.UUID, projectID *u
 	alreadyOnline := n > 0
 
 	sessionID := uuid.New().String()
-	if err := r.redis.Set(ctx, presenceKey(agentID), "1", presenceTTL).Err(); err != nil {
+	if err := r.redis.Set(ctx, presenceKey(agentID), sessionID, presenceTTL).Err(); err != nil {
 		return "", fmt.Errorf("acpbridge: set presence for agent %s: %w", agentID, err)
 	}
 
@@ -293,17 +309,32 @@ func (r *Registry) Unregister(ctx context.Context, agentID uuid.UUID, projectID 
 	entry.cancel()
 	<-entry.done
 
-	if err := r.redis.Del(ctx, presenceKey(agentID)).Err(); err != nil {
+	// Match PublishRealtime's envelope, but publish inside the ownership check so
+	// a delayed offline event cannot overtake a successor's registration event.
+	payload := map[string]any{"conversation_id": "", "agent_id": agentID.String(), "connected": false}
+	if projectID != nil && *projectID != uuid.Nil {
+		payload["project_id"] = projectID.String()
+	}
+	status, err := json.Marshal(map[string]any{"type": "agent.acp_bridge.status", "payload": payload})
+	if err != nil {
+		r.log.Warn("acpbridge: failed to encode bridge status", "agent_id", agentID, "error", err)
+		return
+	}
+	err = releasePresence.Run(ctx, r.redis, []string{presenceKey(agentID)}, sessionID, messaging.ChannelRealtime, status).Err()
+	if err != nil {
 		r.log.Warn("acpbridge: failed to clear presence", "agent_id", agentID, "error", err)
 	}
-	r.publishStatus(ctx, agentID, projectID, false)
 }
 
 // Heartbeat refreshes agentID's presence TTL — called on each "ping" from
 // the daemon.
-func (r *Registry) Heartbeat(ctx context.Context, agentID uuid.UUID) error {
-	if err := r.redis.Expire(ctx, presenceKey(agentID), presenceTTL).Err(); err != nil {
+func (r *Registry) Heartbeat(ctx context.Context, agentID uuid.UUID, sessionID string) error {
+	refreshed, err := refreshPresence.Run(ctx, r.redis, []string{presenceKey(agentID)}, sessionID, presenceTTL.Milliseconds()).Int()
+	if err != nil {
 		return fmt.Errorf("acpbridge: refresh presence for agent %s: %w", agentID, err)
+	}
+	if refreshed != 1 {
+		return fmt.Errorf("acpbridge: presence expired or superseded for agent %s; reconnect required", agentID)
 	}
 	return nil
 }

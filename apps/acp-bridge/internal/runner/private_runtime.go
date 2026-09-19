@@ -170,6 +170,13 @@ func (r *Runner) Close() {
 	var turns []chan struct{}
 	for _, state := range r.conversations {
 		state.mu.Lock()
+		if state.pendingTurn != nil {
+			turns = append(turns, state.pendingTurn.done)
+			state.pendingTurn = nil
+		}
+		if state.interruptDone != nil {
+			turns = append(turns, state.interruptDone)
+		}
 		if state.turnCancel != nil {
 			state.turnCancel()
 		}

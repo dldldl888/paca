@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +43,14 @@ const interruptGracePeriod = 15 * time.Second
 // conversation can't grow without limit forever, but reaching this many
 // undelivered messages needs a genuinely extreme, sustained outage.
 const outboundQueueSize = 100_000
+
+type pendingTurn struct {
+	conversationID     string
+	message            map[string]any
+	state              *conversationState
+	authorizationEpoch string
+	done               chan struct{}
+}
 
 // conversationState is one active or resumable conversation — mirrors the
 // old bridge's _ConversationHandle, but the ACP session (subprocess +
@@ -73,6 +83,10 @@ type conversationState struct {
 	// lets Interrupt's grace-period timer stop waiting early instead of
 	// always sleeping the full interruptGracePeriod.
 	turnDone chan struct{}
+	// Interruption owns the session until both the worker and any forced Close
+	// finish. Only one resume may wait behind this barrier.
+	interruptDone chan struct{}
+	pendingTurn   *pendingTurn
 
 	// currentConversationID/currentProjectID identify the conversation whose
 	// turn is running right now. With per-task (or per-agent) session scope a
@@ -248,17 +262,82 @@ func (r *Runner) sessionKeyFor(msg map[string]any) string {
 }
 
 // StartTurn handles a start_turn message: begins a new conversation or
-// resumes an existing one, rejecting only when a previous turn for the same
-// conversation is still in flight. Returns quickly — the actual ACP work
-// runs on a goroutine it spawns.
+// resumes an existing one. One resume may wait for an interrupted worker's
+// cleanup; otherwise a busy session is rejected. Returns quickly — waiting and
+// ACP work run on goroutines so the control reader remains responsive.
 func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
+	r.startTurn(ctx, msg, nil)
+}
+
+func (r *Runner) startTurn(ctx context.Context, msg map[string]any, pending *pendingTurn) {
+	if ctx.Err() != nil {
+		return
+	}
 	if r.cfg.RequireAuthorization {
-		r.requestMu.RLock()
-		defer r.requestMu.RUnlock()
-		epoch, ok := msg["authorization_epoch"].(string)
-		if !ok || epoch == "" || r.authorizationBlocked || r.authorizationEpoch == "" || epoch != r.authorizationEpoch {
-			return
+		for {
+			r.requestMu.RLock()
+			epoch, ok := msg["authorization_epoch"].(string)
+			if pending != nil {
+				pending.state.mu.Lock()
+				valid := pending.state.pendingTurn == pending
+				reconciledEpoch := pending.authorizationEpoch
+				pending.state.mu.Unlock()
+				if !valid {
+					r.requestMu.RUnlock()
+					return
+				}
+				if r.authorizationBlocked {
+					r.requestMu.RUnlock()
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(10 * time.Millisecond):
+					}
+					continue
+				}
+				if epoch != r.authorizationEpoch && reconciledEpoch == r.authorizationEpoch {
+					// A retained conversation does not authorize reuse of company context
+					// enriched before the change. Ask for a fresh server dispatch instead.
+					state := pending.state
+					state.mu.Lock()
+					if state.pendingTurn != pending {
+						state.mu.Unlock()
+						r.requestMu.RUnlock()
+						return
+					}
+					projectID, _ := msg["project_id"].(string)
+					// Queue before releasing admission, using the same FIFO as
+					// the old turn. Never block Stop/Close on a full outbox.
+					select {
+					case r.ensureOutbound(state) <- map[string]any{
+						"type": "turn_status", "status": "failed",
+						"conversation_id": pending.conversationID, "project_id": projectID,
+						"authorization_epoch": reconciledEpoch,
+						"error_message":       "The conversation changed while stopping; please send your message again.",
+					}:
+						state.pendingTurn = nil
+						state.mu.Unlock()
+						r.requestMu.RUnlock()
+						return
+					default:
+						state.mu.Unlock()
+						r.requestMu.RUnlock()
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(10 * time.Millisecond):
+						}
+						continue
+					}
+				}
+			}
+			if !ok || epoch == "" || r.authorizationBlocked || r.authorizationEpoch == "" || epoch != r.authorizationEpoch {
+				r.requestMu.RUnlock()
+				return
+			}
+			break
 		}
+		defer r.requestMu.RUnlock()
 	}
 
 	conversationID, _ := msg["conversation_id"].(string)
@@ -311,7 +390,46 @@ func (r *Runner) StartTurn(ctx context.Context, msg map[string]any) {
 	state.mu.Lock()
 	r.mu.Unlock()
 
-	if state.turnRunning {
+	if pending != nil {
+		if state.pendingTurn != pending {
+			state.mu.Unlock()
+			return
+		}
+		state.pendingTurn = nil
+	}
+	pendingConflict := state.pendingTurn != nil
+	if pendingConflict && state.pendingTurn.conversationID == conversationID {
+		if reflect.DeepEqual(state.pendingTurn.message, msg) {
+			// Only identical deliveries share the accepted resume, not later messages.
+			state.mu.Unlock()
+			return
+		}
+		// The protocol reports status per conversation, not per request. Cancel the
+		// pending turn before reporting a conflict so it cannot run behind Failed.
+		state.pendingTurn = nil
+	}
+	if state.interruptDone != nil && !pendingConflict {
+		msg = maps.Clone(msg)
+		pending := &pendingTurn{conversationID: conversationID, message: msg, state: state, done: make(chan struct{})}
+		pending.authorizationEpoch, _ = msg["authorization_epoch"].(string)
+		state.pendingTurn = pending
+		interrupted := state.interruptDone
+		state.mu.Unlock()
+		go func() {
+			defer close(pending.done)
+			<-interrupted
+			// Re-enter admission: shutdown, authorization and a second Stop can all
+			// invalidate this request while the previous native worker is exiting.
+			r.startTurn(ctx, msg, pending)
+			state.mu.Lock()
+			if state.pendingTurn == pending {
+				state.pendingTurn = nil
+			}
+			state.mu.Unlock()
+		}()
+		return
+	}
+	if state.turnRunning || pendingConflict {
 		state.mu.Unlock()
 		// Under ScopeTask two conversations on the same task share one
 		// session's single turnRunning gate, so an @mention arriving mid-turn
@@ -380,38 +498,42 @@ func (r *Runner) Interrupt(conversationID string) {
 	}
 
 	state.mu.Lock()
-	running := state.turnRunning
-	client := state.client
-	sessionID := state.sessionID
-	cancel := state.turnCancel
-	done := state.turnDone
+	if state.pendingTurn != nil && state.pendingTurn.conversationID == conversationID {
+		state.pendingTurn = nil
+	}
+	if !state.turnRunning || state.currentConversationID != conversationID || state.interruptDone != nil {
+		state.mu.Unlock()
+		return
+	}
+	client, sessionID, cancel, done := state.client, state.sessionID, state.turnCancel, state.turnDone
+	interrupted := make(chan struct{})
+	state.interruptDone = interrupted
 	state.mu.Unlock()
-	if !running {
-		return
-	}
-
-	if client == nil || sessionID == "" {
-		// Still spawning/initializing — nothing at the ACP level to
-		// cancel yet; aborting the turn's own context is enough to unwind
-		// the in-flight spawn/initialize/session/new sequence promptly.
-		if cancel != nil {
-			cancel()
-		}
-		return
-	}
-
-	if err := client.Cancel(sessionID); err != nil {
-		r.log.Warn("runner: failed to send session/cancel", "conversation_id", conversationID, "error", err)
-	}
 
 	go func() {
+		defer func() {
+			<-done
+			state.mu.Lock()
+			state.interruptDone = nil
+			close(interrupted)
+			state.mu.Unlock()
+		}()
+		if client == nil || sessionID == "" {
+			// Setup owns cleanup of its partially initialized child.
+			if cancel != nil {
+				cancel()
+			}
+			return
+		}
+		if err := client.Cancel(sessionID); err != nil {
+			r.log.Warn("runner: failed to send session/cancel", "conversation_id", conversationID, "error", err)
+		}
 		select {
 		case <-done:
 			return
 		case <-time.After(interruptGracePeriod):
 		}
-		r.log.Warn("runner: ACP provider did not honor cancellation in time; killing subprocess",
-			"conversation_id", conversationID)
+		r.log.Warn("runner: ACP provider did not honor cancellation in time; killing subprocess", "conversation_id", conversationID)
 		if cancel != nil {
 			cancel()
 		}
@@ -688,7 +810,7 @@ func (r *Runner) evictIdle(now time.Time) {
 		if !state.mu.TryLock() {
 			continue
 		}
-		idle := !state.turnRunning && !state.lastActivity.IsZero() &&
+		idle := !state.turnRunning && state.interruptDone == nil && state.pendingTurn == nil && !state.lastActivity.IsZero() &&
 			now.Sub(state.lastActivity) >= r.idleTimeout
 		if idle {
 			// Unlink and take ownership of the client atomically under both

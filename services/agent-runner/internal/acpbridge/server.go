@@ -283,8 +283,11 @@ func (s *Server) relayMessages(ctx context.Context, conn *websocket.Conn, agentI
 				_ = wsjson.Write(ctx, conn, map[string]string{"type": "authorization_shutdown_ack"})
 			}
 		case "ping":
-			if err := s.Registry.Heartbeat(ctx, agentID); err != nil {
+			if err := s.Registry.Heartbeat(ctx, agentID, sessionID); err != nil {
 				s.Log.Warn("acpbridge: failed to refresh heartbeat", "agent_id", agentID, "error", err)
+				// Reauthenticate through Register; a heartbeat must not resurrect expired presence.
+				_ = conn.Close(websocket.StatusInternalError, "heartbeat failed; reconnect required")
+				return
 			}
 			if err := wsjson.Write(ctx, conn, map[string]string{"type": "pong"}); err != nil {
 				return
