@@ -1163,6 +1163,7 @@
 			"addButton": "링크 추가",
 			"openTask": "작업 열기",
 			"removeLink": "링크 제거",
+			"waitingOnHiddenBlocker": "선행 작업이 완료되기를 기다리는 중",
 			"empty": "연결된 작업이 없습니다"
 		},
 		"attachments": {

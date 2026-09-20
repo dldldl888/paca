@@ -1163,6 +1163,7 @@
 			"addButton": "Ajouter un lien",
 			"openTask": "Ouvrir la tâche",
 			"removeLink": "Retirer le lien",
+			"waitingOnHiddenBlocker": "En attente de la fin du travail préalable",
 			"empty": "Aucune tâche liée"
 		},
 		"attachments": {

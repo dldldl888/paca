@@ -1163,6 +1163,7 @@
 			"addButton": "リンクを追加",
 			"openTask": "タスクを開く",
 			"removeLink": "リンクを削除",
+			"waitingOnHiddenBlocker": "前提作業の完了を待っています",
 			"empty": "関連タスクはありません"
 		},
 		"attachments": {

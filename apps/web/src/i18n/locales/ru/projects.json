@@ -1179,6 +1179,7 @@
 			"addButton": "Добавить связь",
 			"openTask": "Открыть задачу",
 			"removeLink": "Удалить связь",
+			"waitingOnHiddenBlocker": "Ожидание завершения предшествующей работы",
 			"empty": "Связанных задач нет"
 		},
 		"attachments": {

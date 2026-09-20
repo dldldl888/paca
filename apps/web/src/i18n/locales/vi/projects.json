@@ -1163,6 +1163,7 @@
 			"addButton": "Thêm liên kết",
 			"openTask": "Mở nhiệm vụ",
 			"removeLink": "Gỡ liên kết",
+			"waitingOnHiddenBlocker": "Đang chờ công việc tiên quyết hoàn tất",
 			"empty": "Không có nhiệm vụ liên kết"
 		},
 		"attachments": {
