@@ -538,6 +538,49 @@ func TestNotificationReplayRecoveryAndRevocation(t *testing.T) {
 			t.Fatal("revoked notification API projection", item)
 		}
 	}
+	assertProjection := func(label string, wantTask, wantProject bool) {
+		t.Helper()
+		rows, _, err := repo.ListForUser(env.ctx, recipient.ID, 20, nil)
+		if err != nil || len(rows) != 3 {
+			t.Errorf("%s repository rows: %+v %v", label, rows, err)
+			return
+		}
+		for _, row := range rows {
+			if (row.TaskID != nil) != wantTask || (row.TaskTitle != "") != wantTask || (row.TaskNumber != 0) != wantTask || (row.ProjectID != uuid.Nil) != wantProject || (row.ProjectName != "") != wantProject {
+				t.Errorf("%s repository projection: %+v", label, row)
+			}
+		}
+		for _, raw := range request() {
+			item := raw.(map[string]any)
+			if (item["task_id"] != nil) != wantTask || (item["task_title"] != "") != wantTask || (item["task_number"] != float64(0)) != wantTask || (item["project_id"] != nil) != wantProject || (item["project_name"] != "") != wantProject {
+				t.Errorf("%s API projection: %+v", label, item)
+			}
+		}
+	}
+	if _, e = env.db.Exec(`UPDATE project_roles SET permissions='{"projects.read":true}' WHERE id=$1`, editorRole); e != nil {
+		t.Fatal(e)
+	}
+	assertProjection("project-only role", false, true)
+	if _, e = env.db.Exec(`UPDATE project_roles SET permissions='{"tasks.read":true}' WHERE id=$1`, editorRole); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = env.db.Exec("INSERT INTO task_assignees(task_id,member_id) VALUES($1,$3),($2,$3)", task.ID, creatorTask.ID, mid); e != nil {
+		t.Fatal(e)
+	}
+	assertProjection("task-only private role", true, true)
+	if _, e = env.db.Exec("DELETE FROM task_assignees WHERE task_id IN ($1,$2)", task.ID, creatorTask.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = env.db.Exec("UPDATE project_roles SET permissions='{}' WHERE id=$1", editorRole); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = env.db.Exec("UPDATE projects SET is_public=true WHERE id=$1", f.pid); e != nil {
+		t.Fatal(e)
+	}
+	assertProjection("public project", false, true)
+	if _, e = env.db.Exec("UPDATE projects SET is_public=false WHERE id=$1", f.pid); e != nil {
+		t.Fatal(e)
+	}
 	if _, e = env.db.Exec("UPDATE project_members SET deleted_at=now() WHERE id=$1", mid); e != nil {
 		t.Fatal(e)
 	}

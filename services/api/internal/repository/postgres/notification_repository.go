@@ -176,27 +176,40 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 	if err := r.db.SelectContext(ctx, &projects, `SELECT DISTINCT project_id FROM notifications WHERE recipient_user_id=$1`, userID); err != nil {
 		return nil, false, err
 	}
-	policy := authz.NewTaskAccessPolicy(NewAuthzPermissionStore(r.db))
+	store := NewAuthzPermissionStore(r.db)
+	policy := authz.NewTaskAccessPolicy(store)
+	authorizer := authz.NewAuthorizer(store)
 	scopes := []taskdom.AccessScope{}
+	visibleProjects := []uuid.UUID{}
 	for _, project := range projects {
 		scope, err := policy.ResolveTaskAccess(authz.WithActorID(ctx, userID), project)
-		if errors.Is(err, taskdom.ErrTaskNotFound) || errors.Is(err, taskdom.ErrTaskForbidden) {
-			continue
+		if err == nil {
+			scopes = append(scopes, scope)
+		} else if !errors.Is(err, taskdom.ErrTaskNotFound) && !errors.Is(err, taskdom.ErrTaskForbidden) {
+			return nil, false, err
 		}
+		visible, err := authorizer.HasPermissions(ctx, userID, &project, "", authz.PermissionProjectsRead)
 		if err != nil {
 			return nil, false, err
 		}
-		scopes = append(scopes, scope)
+		if !visible {
+			if err := r.db.GetContext(ctx, &visible, `SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND deleted_at IS NULL AND is_public)`, project); err != nil {
+				return nil, false, err
+			}
+		}
+		if visible {
+			visibleProjects = append(visibleProjects, project)
+		}
 	}
 	b := &queryBuilder{idx: len(args) + 1}
 	applyTaskVisibility(b, scopes)
 	visible := strings.ReplaceAll(strings.Join(b.whereClauses, " AND "), "tasks.", "t.")
 	projectVisible := "FALSE"
-	if len(scopes) > 0 {
-		placeholders := make([]string, 0, len(scopes))
-		for _, scope := range scopes {
+	if len(visibleProjects) > 0 {
+		placeholders := make([]string, 0, len(visibleProjects))
+		for _, project := range visibleProjects {
 			placeholders = append(placeholders, b.placeholder())
-			b.args = append(b.args, scope.ProjectID.String())
+			b.args = append(b.args, project.String())
 		}
 		projectVisible = "p.id IN (" + strings.Join(placeholders, ",") + ")"
 	}
@@ -209,7 +222,7 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
 		LEFT JOIN agents ag ON ag.id = pm.agent_id
 		LEFT JOIN tasks t ON t.id = n.task_id AND t.deleted_at IS NULL AND (` + visible + `)
-		LEFT JOIN projects p ON p.id = n.project_id AND (` + projectVisible + `)
+		LEFT JOIN projects p ON p.id = n.project_id AND ((` + projectVisible + `) OR t.id IS NOT NULL)
 		WHERE n.recipient_user_id = $1` + whereCursor + `
 		ORDER BY n.created_at DESC, n.id DESC
 		LIMIT ` + limitPlaceholder

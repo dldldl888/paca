@@ -221,10 +221,18 @@ func adminClaimsMiddleware() func(http.Handler) http.Handler {
 	}
 }
 
+type projectHandlerPermissionStore struct{}
+
+func (projectHandlerPermissionStore) ListGlobalPermissions(context.Context, uuid.UUID) ([]authz.Permission, error) {
+	return []authz.Permission{authz.PermissionAll}, nil
+}
+
+func (projectHandlerPermissionStore) ListProjectPermissions(context.Context, uuid.UUID, uuid.UUID) ([]authz.Permission, error) {
+	return nil, nil
+}
+
 func newProjectRouter(svc projectdom.Service) chi.Router {
-	// Use a real Authorizer with nil store — legacy ADMIN role grants everything
-	// without any database calls.
-	authorizer := authz.NewAuthorizer(nil)
+	authorizer := authz.NewAuthorizer(projectHandlerPermissionStore{})
 	r := chi.NewRouter()
 	r.Use(adminClaimsMiddleware())
 	h := handler.NewProjectHandler(svc, authorizer)
@@ -264,6 +272,14 @@ func TestListProjects_Success(t *testing.T) {
 	w := do(t, r, http.MethodGet, "/admin/projects", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Items []dto.ProjectResponse `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil || len(envelope.Data.Items) != 1 || envelope.Data.Items[0].ID != projID {
+		t.Fatalf("expected project %s in response: %+v %v", projID, envelope.Data.Items, err)
 	}
 }
 
@@ -1185,7 +1201,7 @@ func TestGetWorkspaceStats_SingleAggregateQueryPerCounter(t *testing.T) {
 		},
 	}
 
-	authorizer := authz.NewAuthorizer(nil)
+	authorizer := authz.NewAuthorizer(projectHandlerPermissionStore{})
 	r := chi.NewRouter()
 	r.Use(adminClaimsMiddleware())
 	h := handler.NewProjectHandler(projectSvc, authorizer, handler.WithProjectStatsServices(taskSvc, userSvc))
