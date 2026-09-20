@@ -1819,8 +1819,8 @@ func (r *Runtime) registerHTTPFunctions(b wazero.HostModuleBuilder, _ plugindom.
 	// Checks whether the current caller (from the request context set by
 	// WithPluginRequest) holds the given permission key, evaluated against the
 	// same effective permission set as requirePermissions route middleware:
-	// built-in permissions, LegacyPermissionsForRole, and any plugin-declared
-	// custom permission granted to the caller's project/global role. Scope
+	// persisted built-in and plugin-declared permissions granted to the
+	// caller's project/global role. Scope
 	// (project vs global) is inferred from whether the request carries a
 	// project_id: project-scoped requests check project-role permissions,
 	// others check global-role permissions only.

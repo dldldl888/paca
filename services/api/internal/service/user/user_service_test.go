@@ -171,14 +171,14 @@ func TestGetByID_NotFound(t *testing.T) {
 	}
 }
 
-func TestListGlobalPermissions_LegacyOnly(t *testing.T) {
+func TestListGlobalPermissions_WithoutReaderDoesNotInferFromRole(t *testing.T) {
 	id := uuid.New()
 	svc := usersvc.New(&stubRepo{
 		findByID: func(_ context.Context, got uuid.UUID) (*userdom.User, error) {
 			if got != id {
 				t.Fatalf("unexpected id: %v", got)
 			}
-			return &userdom.User{ID: id, Role: userdom.RoleUser}, nil
+			return &userdom.User{ID: id, Role: userdom.RoleAdmin}, nil
 		},
 	})
 
@@ -186,13 +186,13 @@ func TestListGlobalPermissions_LegacyOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{string(authz.PermissionUsersRead)}
+	want := []string{}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected permissions: want %v got %v", want, got)
 	}
 }
 
-func TestListGlobalPermissions_MergesAndDedupes(t *testing.T) {
+func TestListGlobalPermissions_ReturnsOnlyPersistedPermissions(t *testing.T) {
 	id := uuid.New()
 	svc := usersvc.New(
 		&stubRepo{
@@ -200,7 +200,7 @@ func TestListGlobalPermissions_MergesAndDedupes(t *testing.T) {
 				if got != id {
 					t.Fatalf("unexpected id: %v", got)
 				}
-				return &userdom.User{ID: id, Role: userdom.RoleUser}, nil
+				return &userdom.User{ID: id, Role: userdom.RoleAdmin}, nil
 			},
 		},
 		&stubPermissionReader{

@@ -158,3 +158,52 @@ func TestAdminGlobalRolesAuthorization(t *testing.T) {
 		assertStatus(t, assignResp, http.StatusOK)
 	})
 }
+
+func TestGlobalRoleRevocationUsesPersistedPermissionsWithExistingSession(t *testing.T) {
+	t.Parallel()
+	env := newE2EEnv(t)
+
+	const username = "role-revocation"
+	const password = "supersecret"
+	seedUser(t, env, username, password, "Role Revocation")
+	assignGlobalRolesByName(t, env, username, "ADMIN")
+
+	loginResp := login(env.ctx, t, env.client, env.base, username, password)
+	_ = loginResp.Body.Close()
+
+	listReq := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/admin/users", nil)
+	listResp := mustDo(t, env.client, listReq)
+	assertStatus(t, listResp, http.StatusOK)
+	_ = listResp.Body.Close()
+
+	adminRole, err := env.roleRepo.FindByName(env.ctx, "ADMIN")
+	if err != nil {
+		t.Fatalf("find ADMIN role: %v", err)
+	}
+	adminRole.Permissions = map[string]any{}
+	adminRole.UpdatedAt = time.Now()
+	if err := env.roleRepo.Update(env.ctx, adminRole); err != nil {
+		t.Fatalf("revoke ADMIN permissions: %v", err)
+	}
+
+	listReq = mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/admin/users", nil)
+	listResp = mustDo(t, env.client, listReq)
+	assertStatus(t, listResp, http.StatusForbidden)
+	assertErrorCode(t, listResp, "FORBIDDEN")
+	_ = listResp.Body.Close()
+
+	permissionsReq := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/users/me/global-permissions", nil)
+	permissionsResp := mustDo(t, env.client, permissionsReq)
+	defer func() { _ = permissionsResp.Body.Close() }()
+	assertStatus(t, permissionsResp, http.StatusOK)
+
+	var permissionsBody struct {
+		Data struct {
+			Permissions []string `json:"permissions"`
+		} `json:"data"`
+	}
+	decodeJSON(t, permissionsResp, &permissionsBody)
+	if len(permissionsBody.Data.Permissions) != 0 {
+		t.Fatalf("expected UI permission set to reflect persisted revocation, got %v", permissionsBody.Data.Permissions)
+	}
+}

@@ -60,10 +60,10 @@ func (a *Authorizer) HasPermissions(
 	ctx context.Context,
 	userID uuid.UUID,
 	projectID *uuid.UUID,
-	legacyRole string,
+	_ string,
 	required ...Permission,
 ) (bool, error) {
-	return a.hasPermissionsForActor(ctx, userID, nil, projectID, legacyRole, required...)
+	return a.hasPermissionsForActor(ctx, userID, nil, projectID, required...)
 }
 
 // HasPermissionsForAgent reports whether an agent has all required permissions in the
@@ -78,7 +78,7 @@ func (a *Authorizer) HasPermissionsForAgent(
 		return false, fmt.Errorf("authz: agent role resolver not configured")
 	}
 
-	roleName, err := a.agentRoleResolver.GetAgentProjectRoleName(ctx, agentID, projectID)
+	_, err := a.agentRoleResolver.GetAgentProjectRoleName(ctx, agentID, projectID)
 	if err != nil {
 		if errors.Is(err, ErrAgentNotInProject) {
 			// Not a member of this project -> no permissions here, same as
@@ -90,7 +90,7 @@ func (a *Authorizer) HasPermissionsForAgent(
 		return false, fmt.Errorf("authz: resolve agent role: %w", err)
 	}
 
-	return a.hasPermissionsForActor(ctx, uuid.Nil, &agentID, &projectID, roleName, required...)
+	return a.hasPermissionsForActor(ctx, uuid.Nil, &agentID, &projectID, required...)
 }
 
 // HasGlobalPermissionsForAgent reports whether agentID has all required
@@ -102,7 +102,7 @@ func (a *Authorizer) HasGlobalPermissionsForAgent(
 	agentID uuid.UUID,
 	required ...Permission,
 ) (bool, error) {
-	return a.hasPermissionsForActor(ctx, uuid.Nil, &agentID, nil, "", required...)
+	return a.hasPermissionsForActor(ctx, uuid.Nil, &agentID, nil, required...)
 }
 
 // hasPermissionsForActor is the internal implementation that works for both users and agents.
@@ -111,7 +111,6 @@ func (a *Authorizer) hasPermissionsForActor(
 	userID uuid.UUID,
 	agentID *uuid.UUID,
 	projectID *uuid.UUID,
-	legacyRole string,
 	required ...Permission,
 ) (bool, error) {
 	if len(required) == 0 {
@@ -119,9 +118,6 @@ func (a *Authorizer) hasPermissionsForActor(
 	}
 
 	granted := make(map[Permission]struct{})
-	for _, p := range LegacyPermissionsForRole(legacyRole) {
-		granted[p] = struct{}{}
-	}
 
 	if a.store != nil {
 		if userID != uuid.Nil {
