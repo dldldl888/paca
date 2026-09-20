@@ -33,6 +33,21 @@ func NewFileDelivery(gate *delivery.Gate, store storage.Client, bucket string, a
 	return &FileDelivery{gate, store, bucket, authorizer}
 }
 
+// authorize preserves the existing authenticated document read alternatives.
+// Project-scoped projects.read alone is not a document grant; public visibility
+// never supplies anonymous access to business files.
+func (d *FileDelivery) authorize(w http.ResponseWriter, r *http.Request, permission authz.Permission) bool {
+	if permission == authz.PermissionDocsRead {
+		allowed := false
+		middleware.RequireAnyPermissions(d.authorizer,
+			middleware.PermissionGroup{Scope: middleware.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
+			middleware.PermissionGroup{Scope: middleware.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionDocsRead}},
+		)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { allowed = true })).ServeHTTP(w, r)
+		return allowed
+	}
+	return permission == "" || middleware.EnforcePermissions(w, r, d.authorizer, middleware.ProjectScopeFromParam("projectId"), permission)
+}
+
 var singleRange = regexp.MustCompile(`^bytes=([0-9]+-[0-9]*|-[0-9]+)$`)
 
 const fileWriteTimeout = 5 * time.Second
@@ -51,7 +66,7 @@ func (d *FileDelivery) serve(w http.ResponseWriter, r *http.Request, permission 
 		unavailable()
 		return
 	}
-	if permission != "" && !middleware.EnforcePermissions(w, r.WithContext(ctx), d.authorizer, middleware.ProjectScopeFromParam("projectId"), permission) {
+	if !d.authorize(w, r.WithContext(ctx), permission) {
 		leave()
 		return
 	}

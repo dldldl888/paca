@@ -110,6 +110,28 @@ func (h *DocFileHandler) CompleteDocUpload(w http.ResponseWriter, r *http.Reques
 // GetDocFileDownloadURL handles GET /projects/:projectId/docs/:docId/files/:fileId/download-url.
 // Returns a same-origin API URL which requires current authenticated access.
 func (h *DocFileHandler) GetDocFileDownloadURL(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	if h.files == nil || h.files.gate == nil {
+		http.Error(w, "file delivery unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, _, leave, err := h.files.gate.Enter(r.Context())
+	if err != nil {
+		http.Error(w, "file delivery unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer leave()
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Now().Add(fileWriteTimeout)); err != nil {
+		http.Error(w, "file delivery unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer controller.SetWriteDeadline(time.Time{})
+	r = r.WithContext(ctx)
+	if !h.files.authorize(w, r, authz.PermissionDocsRead) {
+		return
+	}
+
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
