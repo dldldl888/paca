@@ -46,7 +46,7 @@ func (s AccessScope) CanRead(t *Task) bool {
 	if s.TaskIDs != nil && !slices.Contains(s.TaskIDs, t.ID) {
 		return false
 	}
-	return s.ReadAll || (s.UserID != uuid.Nil && t.CreatorUserID != nil && *t.CreatorUserID == s.UserID) || s.IsAssignee(t)
+	return s.ReadAll || s.IsAssignee(t)
 }
 
 func (s AccessScope) Require(t *Task, action AccessAction) error {

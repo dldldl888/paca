@@ -49,12 +49,14 @@ func TestTaskViewPositionScanAndBoundaries(t *testing.T) {
 	for i := range tasks {
 		created := time.Date(2026, 9, 1, 0, i, 0, 0, time.UTC)
 		tasks[i] = &taskdom.Task{ID: uuid.New(), ProjectID: pid, Title: fmt.Sprintf("position-%d", i), CreatorUserID: &reader.ID, Importance: i, Tags: []string{"scan"}, CustomFields: map[string]any{"score": float64(i)}, Description: json.RawMessage(`{"text":"scan body"}`), CreatedAt: created, UpdatedAt: created}
-		if i == 1 || i == 3 {
-			tasks[i].CreatorUserID = nil // legacy rows remain readable through assignment
+		if i < 4 {
 			tasks[i].AssigneeIDs = []uuid.UUID{memberID}
 		}
+		if i == 1 || i == 3 {
+			tasks[i].CreatorUserID = nil // legacy rows remain readable through assignment
+		}
 		if i == 4 {
-			tasks[i].CreatorUserID = &manager.ID // hidden despite an earlier saved position
+			tasks[i].CreatorUserID = &reader.ID // historical creator stays hidden without assignment
 		}
 		if err := env.taskRepo.CreateTask(env.ctx, tasks[i]); err != nil {
 			t.Fatal(err)

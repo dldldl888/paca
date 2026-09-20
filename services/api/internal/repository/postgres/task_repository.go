@@ -1870,9 +1870,6 @@ func applyTaskVisibility(b *queryBuilder, scopes []taskdom.AccessScope) {
 		clause := "tasks.project_id = " + bind(scope.ProjectID.String())
 		if !scope.ReadAll {
 			relations := []string{"FALSE"}
-			if scope.UserID != uuid.Nil {
-				relations = append(relations, "tasks.creator_user_id = "+bind(scope.UserID.String()))
-			}
 			if scope.MemberID != uuid.Nil {
 				relations = append(relations, "EXISTS (SELECT 1 FROM task_assignees va WHERE va.task_id = tasks.id AND va.member_id = "+bind(scope.MemberID.String())+")")
 			}

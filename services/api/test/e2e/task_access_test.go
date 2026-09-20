@@ -321,7 +321,7 @@ func TestUS002To004TaskIsolation(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+adminToken)
 		resp := mustDo(t, adminClient, req)
 		defer resp.Body.Close()
-		assertStatus(t, resp, http.StatusNotFound)
+		assertStatus(t, resp, http.StatusForbidden)
 	})
 	t.Run("creator_and_live_revocation", func(t *testing.T) {
 		// Give A management temporarily: its authenticated creator remains A after demotion/reassignment.
@@ -335,18 +335,48 @@ func TestUS002To004TaskIsolation(t *testing.T) {
 		if _, err := env.db.Exec(`UPDATE project_members SET project_role_id=$1 WHERE id=$2`, managerRole, members[0]); err != nil {
 			t.Fatal(err)
 		}
-		created, err := env.taskSvc.CreateTask(contexts[0], taskdom.CreateTaskInput{ProjectID: pid, Title: "created-by-a", AssigneeIDs: []uuid.UUID{members[1]}})
+		points := 9
+		created, err := env.taskSvc.CreateTask(contexts[0], taskdom.CreateTaskInput{ProjectID: pid, Title: "created-by-a", AssigneeIDs: []uuid.UUID{members[1]}, StoryPoints: &points})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := env.db.Exec(`UPDATE project_members SET project_role_id=$1 WHERE id=$2`, memberRole, members[0]); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := env.taskSvc.GetTask(contexts[0], pid, created.ID); err != nil {
-			t.Fatalf("creator lost read: %v", err)
+		request(t, 0, http.MethodGet, base+"/"+created.ID.String(), nil, http.StatusNotFound)
+		request(t, 0, http.MethodGet, fmt.Sprintf("%s/by-number/%d", base, created.TaskNumber), nil, http.StatusNotFound)
+		data := request(t, 0, http.MethodGet, base+"?page_size=1&sum_field=story_points&search=created-by-a", nil, http.StatusOK)
+		if data["total_count"] != float64(0) || data["field_sum"] != float64(0) || len(data["items"].([]any)) != 0 {
+			t.Fatalf("creator-only task leaked through HTTP collection: %+v", data)
 		}
-		if _, err := env.taskSvc.UpdateTask(contexts[0], pid, created.ID, taskdom.UpdateTaskInput{}); !errors.Is(err, taskdom.ErrTaskForbidden) {
-			t.Fatal("creator-only can write")
+		search := "created-by-a"
+		scope, err := authz.NewTaskAccessPolicy(pgRepo.NewAuthzPermissionStore(env.db)).ResolveTaskAccess(contexts[0], pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		filter := taskdom.TaskFilter{Search: &search, Visibility: &scope}
+		rows, more, err := env.taskRepo.ListTasks(env.ctx, pid, filter, 1, taskdom.TaskSort{})
+		if err != nil || more || len(rows) != 0 {
+			t.Fatalf("creator-only task leaked through SQL list: %+v %v %v", rows, more, err)
+		}
+		count, err := env.taskRepo.CountTasks(env.ctx, pid, filter)
+		if err != nil || count != 0 {
+			t.Fatalf("creator-only task leaked through SQL count: %d %v", count, err)
+		}
+		sum, err := env.taskRepo.SumTaskField(env.ctx, pid, filter, "story_points")
+		if err != nil || sum != 0 {
+			t.Fatalf("creator-only task leaked through SQL sum: %v %v", sum, err)
+		}
+		if _, err := env.taskSvc.UpdateTask(contexts[0], pid, created.ID, taskdom.UpdateTaskInput{}); !errors.Is(err, taskdom.ErrTaskNotFound) {
+			t.Fatalf("creator-only write: %v", err)
+		}
+		request(t, 1, http.MethodGet, base+"/"+created.ID.String(), nil, http.StatusOK)
+		if _, err := env.taskSvc.GetTask(managerCtx, pid, created.ID); err != nil {
+			t.Fatalf("project manager lost read: %v", err)
+		}
+		request(t, 0, http.MethodGet, base+"/"+tasks[0].ID.String(), nil, http.StatusOK)
+		if _, err := env.taskSvc.GetTask(contexts[0], uuid.New(), created.ID); !errors.Is(err, taskdom.ErrTaskNotFound) {
+			t.Fatalf("creator crossed project: %v", err)
 		}
 		replacement := []uuid.UUID{members[1]}
 		if _, err := env.taskSvc.UpdateTask(managerCtx, pid, tasks[0].ID, taskdom.UpdateTaskInput{AssigneeIDs: &replacement}); err != nil {

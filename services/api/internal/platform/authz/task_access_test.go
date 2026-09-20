@@ -66,11 +66,11 @@ func TestUS004TaskProgressAndBoundedServiceGrant(t *testing.T) {
 	project, user, member, other := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	task := &taskdom.Task{ID: uuid.New(), ProjectID: project, CreatorUserID: &user, AssigneeIDs: []uuid.UUID{member}}
 	scope := taskdom.AccessScope{ProjectID: project, UserID: user, MemberID: other, Write: true}
-	if err := scope.Require(task, taskdom.AccessRead); err != nil {
-		t.Fatal(err)
+	if err := scope.Require(task, taskdom.AccessRead); !errors.Is(err, taskdom.ErrTaskNotFound) {
+		t.Fatalf("creator-only read: %v", err)
 	}
-	if err := scope.Require(task, taskdom.AccessProgress); !errors.Is(err, taskdom.ErrTaskForbidden) {
-		t.Fatal("creator-only can progress")
+	if err := scope.Require(task, taskdom.AccessProgress); !errors.Is(err, taskdom.ErrTaskNotFound) {
+		t.Fatalf("creator-only progress: %v", err)
 	}
 	scope.MemberID = member
 	if err := scope.Require(task, taskdom.AccessProgress); err != nil {

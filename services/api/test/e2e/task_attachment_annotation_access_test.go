@@ -177,7 +177,7 @@ func TestTaskBoundAnnotationSQLVisibility(t *testing.T) {
 			t.Fatal("refused creation claimed, created or attached")
 		}
 	})
-	t.Run("current_assignee_and_creator_only", func(t *testing.T) {
+	t.Run("current_assignee_and_historical_creator_denied", func(t *testing.T) {
 		exec(`INSERT INTO task_assignees(task_id,member_id) VALUES($1,$2)`, hidden.ID, member)
 		got, err := svc.Get(ctx, pid, ids[1])
 		if err != nil || len(got.Comments) != 1 || got.Comments[0].Body != "private-comment-marker" {
@@ -213,8 +213,8 @@ func TestTaskBoundAnnotationSQLVisibility(t *testing.T) {
 		}
 		exec(`DELETE FROM task_assignees WHERE task_id=$1`, hidden.ID)
 		exec(`UPDATE tasks SET creator_user_id=$1 WHERE id=$2`, user.ID, hidden.ID)
-		if _, err := svc.Get(ctx, pid, ids[1]); err != nil {
-			t.Fatal(err)
+		if _, err := svc.Get(ctx, pid, ids[1]); !errors.Is(err, annotationdom.ErrAnnotationNotFound) {
+			t.Fatalf("creator-only annotation read: %v", err)
 		}
 		for _, call := range []func() error{
 			func() error { _, err := svc.Resolve(ctx, pid, ids[1], user.ID); return err },
@@ -225,8 +225,8 @@ func TestTaskBoundAnnotationSQLVisibility(t *testing.T) {
 				return err
 			},
 		} {
-			if err := call(); !errors.Is(err, taskdom.ErrTaskForbidden) {
-				t.Fatalf("creator-only progress allowed: %v", err)
+			if err := call(); !errors.Is(err, annotationdom.ErrAnnotationNotFound) {
+				t.Fatalf("creator-only annotation progress: %v", err)
 			}
 		}
 		exec(`UPDATE tasks SET creator_user_id=$1 WHERE id=$2`, manager.ID, hidden.ID)
@@ -417,7 +417,7 @@ func TestTaskUploadBindingAndCurrentAccess(t *testing.T) {
 			t.Fatal("missing actor allowed")
 		}
 	})
-	t.Run("exact_pending_binding", func(t *testing.T) {
+	t.Run("exact_pending_binding_and_historical_creator_denied", func(t *testing.T) {
 		session := upload(contexts[0], tasks[0].ID, true)
 		f, err := env.attachmentRepo.FindFileByID(env.ctx, session.FileID)
 		if err != nil || f.UploadedBy == nil || *f.UploadedBy != users[0] {
@@ -475,21 +475,21 @@ func TestTaskUploadBindingAndCurrentAccess(t *testing.T) {
 		if data, _, err := svc.GetAttachmentContent(contexts[0], pid, tasks[0].ID, a.ID); err != nil || string(data) != "content" {
 			t.Fatal("assignee content unavailable", err)
 		}
-		// A creator can read but cannot submit progress without assignment.
+		// Historical creator attribution does not grant current task access.
 		if _, err := env.db.Exec(`DELETE FROM task_assignees WHERE task_id=$1`, tasks[0].ID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := env.db.Exec(`UPDATE tasks SET creator_user_id=$1 WHERE id=$2`, users[0], tasks[0].ID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := svc.ListTaskAttachments(contexts[0], pid, tasks[0].ID); err != nil {
-			t.Fatal(err)
+		if _, err := svc.ListTaskAttachments(contexts[0], pid, tasks[0].ID); !errors.Is(err, taskdom.ErrTaskNotFound) {
+			t.Fatalf("creator listed attachments: %v", err)
 		}
-		if err := svc.DeleteTaskAttachment(contexts[0], pid, tasks[0].ID, a.ID); !errors.Is(err, taskdom.ErrTaskForbidden) {
-			t.Fatal("creator removed attachment")
+		if err := svc.DeleteTaskAttachment(contexts[0], pid, tasks[0].ID, a.ID); !errors.Is(err, taskdom.ErrTaskNotFound) {
+			t.Fatalf("creator removed attachment: %v", err)
 		}
-		if _, err := svc.InitiateUpload(contexts[0], pid, attachmentdom.InitiateUploadInput{TaskID: tasks[0].ID}); !errors.Is(err, taskdom.ErrTaskForbidden) {
-			t.Fatal("creator initiated progress")
+		if _, err := svc.InitiateUpload(contexts[0], pid, attachmentdom.InitiateUploadInput{TaskID: tasks[0].ID}); !errors.Is(err, taskdom.ErrTaskNotFound) {
+			t.Fatalf("creator initiated upload: %v", err)
 		}
 		if _, err := env.db.Exec(`UPDATE tasks SET creator_user_id=$1 WHERE id=$2`, manager.ID, tasks[0].ID); err != nil {
 			t.Fatal(err)
