@@ -23,16 +23,17 @@ import (
 	"github.com/Paca-AI/api/internal/transport/http/router"
 )
 
-func buildUserTestRouter(repo *fakeUserRepo) http.Handler {
+func buildUserTestRouter(repo *fakeUserRepo, grants ...authz.Permission) http.Handler {
+	permissions := &integrationPermissionStore{globalPerms: grants}
 	tm := jwttoken.New(testSecret, 15*time.Minute, 168*time.Hour)
 	store := &fakeRefreshStore{}
 	authService := authsvc.New(repo, tm, store, 168*time.Hour, 24*time.Hour)
-	userService := usersvc.New(repo, repo)
+	userService := usersvc.New(repo, repo, permissions)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	return router.New(router.Deps{
 		TokenManager: tm,
-		Authorizer:   authz.NewAuthorizer(nil),
+		Authorizer:   authz.NewAuthorizer(permissions),
 		Health:       handler.NewHealthHandler(),
 		Auth:         handler.NewAuthHandler(authService, testCookieCfg),
 		User:         handler.NewUserHandler(userService),
@@ -53,7 +54,7 @@ func issueAdminToken(t *testing.T) string {
 
 func TestCreateUser(t *testing.T) {
 	repo := newFakeUserRepo()
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersWrite)
 
 	body, _ := json.Marshal(map[string]string{
 		"username":  "newuser",
@@ -77,7 +78,7 @@ func TestCreateUserDuplicateUsername(t *testing.T) {
 	existing := &userdom.User{ID: uuid.New(), Username: "existing", Role: userdom.RoleUser}
 	_ = repo.Create(context.Background(), existing)
 
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersWrite)
 
 	body, _ := json.Marshal(map[string]string{
 		"username":  "existing",
@@ -115,7 +116,7 @@ func TestGetMyGlobalPermissions(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersRead)
 
 	loginBody, _ := json.Marshal(map[string]string{"username": "perm-user", "password": "secret123"})
 	loginReq := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
@@ -186,7 +187,7 @@ func TestGetMyGlobalPermissions_Unauthorized(t *testing.T) {
 	}
 }
 
-func TestGetMyGlobalPermissions_AdminRoleIncludesWildcard(t *testing.T) {
+func TestGetMyGlobalPermissions_ExplicitWildcardGrant(t *testing.T) {
 	repo := newFakeUserRepo()
 	hash, err := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
 	if err != nil {
@@ -202,7 +203,7 @@ func TestGetMyGlobalPermissions_AdminRoleIncludesWildcard(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionAll)
 
 	loginBody, _ := json.Marshal(map[string]string{"username": "admin-user", "password": "secret123"})
 	loginReq := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
@@ -446,7 +447,7 @@ func TestListUsers(t *testing.T) {
 			ID: uuid.New(), Username: name, Role: userdom.RoleUser,
 		})
 	}
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersRead)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/users?page=1&page_size=10", nil)
 	req.Header.Set("Authorization", "Bearer "+issueAdminToken(t))
@@ -490,7 +491,7 @@ func TestGetUserByID_Admin(t *testing.T) {
 	repo := newFakeUserRepo()
 	u := &userdom.User{ID: uuid.New(), Username: "target-user", Role: userdom.RoleUser}
 	_ = repo.Create(context.Background(), u)
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersRead)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/users/"+u.ID.String(), nil)
 	req.Header.Set("Authorization", "Bearer "+issueAdminToken(t))
@@ -517,7 +518,7 @@ func TestGetUserByID_Admin(t *testing.T) {
 
 func TestGetUserByID_NotFound(t *testing.T) {
 	repo := newFakeUserRepo()
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersRead)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/users/"+uuid.NewString(), nil)
 	req.Header.Set("Authorization", "Bearer "+issueAdminToken(t))
@@ -536,7 +537,7 @@ func TestAdminUpdateUser(t *testing.T) {
 	repo := newFakeUserRepo()
 	u := &userdom.User{ID: uuid.New(), Username: "update-target", FullName: "Old Name", Role: userdom.RoleUser}
 	_ = repo.Create(context.Background(), u)
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersWrite)
 
 	body, _ := json.Marshal(map[string]string{"full_name": "New Name"})
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/users/"+u.ID.String(), bytes.NewReader(body))
@@ -566,7 +567,7 @@ func TestDeleteUser(t *testing.T) {
 	repo := newFakeUserRepo()
 	u := &userdom.User{ID: uuid.New(), Username: "delete-target", Role: userdom.RoleUser}
 	_ = repo.Create(context.Background(), u)
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersDelete)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/admin/users/"+u.ID.String(), nil)
 	req.Header.Set("Authorization", "Bearer "+issueAdminToken(t))
@@ -585,7 +586,7 @@ func TestDeleteUser(t *testing.T) {
 
 func TestDeleteUser_NotFound(t *testing.T) {
 	repo := newFakeUserRepo()
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersDelete)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/admin/users/"+uuid.NewString(), nil)
 	req.Header.Set("Authorization", "Bearer "+issueAdminToken(t))
@@ -610,7 +611,7 @@ func TestAdminResetPassword(t *testing.T) {
 		Role:         userdom.RoleUser,
 	}
 	_ = repo.Create(context.Background(), u)
-	r := buildUserTestRouter(repo)
+	r := buildUserTestRouter(repo, authz.PermissionUsersWrite)
 
 	body, _ := json.Marshal(map[string]string{"new_password": "brandnewpass"})
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/users/"+u.ID.String()+"/password", bytes.NewReader(body))
@@ -639,11 +640,12 @@ func TestAdminResetPassword_SetsMustChangePassword(t *testing.T) {
 	tm := jwttoken.New(testSecret, 15*time.Minute, 168*time.Hour)
 	store := &fakeRefreshStore{}
 	authService := authsvc.New(repo, tm, store, 168*time.Hour, 24*time.Hour)
-	userService := usersvc.New(repo, repo)
+	permissions := &integrationPermissionStore{globalPerms: []authz.Permission{authz.PermissionUsersWrite}}
+	userService := usersvc.New(repo, repo, permissions)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	r := router.New(router.Deps{
 		TokenManager: tm,
-		Authorizer:   authz.NewAuthorizer(nil),
+		Authorizer:   authz.NewAuthorizer(permissions),
 		Health:       handler.NewHealthHandler(),
 		Auth:         handler.NewAuthHandler(authService, testCookieCfg),
 		User:         handler.NewUserHandler(userService, authService),
@@ -788,5 +790,16 @@ func TestMustChangePassword_ChangeAllowedAndUnblocks(t *testing.T) {
 	}
 	if updated.MustChangePassword {
 		t.Error("expected MustChangePassword=false after change")
+	}
+}
+
+func TestAdminClaimWithoutGrantDenied(t *testing.T) {
+	r := buildUserTestRouter(newFakeUserRepo())
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/users", nil)
+	req.Header.Set("Authorization", "Bearer "+issueAdminToken(t))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("ADMIN claim without current grants: status=%d", w.Code)
 	}
 }
