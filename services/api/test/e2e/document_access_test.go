@@ -9,6 +9,7 @@ import (
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/database"
 	pgRepo "github.com/Paca-AI/api/internal/repository/postgres"
+	docsvc "github.com/Paca-AI/api/internal/service/doc"
 	"github.com/Paca-AI/api/migrations"
 	"github.com/google/uuid"
 	"io"
@@ -743,4 +744,117 @@ func TestDocumentAgentCredentialCannotBorrowBotAudience(t *testing.T) {
 		t.Fatal("deleted agent retained a prior task grant")
 	}
 
+}
+
+func TestDocumentTaskGrantCannotCreateOrChangeAudienceAcrossProjects(t *testing.T) {
+	env := newE2EEnv(t)
+	startFileDelivery(t, env)
+	seedTaskMemberUser(t, env, "grant-doc-manager", "password1")
+	client, token := taskMemberLogin(t, env, "grant-doc-manager", "password1")
+	projects := []uuid.UUID{uuid.MustParse(createProjectForTasksViaAPI(t, env, client, token)), uuid.MustParse(createProjectForTasksViaAPI(t, env, client, token))}
+	user, err := env.userRepo.FindByUsername(env.ctx, "grant-doc-manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := authz.WithHumanSession(authz.WithActorID(env.ctx, user.ID))
+	svc := docsvc.New(pgRepo.NewDocumentRepository(env.db), env.projectRepo)
+	docs := map[uuid.UUID][]*docdom.Document{}
+	var grantTask uuid.UUID
+	for _, project := range projects {
+		task, e := env.taskSvc.CreateTask(trusted, taskdom.CreateTaskInput{ProjectID: project, Title: "real grant task"})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if project == projects[0] {
+			grantTask = task.ID
+		}
+		for _, initial := range []string{"private", "task"} {
+			in := docdom.CreateDocumentInput{ProjectID: project, Title: "unchanged audience", Visibility: initial}
+			if initial == "task" {
+				in.TaskIDs = []uuid.UUID{task.ID}
+			}
+			d, e := svc.CreateDocument(trusted, in)
+			if e != nil {
+				t.Fatal(e)
+			}
+			docs[project] = append(docs[project], d)
+		}
+	}
+	bounded, err := authz.WithTaskServiceGrant(trusted, authz.TaskServiceGrant{Name: "document-boundary", ProjectID: projects[0], TaskIDs: []uuid.UUID{grantTask}, Action: taskdom.AccessManage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := func(t *testing.T) string {
+		t.Helper()
+		var state string
+		if e := env.db.Get(&state, `SELECT jsonb_build_object('rows',(SELECT jsonb_agg(to_jsonb(d) ORDER BY d.id) FROM documents d),'links',(SELECT jsonb_agg(to_jsonb(dt) ORDER BY dt.document_id,dt.task_id) FROM document_tasks dt))::text`); e != nil {
+			t.Fatal(e)
+		}
+		return state
+	}
+	for i, project := range projects {
+		relation := "same_project"
+		if i == 1 {
+			relation = "cross_project"
+		}
+		for _, visibility := range []string{"private", "project"} {
+			t.Run(relation+"/create_"+visibility, func(t *testing.T) {
+				before := snapshot(t)
+				_, e := svc.CreateDocument(bounded, docdom.CreateDocumentInput{ProjectID: project, Title: "bounded must not create", Visibility: visibility})
+				if e == nil || !strings.Contains(e.Error(), "bounded task grants") {
+					t.Errorf("expected explicit grant refusal, got %v", e)
+				}
+				if after := snapshot(t); after != before {
+					t.Error("denied create changed document rows or task associations")
+				}
+			})
+			for _, d := range docs[project] {
+				t.Run(relation+"/access_"+d.Visibility+"_to_"+visibility, func(t *testing.T) {
+					before := snapshot(t)
+					var version int64
+					if e := env.db.Get(&version, `SELECT access_version FROM documents WHERE id=$1`, d.ID); e != nil {
+						t.Fatal(e)
+					}
+					_, e := svc.UpdateDocumentAccess(bounded, project, d.ID, docdom.UpdateAccessInput{ExpectedAccessVersion: version, Visibility: visibility})
+					if e == nil || !strings.Contains(e.Error(), "bounded task grants") {
+						t.Errorf("expected explicit grant refusal, got %v", e)
+					}
+					if after := snapshot(t); after != before {
+						t.Error("denied access mutation changed rows, visibility, version or task associations")
+					}
+				})
+			}
+		}
+	}
+	// A Task2 resolution failure is not itself a document denial: this real
+	// human has only docs.read/write, no tasks.read, and can create private docs.
+	seedUser(t, env, "grant-docs-only", "password1", "Docs only")
+	docsUser, e := env.userRepo.FindByUsername(env.ctx, "grant-docs-only")
+	if e != nil {
+		t.Fatal(e)
+	}
+	role := uuid.New()
+	if _, e = env.db.Exec(`INSERT INTO project_roles(id,project_id,role_name,permissions)VALUES($1,$2,'Docs only','{"docs.read":true,"docs.write":true}')`, role, projects[1]); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = env.db.Exec(`INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type)VALUES($1,$2,$3,$4,'human')`, uuid.New(), projects[1], docsUser.ID, role); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = authz.NewTaskAccessPolicy(pgRepo.NewAuthzPermissionStore(env.db)).ResolveTaskAccess(authz.WithActorID(env.ctx, docsUser.ID), projects[1]); e == nil {
+		t.Fatal("fixture unexpectedly has task read")
+	}
+	dc, dt := taskMemberLogin(t, env, "grant-docs-only", "password1")
+	req := mustRequest(env.ctx, t, "POST", env.base+"/api/v1/projects/"+projects[1].String()+"/docs", jsonBody(t, map[string]any{"title": "normal docs-only private"}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+dt)
+	resp := mustDo(t, dc, req)
+	defer resp.Body.Close()
+	assertStatus(t, resp, 201)
+	var result envelope
+	decodeJSON(t, resp, &result)
+	data := assertDataMap(t, result)
+	if data["visibility"] != "private" || data["owner_user_id"] != docsUser.ID.String() {
+		t.Fatalf("wrong docs-only private owner: %+v", data)
+	}
+	waitFileGate(t, env)
 }

@@ -45,6 +45,13 @@ func WithTaskServiceGrant(ctx context.Context, grant TaskServiceGrant) (context.
 	return context.WithValue(ctx, taskGrantKey{}, grant), nil
 }
 
+// HasTaskServiceGrant reports the presence of bounded backend authority without
+// resolving it against a target project or exposing the grant's contents.
+func HasTaskServiceGrant(ctx context.Context) bool {
+	_, ok := ctx.Value(taskGrantKey{}).(TaskServiceGrant)
+	return ok
+}
+
 func (p *TaskAccessPolicy) ResolveTaskAccess(ctx context.Context, projectID uuid.UUID) (taskdom.AccessScope, error) {
 	denied := taskdom.AccessScope{}
 	if grant, ok := ctx.Value(taskGrantKey{}).(TaskServiceGrant); ok {

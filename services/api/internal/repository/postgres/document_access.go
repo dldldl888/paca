@@ -234,6 +234,9 @@ func documentHuman(ctx context.Context) (uuid.UUID, error) {
 	if !ok || agent || authz.IsAgentCredential(ctx) || !authz.IsHumanSession(ctx) {
 		return uuid.Nil, apierr.New(apierr.CodeForbidden, "document creation and sharing require a verified human owner; agent run-owner binding is unavailable")
 	}
+	if authz.HasTaskServiceGrant(ctx) {
+		return uuid.Nil, apierr.New(apierr.CodeForbidden, "bounded task grants cannot create documents or change document audiences")
+	}
 	return user, nil
 }
 func (r *DocumentRepository) checkDocumentScope(ctx context.Context, project uuid.UUID, visibility string, tasks []uuid.UUID) error {
@@ -245,9 +248,6 @@ func (r *DocumentRepository) checkDocumentScope(ctx context.Context, project uui
 		return err
 	}
 	store := NewAuthzPermissionStore(r.db)
-	if scope, e := authz.NewTaskAccessPolicy(store).ResolveTaskAccess(ctx, project); e == nil && scope.TaskIDs != nil {
-		return apierr.New(apierr.CodeForbidden, "bounded task grants cannot change document audiences")
-	}
 	a := authz.NewAuthorizer(store)
 	actor, err := store.FindTaskActorAccess(ctx, user, project)
 	if err != nil {
