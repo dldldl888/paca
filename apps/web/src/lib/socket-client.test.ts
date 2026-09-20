@@ -204,3 +204,117 @@ describe("socket-client", () => {
 		});
 	});
 });
+
+describe("authorization cache revalidation", () => {
+	it("clears inactive business caches and refetches active queries on control and reconnect", async () => {
+		const { queryClient } = await import(
+			"../integrations/react-query/query-client"
+		);
+		const { QueryObserver } = await import("@tanstack/react-query");
+		queryClient.clear();
+		let allowed = true;
+		const key = ["projects", "p", "docs", "d"];
+		const observer = new QueryObserver(queryClient, {
+			queryKey: key,
+			queryFn: async () => {
+				if (!allowed) throw { response: { status: 404 } };
+				return "current authorized body";
+			},
+			staleTime: Infinity,
+		});
+		const unsubscribe = observer.subscribe(() => {});
+		const tail = new QueryObserver<{ events: string[] }>(queryClient, {
+			queryKey: ["conversation-events-tail", "c"],
+			enabled: false,
+			initialData: { events: [] as string[] },
+		});
+		const stopTail = tail.subscribe(() => {});
+		queryClient.setQueryData(["conversation-events-tail", "c"], {
+			events: ["OLD_PRIVATE_REPLY"],
+		});
+
+		await observer.refetch();
+		queryClient.setQueryData(["notifications"], "old notifications");
+		connectSocket();
+		allowed = false;
+		const control = mockSocket.on.mock.calls.find(
+			([name]) => name === "authorization.changed",
+		)?.[1];
+		control?.();
+		await vi.waitFor(() =>
+			expect(queryClient.getQueryData(key)).toBeUndefined(),
+		);
+		expect(queryClient.getQueryData(["notifications"])).toBeUndefined();
+		expect(tail.getCurrentResult().data?.events).toEqual([]);
+		allowed = true;
+		const reconnect = mockSocket.on.mock.calls.find(
+			([name]) => name === "connect",
+		)?.[1];
+		reconnect?.();
+		await vi.waitFor(() =>
+			expect(queryClient.getQueryData(key)).toBe("current authorized body"),
+		);
+		unsubscribe();
+		stopTail();
+		queryClient.clear();
+	});
+});
+
+it("reauthorization preserves mounted private input while allowed server data refreshes", async () => {
+	const { queryClient } = await import(
+		"../integrations/react-query/query-client"
+	);
+	const { QueryClientProvider, useQuery } = await import(
+		"@tanstack/react-query"
+	);
+	const { createElement, useState } = await import("react");
+	const { render, fireEvent, screen, cleanup } = await import(
+		"@testing-library/react"
+	);
+	queryClient.clear();
+	let body = "version one";
+	function Composer() {
+		const [draft, setDraft] = useState("");
+		const { data } = useQuery({
+			queryKey: ["projects", "p", "docs", "allowed"],
+			queryFn: async () => body,
+			retry: false,
+			staleTime: Infinity,
+		});
+		return createElement(
+			"div",
+			null,
+			createElement("span", null, data),
+			createElement("input", {
+				"aria-label": "private draft",
+				value: draft,
+				onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+					setDraft(e.target.value),
+			}),
+		);
+	}
+	const view = render(
+		createElement(
+			QueryClientProvider,
+			{ client: queryClient },
+			createElement(Composer),
+		),
+	);
+	await screen.findByText("version one");
+	fireEvent.change(screen.getByRole("textbox"), {
+		target: { value: "UNSAVED_PRIVATE_INPUT" },
+	});
+	connectSocket();
+	body = "version two";
+	mockSocket.on.mock.calls.find(
+		([name]) => name === "authorization.changed",
+	)?.[1]?.();
+	await screen.findByText("version two");
+	expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe(
+		"UNSAVED_PRIVATE_INPUT",
+	);
+	view.unmount();
+	cleanup();
+	disconnectSocket();
+	queryClient.clear();
+});

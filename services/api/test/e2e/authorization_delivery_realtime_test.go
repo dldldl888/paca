@@ -17,9 +17,9 @@ import (
 	notificationdom "github.com/Paca-AI/api/internal/domain/notification"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
-	"github.com/Paca-AI/api/internal/platform/delivery"
 	pg "github.com/Paca-AI/api/internal/repository/postgres"
 	agentsvc "github.com/Paca-AI/api/internal/service/agent"
+	docsvc "github.com/Paca-AI/api/internal/service/doc"
 	notificationsvc "github.com/Paca-AI/api/internal/service/notification"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -54,9 +54,9 @@ func TestAuthorizationDeliveryRealHTTPAndSocketReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	instance := uuid.New()
-	gate := delivery.NewGate()
+	gate := env.fileGate
 	d := pg.NewAuthorizationDelivery(env.db, env.redisClient, instance.String())
-	env.agentSvc.WithAuthorizer(authz.NewAuthorizer(pg.NewAuthzPermissionStore(env.db))).WithPrivateRuns(instance, env.agentRepo, nil, nil, env.automationSvc).WithDeliveryGate(gate)
+	env.agentSvc.WithAuthorizer(authz.NewAuthorizer(pg.NewAuthzPermissionStore(env.db))).WithPrivateRuns(instance, env.agentRepo, docsvc.New(pg.NewDocumentRepository(env.db), env.projectRepo), nil, env.automationSvc).WithDeliveryGate(gate)
 	d.Reconcile = env.agentSvc.ReconcilePrivateRuns
 	stop, err := d.StartParticipant(env.ctx, gate)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestAuthorizationDeliveryRealHTTPAndSocketReconnect(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": data})
 	}
 	mux.HandleFunc("/fixture", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"redis": sharedRedisURL, "key": key, "instance": instance, "project": pid, "task": task.ID, "userA": users[0], "memberB": members[1], "tokenA": tokens[0], "tokenB": tokens[1], "notification": initial[0].ID})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api": env.base, "managerToken": token, "redis": sharedRedisURL, "key": key, "instance": instance, "project": pid, "task": task.ID, "userA": users[0], "memberB": members[1], "tokenA": tokens[0], "tokenB": tokens[1], "notification": initial[0].ID})
 	})
 	mux.HandleFunc("/api/v1/users/me/global-permissions", func(w http.ResponseWriter, r *http.Request) {
 		req, _ := http.NewRequestWithContext(r.Context(), "GET", env.base+r.URL.Path, nil)

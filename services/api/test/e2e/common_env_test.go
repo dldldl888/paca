@@ -277,7 +277,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	annotationService := annotationsvc.New(pgRepo.NewAnnotationRepository(db), environmentService, taskService, attachmentRepo, attachmentRepo, fileStore, "paca-attachments-e2e").WithTaskAccess(taskService, taskService)
 	engine := router.New(router.Deps{
 		DocFile:              handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),
-		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), docsvc.NewActivityService(docRepo, docRepo, projectRepo, nil)).WithDeliveryGate(fileGate),
+		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), docsvc.NewActivityService(docRepo, docRepo, projectRepo, publisher)).WithDeliveryGate(fileGate),
 		Environment:          handler.NewEnvironmentHandler(environmentService, ""),
 		Annotation:           handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery),
 		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher)),

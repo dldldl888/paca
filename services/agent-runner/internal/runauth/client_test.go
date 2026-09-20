@@ -149,3 +149,32 @@ func TestCompanyContextRejectsMismatchedOrFailedResponse(t *testing.T) {
 		})
 	}
 }
+
+func TestCompanyContextCanonicalReferenceProtocol(t *testing.T) {
+	a := &Authorization{AuthorizationEpoch: "3", ConversationID: uuid.NewString(), AgentID: uuid.NewString(), InstanceID: uuid.NewString(), OwnerUserID: uuid.NewString(), Audience: "owner_private"}
+	for _, mode := range []string{"valid", "missing_project", "invalid_id", "nil_id"} {
+		t.Run(mode, func(t *testing.T) {
+			target, project := uuid.NewString(), uuid.NewString()
+			source := map[string]any{"document_id": target, "project_id": project, "title": "reference", "url": "/projects/" + project + "/docs/" + target, "updated_at": "2025-01-02T03:04:05Z", "truncated": false, "source_document_id": uuid.NewString(), "source_project_id": uuid.NewString(), "source_title": "canonical"}
+			switch mode {
+			case "missing_project":
+				delete(source, "source_project_id")
+			case "invalid_id":
+				source["source_document_id"] = "invalid"
+			case "nil_id":
+				source["source_project_id"] = uuid.Nil.String()
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"authorization_epoch": a.AuthorizationEpoch, "conversation_id": a.ConversationID, "agent_id": a.AgentID, "instance_id": a.InstanceID, "owner_user_id": a.OwnerUserID, "text": "canonical body", "sources": []any{source}, "truncated": false}})
+			}))
+			defer srv.Close()
+			result, err := New(srv.URL, "synthetic", a.InstanceID).CompanyContext(context.Background(), a)
+			if (err == nil) != (mode == "valid") {
+				t.Fatal(result, err)
+			}
+			if result != nil && result.Sources[0].DocumentID != target {
+				t.Fatal("reference identity replaced")
+			}
+		})
+	}
+}

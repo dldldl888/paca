@@ -14,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 )
 
@@ -2076,6 +2077,12 @@ func (r *AgentRepository) ListAgentActivities(ctx context.Context, in agentdom.L
 	visible := strings.Join(taskQuery.whereClauses, " AND ")
 	taskPredicate := visible + taskActivityReferencesVisible(visible)
 	b.idx, b.args = taskQuery.idx, taskQuery.args
+	docArgs := append([]any{in.ActorMemberID.String(), in.ProjectID.String()}, b.args...)
+	docPredicate, err := DocumentVisibilityPredicate(ctx, r.db, "d", &docArgs, docdom.AccessRead)
+	if err != nil {
+		return nil, false, err
+	}
+	b.args, b.idx = docArgs[2:], len(docArgs)+1
 
 	if len(in.SourceTypes) > 0 {
 		types := make([]string, len(in.SourceTypes))
@@ -2140,7 +2147,7 @@ func (r *AgentRepository) ListAgentActivities(ctx context.Context, in agentdom.L
 		       da.activity_type, da.content, da.created_at, da.updated_at
 		FROM doc_activities da
 		JOIN documents d ON d.id = da.document_id
-		WHERE da.actor_id = $1 AND da.deleted_at IS NULL AND d.deleted_at IS NULL AND d.project_id=$2
+		WHERE da.actor_id = $1 AND da.deleted_at IS NULL AND d.deleted_at IS NULL AND d.project_id=$2 AND ` + docPredicate + `
 	)
 	SELECT id, source_type, source_id, source_title, source_deleted, activity_type, content, created_at, updated_at
 	FROM agent_activities WHERE EXISTS (SELECT 1 FROM project_members pm JOIN projects p ON p.id=pm.project_id WHERE pm.id=$1 AND pm.project_id=$2 AND pm.member_type='agent' AND pm.deleted_at IS NULL AND p.deleted_at IS NULL) AND ` + whereSQL + fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT %s`, limitP)

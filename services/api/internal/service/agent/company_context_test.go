@@ -166,3 +166,20 @@ func TestCompanyBlockTextBounds(t *testing.T) {
 		t.Fatal("invalid JSON accepted")
 	}
 }
+
+func TestCompanyReferenceUsesCanonicalProvenanceAndKeepsTargetRef(t *testing.T) {
+	s, f := companyTestService()
+	source, project, title, at := uuid.New(), uuid.New(), "canonical", time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	d := &docdom.Document{ID: uuid.New(), ProjectID: f.allowed, Title: "reference shell", UpdatedAt: at.Add(time.Hour), SourceDocumentID: &source, SourceProjectID: &project, SourceTitle: &title, SourceUpdatedAt: &at, Content: json.RawMessage(`[{"content":[{"type":"text","text":"canonical body"}]}]`)}
+	f.documents = []*docdom.Document{d}
+	out, err := s.CompanyContext(context.Background(), f.conversation.ID, f.conversation.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Sources) != 1 || out.Sources[0].UpdatedAt != "2025-01-02T03:04:05Z" || !strings.Contains(out.Text, source.String()) || !strings.Contains(out.Text, "canonical") {
+		t.Fatalf("source provenance uses shell identity/time: %+v", out)
+	}
+	if len(f.refs) != 1 || f.refs[0].ID != d.ID.String() {
+		t.Fatal("lost reference identity", f.refs)
+	}
+}

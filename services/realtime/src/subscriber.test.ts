@@ -65,3 +65,24 @@ test("original event waits for OPEN and API participant before current delivery"
  expect(calls).toBe(3);
  expect(emitted).toEqual([{rooms:["user:B:agent-chat"],channel:"event",event}]);
 });
+
+test("doc identity reaches current checker and folders only refresh classification", async()=>{
+ const {io,emitted}=recorder();const gate=new DeliveryGate();gate.update("1",false);
+ let received:any;
+ const recipients=async(scope:any)=>{received=scope;return {epoch:"1",user_ids:["A"]}};
+ await routeEvent(io,{type:"doc.comment.updated",payload:{project_id:"p",document_id:"d",activity_id:"a",activity_type:"doc.comment.added",content:'{"text":"comment"}'}},logger,gate,recipients);
+ expect(received.document_id).toBe("d");
+ await routeEvent(io,{type:"doc.folder.updated",payload:{project_id:"p",id:"folder",name:"name",content:"untrusted body"}},logger,gate,recipients);
+ expect(emitted[1].event.payload).toEqual({project_id:"p"});
+});
+
+test("verified OPEN emits a content-free reauthorization signal without rolling back epochs",()=>{
+ const signals:unknown[]=[];
+ const gate=new DeliveryGate(()=>signals.push({}));
+ gate.update("3",false);gate.update("2",false);gate.update("4",true);
+ expect(signals).toEqual([{}]);
+ gate.update("4",false);gate.update("4",false);
+ expect(signals).toEqual([{},{}]);
+ gate.disconnect();gate.update("4",false);
+ expect(signals).toEqual([{},{},{}]);
+});

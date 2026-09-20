@@ -75,11 +75,14 @@ export class DeliveryGate {
  epoch = "0";
  blocked = true;
  private pending = new Set<() => void>();
+ constructor(private readonly onOpen?: () => void) {}
  afterOpen(action: () => void): void { this.pending.add(action); }
  update(epoch: string, blocked: boolean): void {
   if (!/^(0|[1-9][0-9]*)$/.test(epoch) || BigInt(epoch) < BigInt(this.epoch)) return;
+  const changed = this.blocked || this.epoch !== epoch;
   this.epoch = epoch;
   this.blocked = blocked;
+  if (!blocked && changed) this.onOpen?.();
   if (!blocked) { const pending = [...this.pending]; this.pending.clear(); for (const action of pending) action(); }
  }
  disconnect(): void { this.blocked = true; }
@@ -91,6 +94,9 @@ export async function routeEvent(io: Server, msg: RealtimeMessage, logger: Logge
  const { type } = msg;
  let payload = eventPayload(msg);
  if (!payload || typeof type !== "string") return;
+ if (["doc.folder.created", "doc.folder.updated", "doc.folder.deleted"].includes(type)) {
+  payload = {project_id: payload.project_id};
+ }
  if(type==="agent.authorization_revoked") {
   payload={conversation_id:payload.conversation_id,status:"failed"};
  }
@@ -101,7 +107,7 @@ export async function routeEvent(io: Server, msg: RealtimeMessage, logger: Logge
  });
  if (gate.blocked) { deferUntilOpen(); return; }
  const scope: Record<string, unknown> = {event_type:type};
- for (const key of ["project_id", "task_id", "conversation_id", "recipient_user_id", "activity_id", "activity_type", "content"]) {
+ for (const key of ["project_id", "document_id", "task_id", "conversation_id", "recipient_user_id", "activity_id", "activity_type", "content"]) {
   if (payload[key] !== undefined) scope[key] = payload[key];
  }
  // Activity publication can precede persistence; typed metadata is checked by the API.

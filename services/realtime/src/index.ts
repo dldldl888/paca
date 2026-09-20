@@ -40,7 +40,8 @@ sessionRedis.on("error", (err: unknown) =>
 );
 
 const { httpServer, io } = createSocketServer(config, sessionRedis, logger);
-const gate = new DeliveryGate();
+// No business identity or payload: every connected client rechecks its queries.
+const gate = new DeliveryGate(() => io.emit("authorization.changed"));
 const subscriber = createSubscriber(config.valkey.url, io, logger, gate,
  scope=>fetchCurrentRecipients(config.apiUrl,config.internalAPIKey,scope));
 const bootID=crypto.randomUUID();

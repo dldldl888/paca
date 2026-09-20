@@ -72,6 +72,7 @@ type RealtimeScope struct {
 	EventType       string          `json:"event_type"`
 	ProjectID       string          `json:"project_id,omitempty"`
 	TaskID          string          `json:"task_id,omitempty"`
+	DocumentID      string          `json:"document_id,omitempty"`
 	ConversationID  string          `json:"conversation_id,omitempty"`
 	RecipientUserID string          `json:"recipient_user_id,omitempty"`
 	ActivityID      string          `json:"activity_id,omitempty"`
@@ -97,7 +98,7 @@ func (s *Service) CurrentRecipients(ctx context.Context, in RealtimeScope) (*Rea
 	if !ok {
 		return nil, errors.New("recipient repository unavailable")
 	}
-	var project, task uuid.UUID
+	var project, task, document uuid.UUID
 	if in.ProjectID != "" {
 		project, err = uuid.Parse(in.ProjectID)
 		if err != nil || project == uuid.Nil {
@@ -107,6 +108,12 @@ func (s *Service) CurrentRecipients(ctx context.Context, in RealtimeScope) (*Rea
 	if in.TaskID != "" {
 		task, err = uuid.Parse(in.TaskID)
 		if err != nil || task == uuid.Nil {
+			return out, nil
+		}
+	}
+	if in.DocumentID != "" {
+		document, err = uuid.Parse(in.DocumentID)
+		if err != nil || document == uuid.Nil {
 			return out, nil
 		}
 	}
@@ -156,7 +163,7 @@ func (s *Service) CurrentRecipients(ctx context.Context, in RealtimeScope) (*Rea
 			candidates = []uuid.UUID{uuid.MustParse(a.OwnerUserID)}
 		}
 	}
-	typedActivity := in.ActivityType != "" || in.ActivityID != "" || in.EventType == "task.updated" || in.EventType == "task.link.added" || in.EventType == "automation.applied" || strings.HasPrefix(in.EventType, "task.activity.")
+	typedActivity := (strings.HasPrefix(in.EventType, "task.") && (in.ActivityType != "" || in.ActivityID != "")) || in.EventType == "task.updated" || in.EventType == "task.link.added" || in.EventType == "automation.applied" || strings.HasPrefix(in.EventType, "task.activity.")
 	permission := authz.Permission("")
 	switch {
 	case typedActivity:
@@ -178,8 +185,12 @@ func (s *Service) CurrentRecipients(ctx context.Context, in RealtimeScope) (*Rea
 		if task == uuid.Nil {
 			return out, nil
 		}
-	case strings.HasPrefix(in.EventType, "doc."):
+	case in.EventType == "doc.folder.created", in.EventType == "doc.folder.updated", in.EventType == "doc.folder.deleted":
 		permission = authz.PermissionDocsRead
+	case strings.HasPrefix(in.EventType, "doc."):
+		if document == uuid.Nil {
+			return out, nil
+		}
 	case strings.HasPrefix(in.EventType, "workflow."), strings.HasPrefix(in.EventType, "automation."):
 		permission = authz.PermissionWorkflowsRead
 	case strings.HasPrefix(in.EventType, "sprint."), strings.HasPrefix(in.EventType, "view."):
@@ -208,6 +219,18 @@ func (s *Service) CurrentRecipients(ctx context.Context, in RealtimeScope) (*Rea
 			continue
 		}
 		actor := authz.WithActorID(ctx, user)
+		if document != uuid.Nil {
+			checker, ok := s.docs.(docdom.AccessChecker)
+			if !ok {
+				return nil, errors.New("document checker unavailable")
+			}
+			if _, e := checker.CheckDocumentAccess(actor, project, document, docdom.AccessRead); e != nil {
+				if RunDenied(e) {
+					continue
+				}
+				return nil, e
+			}
+		}
 		if task != uuid.Nil {
 			if s.taskChecker == nil {
 				continue

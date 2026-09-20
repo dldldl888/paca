@@ -15,6 +15,7 @@
 // clients always emit join/leave for both namespaces and let the server decide.
 
 import { io, type Socket } from "socket.io-client";
+import { reauthorizeQueries } from "@/integrations/react-query/query-client";
 
 const REALTIME_URL = window.location.origin;
 
@@ -39,6 +40,10 @@ export function connectSocket(): Socket {
 		transports: ["websocket", "polling"],
 		autoConnect: true,
 	});
+
+	socket.on("authorization.changed", reauthorizeQueries);
+	// Reconnect also covers authority changes missed while offline.
+	socket.on("connect", reauthorizeQueries);
 
 	// socket.io-client auto-reconnects after most disconnects, but NOT after
 	// one the server itself initiated (reason "io server disconnect") — per

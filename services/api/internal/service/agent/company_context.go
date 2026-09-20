@@ -20,12 +20,15 @@ type companyRepository interface {
 	ListCompanyDocuments(context.Context, []uuid.UUID, int) ([]*docdom.Document, error)
 }
 type CompanySource struct {
-	DocumentID string `json:"document_id"`
-	ProjectID  string `json:"project_id"`
-	Title      string `json:"title"`
-	URL        string `json:"url"`
-	UpdatedAt  string `json:"updated_at"`
-	Truncated  bool   `json:"truncated"`
+	DocumentID       string `json:"document_id"`
+	ProjectID        string `json:"project_id"`
+	Title            string `json:"title"`
+	URL              string `json:"url"`
+	UpdatedAt        string `json:"updated_at"`
+	Truncated        bool   `json:"truncated"`
+	SourceDocumentID string `json:"source_document_id,omitempty"`
+	SourceProjectID  string `json:"source_project_id,omitempty"`
+	SourceTitle      string `json:"source_title,omitempty"`
 }
 type CompanyContext struct {
 	AuthorizationEpoch string          `json:"authorization_epoch"`
@@ -100,7 +103,16 @@ func (s *Service) CompanyContext(ctx context.Context, conversation, agent uuid.U
 			title = title[:256]
 		}
 		source := CompanySource{DocumentID: d.ID.String(), ProjectID: d.ProjectID.String(), Title: string(title), URL: fmt.Sprintf("/projects/%s/docs/%s", d.ProjectID, d.ID), UpdatedAt: d.UpdatedAt.UTC().Format(time.RFC3339)}
+		if d.SourceDocumentID != nil && d.SourceProjectID != nil && d.SourceUpdatedAt != nil && d.SourceTitle != nil {
+			source.SourceDocumentID = d.SourceDocumentID.String()
+			source.SourceProjectID = d.SourceProjectID.String()
+			source.SourceTitle = string([]rune(*d.SourceTitle)[:min(256, len([]rune(*d.SourceTitle)))])
+			source.UpdatedAt = d.SourceUpdatedAt.UTC().Format(time.RFC3339)
+		}
 		header := fmt.Sprintf("\n来源：%q\n链接：%s\n更新时间：%s\n", source.Title, source.URL, source.UpdatedAt)
+		if source.SourceDocumentID != "" {
+			header += fmt.Sprintf("原文：%q\n原文标识：/projects/%s/docs/%s\n", source.SourceTitle, source.SourceProjectID, source.SourceDocumentID)
+		}
 		if remaining <= utf8.RuneCountInString(header)+40 {
 			result.Truncated = true
 			break

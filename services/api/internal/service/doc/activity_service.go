@@ -183,7 +183,7 @@ func (s *ActivitySvc) UpdateComment(ctx context.Context, id uuid.UUID, projectID
 	if err := s.repo.UpdateActivity(ctx, a); err != nil {
 		return nil, err
 	}
-	s.publishRealtimeOnly(ctx, events.TopicDocCommentUpdated, activityPayload(a, uuid.Nil))
+	s.publishRealtimeOnly(ctx, events.TopicDocCommentUpdated, activityPayload(a, projectID))
 	return a, nil
 }
 
@@ -217,6 +217,7 @@ func (s *ActivitySvc) DeleteComment(ctx context.Context, id uuid.UUID, projectID
 	s.publishRealtimeOnly(ctx, events.TopicDocCommentDeleted, map[string]any{
 		"id":          id,
 		"document_id": a.DocumentID,
+		"project_id":  projectID,
 		"actor_id":    actorID,
 	})
 	return nil

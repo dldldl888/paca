@@ -160,16 +160,28 @@ func (r *AgentRepository) ListCompanyDocuments(ctx context.Context, projects []u
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 	}
 	args = append(args, limit)
+	limitParam := fmt.Sprintf("$%d", len(args))
+	predicate, err := DocumentVisibilityPredicate(ctx, r.db, "documents", &args, docdom.AccessRead)
+	if err != nil {
+		return nil, err
+	}
 	var records []documentRecord
-	err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+documentCols+` FROM documents WHERE deleted_at IS NULL
+	err = DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+documentCols+` FROM documents WHERE `+predicate+`
  AND project_id IN (`+strings.Join(placeholders, ",")+`) AND folder_id IN
  (SELECT id FROM doc_folders WHERE project_id=documents.project_id AND parent_id IS NULL AND name='公司资料')
- ORDER BY updated_at DESC,id ASC LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
+ ORDER BY updated_at DESC,id ASC LIMIT `+limitParam, args...)
 	if err != nil {
 		return nil, err
 	}
 	for _, rec := range records {
-		out = append(out, documentFromRecord(rec))
+		d, err := NewDocumentRepository(r.db).CheckDocumentAccess(ctx, uuid.Nil, mustParseUUID(rec.ID), docdom.AccessRead)
+		if errors.Is(err, docdom.ErrDocNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
 	}
 	return out, nil
 }

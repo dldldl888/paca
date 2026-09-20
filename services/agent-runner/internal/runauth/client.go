@@ -152,12 +152,15 @@ var ErrDenied = errors.New("run authorization refused")
 // CompanyContext is separate from the fixed twelve-field authorization protocol.
 // It is fetched within the dispatch gate and bound to the same trusted identity.
 type CompanySource struct {
-	DocumentID string `json:"document_id"`
-	ProjectID  string `json:"project_id"`
-	Title      string `json:"title"`
-	URL        string `json:"url"`
-	UpdatedAt  string `json:"updated_at"`
-	Truncated  bool   `json:"truncated"`
+	DocumentID       string `json:"document_id"`
+	ProjectID        string `json:"project_id"`
+	Title            string `json:"title"`
+	URL              string `json:"url"`
+	UpdatedAt        string `json:"updated_at"`
+	Truncated        bool   `json:"truncated"`
+	SourceDocumentID string `json:"source_document_id,omitempty"`
+	SourceProjectID  string `json:"source_project_id,omitempty"`
+	SourceTitle      string `json:"source_title,omitempty"`
 }
 type CompanyContext struct {
 	AuthorizationEpoch string          `json:"authorization_epoch"`
@@ -229,6 +232,13 @@ func (c *Client) CompanyContext(ctx context.Context, a *Authorization) (*Company
 		return nil, ErrUnavailable
 	}
 	for _, source := range result.Sources {
+		if source.SourceDocumentID != "" || source.SourceProjectID != "" || source.SourceTitle != "" {
+			canonical, e1 := uuid.Parse(source.SourceDocumentID)
+			project, e2 := uuid.Parse(source.SourceProjectID)
+			if e1 != nil || e2 != nil || canonical == uuid.Nil || project == uuid.Nil || source.SourceTitle == "" || utf8.RuneCountInString(source.SourceTitle) > 256 {
+				return nil, ErrUnavailable
+			}
+		}
 		doc, e1 := uuid.Parse(source.DocumentID)
 		project, e2 := uuid.Parse(source.ProjectID)
 		_, e3 := time.Parse(time.RFC3339, source.UpdatedAt)
