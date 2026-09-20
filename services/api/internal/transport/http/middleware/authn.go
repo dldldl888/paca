@@ -290,6 +290,7 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 	ctx := context.WithValue(r.Context(), claimsContextKey{}, claims)
 	if actorID, parseErr := uuid.Parse(claims.Subject); parseErr == nil {
 		ctx = authz.WithActorID(ctx, actorID)
+		ctx = authz.WithHumanSession(ctx)
 	}
 	r = r.WithContext(ctx)
 	return r, true

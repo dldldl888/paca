@@ -17,7 +17,7 @@ func (s *AuthzPermissionStore) GetAgentProjectRoleName(ctx context.Context, agen
 	var row struct {
 		RoleName string `db:"role_name"`
 	}
-	err := sqlx.GetContext(ctx, s.db, &row, `
+	err := sqlx.GetContext(ctx, authorizationQuery(ctx, s.db), &row, `
 		SELECT pr.role_name
 		FROM project_roles pr
 		JOIN project_members pm ON pm.project_role_id = pr.id
@@ -38,7 +38,7 @@ func (s *AuthzPermissionStore) ListAgentProjectPermissions(ctx context.Context, 
 	var rows []struct {
 		Permissions []byte `db:"permissions"`
 	}
-	err := sqlx.SelectContext(ctx, s.db, &rows, `
+	err := sqlx.SelectContext(ctx, authorizationQuery(ctx, s.db), &rows, `
 		SELECT pr.permissions
 		FROM project_roles pr
 		JOIN project_members pm ON pm.project_role_id = pr.id
@@ -60,7 +60,7 @@ func (s *AuthzPermissionStore) ListAgentGlobalPermissions(ctx context.Context, a
 	var rows []struct {
 		Permissions []byte `db:"permissions"`
 	}
-	err := sqlx.SelectContext(ctx, s.db, &rows, `
+	err := sqlx.SelectContext(ctx, authorizationQuery(ctx, s.db), &rows, `
 		SELECT gr.permissions
 		FROM global_roles gr
 		JOIN agents a ON a.global_role_id = gr.id

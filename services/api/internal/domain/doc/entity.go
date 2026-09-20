@@ -23,17 +23,25 @@ type DocFolder struct {
 
 // Document is a rich-text document backed by BlockNote JSON blocks.
 type Document struct {
-	ID        uuid.UUID
-	ProjectID uuid.UUID
-	FolderID  *uuid.UUID // nil = root (not in any folder)
-	Title     string
-	Content   json.RawMessage // BlockNote JSON array of block objects; nil = no content
-	Position  int
-	CreatedBy *uuid.UUID
-	UpdatedBy *uuid.UUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt *time.Time // non-nil = soft-deleted
+	Visibility       string
+	OwnerUserID      *uuid.UUID
+	SourceDocumentID *uuid.UUID
+	SourceTitle      *string
+	SourceProjectID  *uuid.UUID
+	SourceUpdatedAt  *time.Time
+	AccessVersion    int64
+	TaskIDs          []uuid.UUID
+	ID               uuid.UUID
+	ProjectID        uuid.UUID
+	FolderID         *uuid.UUID // nil = root (not in any folder)
+	Title            string
+	Content          json.RawMessage // BlockNote JSON array of block objects; nil = no content
+	Position         int
+	CreatedBy        *uuid.UUID
+	UpdatedBy        *uuid.UUID
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	DeletedAt        *time.Time // non-nil = soft-deleted
 }
 
 // DocSnapshot is a point-in-time copy of a document's content.

@@ -61,7 +61,7 @@ func TestCompanyContextSelectionPersistenceAndDeletion(t *testing.T) {
 	}
 	for _, args := range [][]any{{doc, pid, folder, "正式制度", "合成公司事实"}, {hidden, pid, child, "不应自动读取", "子目录秘密"}, {uuid.New(), pid, ordinary, "其他制度", "其他资料"}} {
 		content, _ := json.Marshal([]any{map[string]any{"content": []any{map[string]any{"type": "text", "text": args[4]}}}})
-		if _, err = env.db.Exec(`INSERT INTO documents(id,project_id,folder_id,title,content) VALUES($1,$2,$3,$4,$5)`, args[0], args[1], args[2], args[3], content); err != nil {
+		if _, err = env.db.Exec(`INSERT INTO documents(visibility,id,project_id,folder_id,title,content) VALUES('legacy_project',$1,$2,$3,$4,$5)`, args[0], args[1], args[2], args[3], content); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -79,7 +79,7 @@ func TestCompanyContextSelectionPersistenceAndDeletion(t *testing.T) {
 		if _, err = env.db.Exec(`INSERT INTO doc_folders(id,project_id,name) VALUES($1,$2,'公司资料')`, otherFolder, other); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = env.db.Exec(`INSERT INTO documents(id,project_id,folder_id,title,content) VALUES($1,$2,$3,'外部秘密','[]')`, uuid.New(), other, otherFolder); err != nil {
+		if _, err = env.db.Exec(`INSERT INTO documents(visibility,id,project_id,folder_id,title,content) VALUES('legacy_project',$1,$2,$3,'外部秘密','[]')`, uuid.New(), other, otherFolder); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -134,9 +134,11 @@ func TestCompanyContextSelectionPersistenceAndDeletion(t *testing.T) {
 	}
 	// Delete must be visible inside the authority mutation's transaction so
 	// reconciliation fails the active run before the gate reopens.
-	if err = docRepo.DeleteDocument(env.ctx, doc); err != nil {
-		t.Fatal(err)
-	}
+	deleteReq := mustRequest(env.ctx, t, "DELETE", env.base+"/api/v1/projects/"+project+"/docs/"+doc.String(), nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+token)
+	deleteResp := mustDo(t, client, deleteReq)
+	deleteResp.Body.Close()
+	assertStatus(t, deleteResp, 204)
 	stored, err = env.agentRepo.FindConversationByID(env.ctx, c.ID)
 	if err != nil || stored.Status != string(agentdom.ConversationStatusFailed) {
 		t.Fatalf("deleted source left active run: %+v %v", stored, err)

@@ -35,3 +35,15 @@ func IsAgentCredential(ctx context.Context) bool {
 	value, _ := ctx.Value(agentCredentialKey{}).(bool)
 	return value
 }
+
+// WithHumanSession is set only after a human JWT is verified, never by API-key
+// attribution headers. It is deliberately separate from reusable read actors.
+type humanSessionKey struct{}
+
+func WithHumanSession(ctx context.Context) context.Context {
+	return context.WithValue(ctx, humanSessionKey{}, true)
+}
+func IsHumanSession(ctx context.Context) bool {
+	value, _ := ctx.Value(humanSessionKey{}).(bool)
+	return value
+}

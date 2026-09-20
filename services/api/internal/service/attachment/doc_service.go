@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/storage"
 )
@@ -17,6 +18,9 @@ import (
 // presigned upload session.  The storage key is organised under docs/{docId}/
 // to keep document files separate from task files.
 func (s *Service) InitiateDocUpload(ctx context.Context, in attachmentdom.DocUploadInput) (*attachmentdom.UploadSession, error) {
+	if _, err := s.checkDocFileAccess(ctx, in.ProjectID, in.DocID, docdom.AccessWrite); err != nil {
+		return nil, err
+	}
 	actor, ok := authz.ActorIDFromContext(ctx)
 	if !ok {
 		return nil, attachmentdom.ErrFileNotFound
@@ -81,7 +85,7 @@ func (s *Service) CompleteDocUpload(ctx context.Context, in attachmentdom.DocCom
 	if s.docChecker == nil {
 		return nil, attachmentdom.ErrDocNotInProject
 	}
-	if err := s.docChecker.DocBelongsToProject(ctx, in.ProjectID, in.DocID); err != nil {
+	if _, err := s.checkDocFileAccess(ctx, in.ProjectID, in.DocID, docdom.AccessWrite); err != nil {
 		return nil, err
 	}
 	actor, ok := authz.ActorIDFromContext(ctx)
@@ -143,14 +147,15 @@ func (s *Service) GetDocFile(ctx context.Context, projectID, docID, fileID uuid.
 	if s.docChecker == nil {
 		return nil, attachmentdom.ErrDocNotInProject
 	}
-	if err := s.docChecker.DocBelongsToProject(ctx, projectID, docID); err != nil {
+	canonical, err := s.checkDocFileAccess(ctx, projectID, docID, docdom.AccessRead)
+	if err != nil {
 		return nil, err
 	}
 	f, err := s.repo.FindFileByID(ctx, fileID)
 	if err != nil {
 		return nil, err
 	}
-	if !docFileKeyHasDocPrefix(f.StorageKey, docID) {
+	if !docFileKeyHasDocPrefix(f.StorageKey, canonical) {
 		return nil, attachmentdom.ErrDocFileMismatch
 	}
 	if f.UploadStatus != attachmentdom.UploadStatusUploaded {
@@ -165,7 +170,7 @@ func (s *Service) GetDocFile(ctx context.Context, projectID, docID, fileID uuid.
 // projectID is used to verify docID itself belongs to the caller's
 // authorized project.
 func (s *Service) DeleteDocFile(ctx context.Context, projectID, docID, fileID uuid.UUID) error {
-	if err := s.docChecker.DocBelongsToProject(ctx, projectID, docID); err != nil {
+	if _, err := s.checkDocFileAccess(ctx, projectID, docID, docdom.AccessWrite); err != nil {
 		return err
 	}
 
@@ -184,7 +189,10 @@ func (s *Service) DeleteDocFile(ctx context.Context, projectID, docID, fileID uu
 	}
 
 	// ponytail: failed also marks revoked files awaiting cleanup; split lifecycle states if automated cleanup is added.
-	ctx = authz.WithMutationCheck(ctx, func(ctx context.Context) error { return s.docChecker.DocBelongsToProject(ctx, projectID, docID) })
+	ctx = authz.WithMutationCheck(ctx, func(ctx context.Context) error {
+		_, err := s.checkDocFileAccess(ctx, projectID, docID, docdom.AccessWrite)
+		return err
+	})
 	if err := s.repo.UpdateFileStatus(ctx, fileID, attachmentdom.UploadStatusFailed, nil); err != nil {
 		return err
 	}
@@ -200,4 +208,21 @@ func (s *Service) DeleteDocFile(ctx context.Context, projectID, docID, fileID uu
 // the expected "docs/{docID}/" prefix, confirming the file belongs to the document.
 func docFileKeyHasDocPrefix(storageKey string, docID uuid.UUID) bool {
 	return strings.HasPrefix(storageKey, fmt.Sprintf("docs/%s/", docID.String()))
+}
+
+func (s *Service) checkDocFileAccess(ctx context.Context, project, id uuid.UUID, action docdom.AccessAction) (uuid.UUID, error) {
+	if s.docChecker == nil {
+		return uuid.Nil, attachmentdom.ErrDocNotInProject
+	}
+	d, err := s.docChecker.CheckDocumentAccess(ctx, project, id, action)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if d.SourceDocumentID != nil {
+		if action == docdom.AccessWrite {
+			return uuid.Nil, attachmentdom.ErrDocFileMismatch
+		}
+		return *d.SourceDocumentID, nil
+	}
+	return id, nil
 }

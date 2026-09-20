@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Paca-AI/api/internal/apierr"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 )
 
@@ -130,7 +131,7 @@ func (s *Service) ListDocuments(ctx context.Context, projectID uuid.UUID, folder
 
 // GetDocument returns a single document.
 func (s *Service) GetDocument(ctx context.Context, id uuid.UUID) (*docdom.Document, error) {
-	return s.repo.FindDocumentByID(ctx, id)
+	return s.CheckDocumentAccess(ctx, uuid.Nil, id, docdom.AccessRead)
 }
 
 // CreateDocument creates a new document.
@@ -153,6 +154,7 @@ func (s *Service) CreateDocument(ctx context.Context, in docdom.CreateDocumentIn
 	now := time.Now()
 	memberID := s.resolveMember(ctx, in.CreatedBy, in.ProjectID)
 	d := &docdom.Document{
+		Visibility: in.Visibility, SourceDocumentID: in.SourceDocumentID, TaskIDs: in.TaskIDs,
 		ID:        uuid.New(),
 		ProjectID: in.ProjectID,
 		FolderID:  in.FolderID,
@@ -174,7 +176,7 @@ func (s *Service) CreateDocument(ctx context.Context, in docdom.CreateDocumentIn
 // UpdateDocument updates a document's mutable fields and creates a snapshot
 // when the content changes.
 func (s *Service) UpdateDocument(ctx context.Context, projectID, id uuid.UUID, in docdom.UpdateDocumentInput) (*docdom.Document, error) {
-	d, err := s.repo.FindDocumentByID(ctx, id)
+	d, err := s.CheckDocumentAccess(ctx, projectID, id, docdom.AccessWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -182,8 +184,14 @@ func (s *Service) UpdateDocument(ctx context.Context, projectID, id uuid.UUID, i
 		return nil, docdom.ErrDocNotFound
 	}
 
+	if d.SourceDocumentID != nil && in.Content != nil {
+		return nil, apierr.New(apierr.CodeBadRequest, "reference content belongs to its canonical source")
+	}
 	contentChanged := false
 	oldContent := d.Content
+	if d.SourceDocumentID != nil {
+		oldContent = nil
+	}
 	oldTitle := d.Title
 
 	if in.Title != nil {
@@ -247,7 +255,7 @@ func (s *Service) UpdateDocument(ctx context.Context, projectID, id uuid.UUID, i
 
 // DeleteDocument soft-deletes a document.
 func (s *Service) DeleteDocument(ctx context.Context, projectID, id uuid.UUID) error {
-	d, err := s.repo.FindDocumentByID(ctx, id)
+	d, err := s.CheckDocumentAccess(ctx, projectID, id, docdom.AccessWrite)
 	if err != nil {
 		return err
 	}
@@ -261,7 +269,7 @@ func (s *Service) DeleteDocument(ctx context.Context, projectID, id uuid.UUID) e
 
 // ListSnapshots returns snapshots for a document, newest first.
 func (s *Service) ListSnapshots(ctx context.Context, projectID, documentID uuid.UUID) ([]*docdom.DocSnapshot, error) {
-	d, err := s.repo.FindDocumentByID(ctx, documentID)
+	d, err := s.CheckDocumentAccess(ctx, projectID, documentID, docdom.AccessRead)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +285,7 @@ func (s *Service) GetSnapshot(ctx context.Context, projectID, id uuid.UUID) (*do
 	if err != nil {
 		return nil, err
 	}
-	d, err := s.repo.FindDocumentByID(ctx, snap.DocumentID)
+	d, err := s.CheckDocumentAccess(ctx, uuid.Nil, snap.DocumentID, docdom.AccessRead)
 	if err != nil {
 		return nil, err
 	}
@@ -306,4 +314,15 @@ func (s *Service) resolveMember(ctx context.Context, userID *uuid.UUID, projectI
 func buildFieldChanges(changes []docdom.FieldChange) json.RawMessage {
 	raw, _ := json.Marshal(map[string]any{"changes": changes})
 	return raw
+}
+
+func (s *Service) CheckDocumentAccess(ctx context.Context, project, id uuid.UUID, action docdom.AccessAction) (*docdom.Document, error) {
+	return s.repo.CheckDocumentAccess(ctx, project, id, action)
+}
+
+func (s *Service) UpdateDocumentAccess(ctx context.Context, project, id uuid.UUID, in docdom.UpdateAccessInput) (*docdom.Document, error) {
+	if repo, ok := s.repo.(docdom.AccessRepository); ok {
+		return repo.UpdateDocumentAccess(ctx, project, id, in)
+	}
+	return nil, docdom.ErrDocNotFound
 }

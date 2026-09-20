@@ -595,6 +595,8 @@ func httpStatusForCode(code apierr.Code) int {
 		return http.StatusConflict
 	case apierr.CodeTaskTypeIsSystem:
 		return http.StatusForbidden
+	case apierr.Code("DOCUMENT_ACCESS_CONFLICT"):
+		return http.StatusConflict
 	case apierr.CodeDocNotFound,
 		apierr.CodeDocFolderNotFound,
 		apierr.CodeDocSnapshotNotFound,

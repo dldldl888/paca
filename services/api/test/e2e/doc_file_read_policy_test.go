@@ -22,7 +22,7 @@ func TestDocFileURLAndContentShareCurrentReadPolicy(t *testing.T) {
 		}
 	}
 	doc := uuid.New()
-	exec(`INSERT INTO documents(id,project_id,title,content)VALUES($1,$2,'policy','[]')`, doc, pid)
+	exec(`INSERT INTO documents(visibility,id,project_id,title,content)VALUES('legacy_project',$1,$2,'policy','[]')`, doc, pid)
 	f := &attachmentdom.File{ID: uuid.New(), Bucket: "paca-attachments-e2e", FileName: "policy-secret.txt", ContentType: "text/plain", FileSize: 14, UploadStatus: attachmentdom.UploadStatusUploaded, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	f.StorageKey = "docs/" + doc.String() + "/" + f.ID.String() + "/file"
 	if err := env.attachmentRepo.CreateFile(env.ctx, f); err != nil {

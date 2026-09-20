@@ -202,3 +202,7 @@ func TestUpdateDocument_StringContent_Returns400(t *testing.T) {
 		t.Fatalf("expected 400 for string content, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func (f *fakeDocSvc) CheckDocumentAccess(ctx context.Context, _ uuid.UUID, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {
+	return f.GetDocument(ctx, id)
+}

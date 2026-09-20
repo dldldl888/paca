@@ -32,6 +32,7 @@ type DocFolderRepository interface {
 
 // DocumentRepository defines persistence for documents.
 type DocumentRepository interface {
+	AccessChecker
 	// ListDocuments returns non-deleted documents for a project. folderID
 	// non-nil filters to that folder. search non-nil/non-empty filters to a
 	// case-insensitive title match (see postgres.escapeLikePattern).

@@ -25,13 +25,13 @@ const presignedUploadTTL = time.Hour
 type Service struct {
 	repo        attachmentdom.Repository
 	taskChecker taskdom.AccessChecker
-	docChecker  attachmentdom.DocOwnerChecker
+	docChecker  attachmentdom.DocAccessChecker
 	store       storage.Client
 	bucket      string
 }
 
 // New returns a configured attachment service.
-func New(repo attachmentdom.Repository, taskChecker taskdom.AccessChecker, docChecker attachmentdom.DocOwnerChecker, store storage.Client, bucket string) *Service {
+func New(repo attachmentdom.Repository, taskChecker taskdom.AccessChecker, docChecker attachmentdom.DocAccessChecker, store storage.Client, bucket string) *Service {
 	return &Service{repo: repo, taskChecker: taskChecker, docChecker: docChecker, store: store, bucket: bucket}
 }
 
@@ -308,28 +308,13 @@ func sanitizeFileName(name string) string {
 
 // --- Doc ownership checker --------------------------------------------------
 
-type docOwnerChecker struct {
-	repo docdom.DocumentRepository
+type docAccessChecker struct {
+	repo docdom.AccessChecker
 }
 
-// NewDocOwnerChecker returns a attachmentdom.DocOwnerChecker that validates
-// document→project ownership via the document repository.
-func NewDocOwnerChecker(repo docdom.DocumentRepository) attachmentdom.DocOwnerChecker {
-	return &docOwnerChecker{repo: repo}
-}
-
-func (c *docOwnerChecker) DocBelongsToProject(ctx context.Context, projectID, docID uuid.UUID) error {
-	d, err := c.repo.FindDocumentByID(ctx, docID)
-	if err != nil {
-		if errors.Is(err, docdom.ErrDocNotFound) {
-			return attachmentdom.ErrDocNotInProject
-		}
-		return err
-	}
-	if d.ProjectID != projectID {
-		return attachmentdom.ErrDocNotInProject
-	}
-	return nil
+// NewDocAccessChecker adapts the shared object policy to attachment not-found errors.
+func NewDocAccessChecker(repo docdom.AccessChecker) attachmentdom.DocAccessChecker {
+	return &docAccessChecker{repo: repo}
 }
 
 func (s *Service) checkTask(ctx context.Context, projectID, taskID uuid.UUID, action taskdom.AccessAction) error {
@@ -344,4 +329,12 @@ func (s *Service) checkTask(ctx context.Context, projectID, taskID uuid.UUID, ac
 // Completed annotation screenshots use their trusted task association for reads.
 func uploadMatches(f *attachmentdom.File, namespace string, objectID, fileID, actor uuid.UUID) bool {
 	return objectID != uuid.Nil && actor != uuid.Nil && f.ID == fileID && f.UploadedBy != nil && *f.UploadedBy == actor && strings.HasPrefix(f.StorageKey, fmt.Sprintf("%s/%s/%s/", namespace, objectID, fileID))
+}
+
+func (c *docAccessChecker) CheckDocumentAccess(ctx context.Context, project, id uuid.UUID, action docdom.AccessAction) (*docdom.Document, error) {
+	d, err := c.repo.CheckDocumentAccess(ctx, project, id, action)
+	if errors.Is(err, docdom.ErrDocNotFound) {
+		return nil, attachmentdom.ErrDocNotInProject
+	}
+	return d, err
 }

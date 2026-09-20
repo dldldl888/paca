@@ -9,6 +9,7 @@ import (
 
 // Service is the combined document management service contract.
 type Service interface {
+	AccessChecker
 	DocFolderService
 	DocumentService
 	DocSnapshotService
@@ -70,11 +71,14 @@ type DocumentService interface {
 
 // CreateDocumentInput carries fields required to create a document.
 type CreateDocumentInput struct {
-	ProjectID uuid.UUID
-	FolderID  *uuid.UUID
-	Title     string
-	Content   json.RawMessage
-	CreatedBy *uuid.UUID
+	Visibility       string
+	SourceDocumentID *uuid.UUID
+	TaskIDs          []uuid.UUID
+	ProjectID        uuid.UUID
+	FolderID         *uuid.UUID
+	Title            string
+	Content          json.RawMessage
+	CreatedBy        *uuid.UUID
 }
 
 // UpdateDocumentInput carries mutable document fields.

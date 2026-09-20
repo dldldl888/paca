@@ -243,6 +243,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	var attachmentService *attachmentsvc.Service
 	var fileStore storage.Client
 	fileGate := delivery.NewGate()
+	_ = fileGate.Update("0", false)
 	if sharedMinIOEndpoint != "" {
 		minIOEndpoint := sharedMinIOEndpoint
 		storageClient, storageErr := storage.NewS3Client(ctx, storage.S3Config{
@@ -261,7 +262,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 			t.Fatalf("ensure bucket: %v", err)
 		}
 		docRepoForAttachments := pgRepo.NewDocumentRepository(db)
-		attachmentService = attachmentsvc.New(attachmentRepo, taskService, attachmentsvc.NewDocOwnerChecker(docRepoForAttachments), storageClient, attachBucket)
+		attachmentService = attachmentsvc.New(attachmentRepo, taskService, attachmentsvc.NewDocAccessChecker(docRepoForAttachments), storageClient, attachBucket)
 	}
 
 	cookieCfg := handler.CookieConfig{
@@ -270,25 +271,25 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		RefreshTTL:        e2eRefreshTTL,
 		RefreshSessionTTL: e2eRefreshSessionTTL,
 	}
-	fileDelivery := handler.NewFileDelivery(fileGate, fileStore, "paca-attachments-e2e", authz.NewAuthorizer(authzStore))
+	fileDelivery := handler.NewFileDelivery(fileGate, fileStore, "paca-attachments-e2e", authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore))
 	docRepo := pgRepo.NewDocumentRepository(db)
 	environmentService := environmentsvc.New(pgRepo.NewEnvironmentRepository(db), "", "")
 	annotationService := annotationsvc.New(pgRepo.NewAnnotationRepository(db), environmentService, taskService, attachmentRepo, attachmentRepo, fileStore, "paca-attachments-e2e").WithTaskAccess(taskService, taskService)
 	engine := router.New(router.Deps{
 		DocFile:              handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),
-		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), nil),
+		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), docsvc.NewActivityService(docRepo, docRepo, projectRepo, nil)).WithDeliveryGate(fileGate),
 		Environment:          handler.NewEnvironmentHandler(environmentService, ""),
 		Annotation:           handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery),
 		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher)),
 		TokenManager:         tm,
 		APIKeyAuth:           apiKeyService,
-		Authorizer:           authz.NewAuthorizer(authzStore),
+		Authorizer:           authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore),
 		ProjectVisibilitySvc: projectService,
 		Health:               handler.NewHealthHandler(),
 		Auth:                 handler.NewAuthHandler(authService, cookieCfg),
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(globalRoleService),
-		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(authzStore)),
+		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore)),
 		Task:                 handler.NewTaskHandler(taskService, viewService, activityService, handler.WithTaskAssignedProjectService(projectService)),
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),

@@ -263,7 +263,7 @@ func TestAgentActivityTaskSQLAccess(t *testing.T) {
 		exec(`INSERT INTO task_activities(id,task_id,actor_id,activity_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6)`, uuid.New(), allowed, actor.ID, row.kind, row.content, baseTime.Add(200*time.Second))
 	}
 	docID := uuid.New()
-	exec(`INSERT INTO documents(id,project_id,title) VALUES($1,$2,'permitted doc')`, docID, pid)
+	exec(`INSERT INTO documents(visibility,id,project_id,title) VALUES('legacy_project',$1,$2,'permitted doc')`, docID, pid)
 	exec(`INSERT INTO doc_activities(id,document_id,actor_id,activity_type,content,created_at) VALUES($1,$2,$3,'doc.updated','{"body":"doc body"}',$4)`, uuid.New(), docID, actor.ID, baseTime.Add(300*time.Second))
 	filter := agentdom.ListAgentActivitiesFilter{ProjectID: pid, ActorMemberID: actor.ID}
 	list := func(ctx context.Context, f agentdom.ListAgentActivitiesFilter, limit int) ([]*agentdom.ActivityFeedItem, bool) {

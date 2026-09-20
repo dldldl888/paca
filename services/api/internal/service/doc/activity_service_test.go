@@ -342,3 +342,15 @@ func TestActivitySvc_DeleteComment_WrongProject_ReturnsNotFound(t *testing.T) {
 		t.Error("comment must not be deleted by a cross-project request")
 	}
 }
+
+// Test fixture's explicit legacy object policy; real scopes are exercised with Postgres.
+func (r *fakeCommentActivityRepo) CheckDocumentAccess(ctx context.Context, project, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {
+	d, err := r.FindDocumentByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if project != uuid.Nil && d.ProjectID != project {
+		return nil, docdom.ErrDocNotFound
+	}
+	return d, nil
+}

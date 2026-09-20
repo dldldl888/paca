@@ -281,22 +281,19 @@ describe("handleFilesystemDocTool – read_doc with docId", () => {
 // ── write_doc ──────────────────────────────────────────────────────────────────
 
 describe("handleFilesystemDocTool – write_doc", () => {
-	it("creates a new document at root when it does not exist", async () => {
-		const apiClient = makeApiClient({ documents: [DOC_IN_FOLDER] });
+	it("rejects new private documents without a verified human run owner", async () => {
+		const apiClient = makeApiClient({ documents: [] });
+		const docClient = makeDocClient({ folders: [] });
 		const result = await handleFilesystemDocTool(
 			"write_doc",
-			{ projectId: "p1", path: "NewDoc", content: "# Hello" },
+			{ projectId: "p1", path: "NewFolder/Private", content: "secret" },
 			apiClient,
-			makeDocClient(),
+			docClient,
 		);
-		expect(apiClient.createDocument).toHaveBeenCalledWith(
-			expect.objectContaining({
-				title: "NewDoc",
-				content: "# Hello",
-				folder_id: null,
-			}),
-		);
-		expect(result.content[0].text).toContain("Created");
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("verified human owner");
+		expect(apiClient.createDocument).not.toHaveBeenCalled();
+		expect(docClient.createFolder).not.toHaveBeenCalled();
 	});
 
 	it("updates an existing document", async () => {
@@ -311,22 +308,6 @@ describe("handleFilesystemDocTool – write_doc", () => {
 			content: "# Updated",
 		});
 		expect(result.content[0].text).toContain("Updated");
-	});
-
-	it("creates intermediate folders that don't exist", async () => {
-		const docClient = makeDocClient({ folders: [] });
-		const apiClient = makeApiClient({ documents: [] });
-		const result = await handleFilesystemDocTool(
-			"write_doc",
-			{ projectId: "p1", path: "NewFolder/NewDoc", content: "# Content" },
-			apiClient,
-			docClient,
-		);
-		expect(docClient.createFolder).toHaveBeenCalledWith(
-			"p1",
-			expect.objectContaining({ name: "NewFolder" }),
-		);
-		expect(result.content[0].text).toContain("Created");
 	});
 
 	it("returns isError when path is empty", async () => {

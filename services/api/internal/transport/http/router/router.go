@@ -677,7 +677,7 @@ func New(deps Deps) http.Handler {
 						httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
 						httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionDocsRead}},
 					)).Get("/", deps.Document.ListDocuments)
-					r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionDocsWrite)).
+					r.With(httpmw.RequireJWTAuth(), httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionDocsWrite)).
 						Post("/", deps.Document.CreateDocument)
 
 					// Documents — single item
@@ -691,6 +691,7 @@ func New(deps Deps) http.Handler {
 						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionDocsWrite)).
 							Delete("/", deps.Document.DeleteDocument)
 
+						r.With(httpmw.RequireJWTAuth(), httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionDocsWrite, authz.PermissionTasksManage)).Patch("/access", deps.Document.UpdateDocumentAccess)
 						// Snapshots
 						r.Route("/snapshots", func(r chi.Router) {
 							r.With(httpmw.RequirePublicProjectOrPermissions(deps.ProjectVisibilitySvc, deps.Authorizer,

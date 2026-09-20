@@ -30,6 +30,11 @@ func NewDocFileHandler(svc attachmentdom.DocFileService) *DocFileHandler {
 // InitiateDocUpload handles POST /projects/:projectId/docs/:docId/files/initiate-upload.
 // Creates a pending file record and returns presigned upload URL(s).
 func (h *DocFileHandler) InitiateDocUpload(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseProjectID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
 	docID, err := parseDocID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -53,6 +58,7 @@ func (h *DocFileHandler) InitiateDocUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	session, err := h.svc.InitiateDocUpload(r.Context(), attachmentdom.DocUploadInput{
+		ProjectID:   projectID,
 		DocID:       docID,
 		FileName:    req.FileName,
 		ContentType: req.ContentType,
@@ -126,7 +132,12 @@ func (h *DocFileHandler) GetDocFileDownloadURL(w http.ResponseWriter, r *http.Re
 		http.Error(w, "file delivery unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	defer controller.SetWriteDeadline(time.Time{})
+	defer func() {
+		defer controller.SetWriteDeadline(time.Time{})
+		if err := controller.Flush(); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+	}()
 	r = r.WithContext(ctx)
 	if !h.files.authorize(w, r, authz.PermissionDocsRead) {
 		return

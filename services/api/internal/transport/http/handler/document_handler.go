@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,6 +23,7 @@ import (
 
 // DocumentHandler handles documentation endpoints.
 type DocumentHandler struct {
+	gate            *delivery.Gate
 	svc             docdom.Service
 	activitySvc     docdom.ActivityService
 	avatarSvc       attachmentdom.AvatarService
@@ -179,6 +182,12 @@ func (h *DocumentHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 // pagination (see docdom.Repository.ListDocuments's doc comment). Omitting
 // page_size returns every matching document in one response, as before.
 func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) {
+	var leave func()
+	r, leave = h.enterDelivery(w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -233,6 +242,12 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 
 // GetDocument handles GET /projects/:projectId/docs/:docId.
 func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
+	var leave func()
+	r, leave = h.enterDelivery(w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -267,6 +282,10 @@ func (h *DocumentHandler) CreateDocument(w http.ResponseWriter, r *http.Request)
 	if !middleware.BindJSON(w, r, &req) {
 		return
 	}
+	if req.OwnerUserID != nil {
+		presenter.Error(w, r, apierr.New(apierr.CodeBadRequest, "owner is server assigned"))
+		return
+	}
 	if err := dto.ValidateBlockNoteContent(req.Content); err != nil {
 		presenter.Error(w, r, apierr.New(apierr.CodeBadRequest, "content: "+err.Error()))
 		return
@@ -282,6 +301,7 @@ func (h *DocumentHandler) CreateDocument(w http.ResponseWriter, r *http.Request)
 	}
 
 	d, err := h.svc.CreateDocument(r.Context(), docdom.CreateDocumentInput{
+		Visibility: req.Visibility, SourceDocumentID: req.SourceDocumentID, TaskIDs: req.TaskIDs,
 		ProjectID: projectID,
 		FolderID:  req.FolderID,
 		Title:     req.Title,
@@ -306,7 +326,7 @@ func (h *DocumentHandler) CreateDocument(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	presenter.Created(w, r, dto.DocumentFromEntity(d))
+	h.deliverDocument(w, r, d.ID, true)
 }
 
 // UpdateDocument handles PATCH /projects/:projectId/docs/:docId.
@@ -326,6 +346,10 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 	if !middleware.BindJSON(w, r, &req) {
 		return
 	}
+	if req.Visibility != nil || req.OwnerUserID != nil || req.SourceDocumentID != nil || req.TaskIDs != nil || req.AccessVersion != nil {
+		presenter.Error(w, r, apierr.New(apierr.CodeBadRequest, "use the document access endpoint for visibility and task associations; owner/source are immutable"))
+		return
+	}
 	if req.Content.Set && req.Content.Value != nil {
 		if err := dto.ValidateBlockNoteContent(req.Content.Value); err != nil {
 			presenter.Error(w, r, apierr.New(apierr.CodeBadRequest, "content: "+err.Error()))
@@ -343,7 +367,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Capture old state for activity recording.
-	oldDoc, _ := h.svc.GetDocument(r.Context(), docID)
+	oldDoc, _ := h.svc.CheckDocumentAccess(r.Context(), projectID, docID, docdom.AccessWrite)
 
 	d, err := h.svc.UpdateDocument(r.Context(), projectID, docID, docdom.UpdateDocumentInput{
 		Title:     req.Title,
@@ -382,7 +406,7 @@ func (h *DocumentHandler) UpdateDocument(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	presenter.OK(w, r, dto.DocumentFromEntity(d))
+	h.deliverDocument(w, r, d.ID, false)
 }
 
 // DeleteDocument handles DELETE /projects/:projectId/docs/:docId.
@@ -428,6 +452,12 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 
 // ListSnapshots handles GET /projects/:projectId/docs/:docId/snapshots.
 func (h *DocumentHandler) ListSnapshots(w http.ResponseWriter, r *http.Request) {
+	var leave func()
+	r, leave = h.enterDelivery(w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -452,6 +482,12 @@ func (h *DocumentHandler) ListSnapshots(w http.ResponseWriter, r *http.Request) 
 
 // GetSnapshot handles GET /projects/:projectId/docs/:docId/snapshots/:snapshotId.
 func (h *DocumentHandler) GetSnapshot(w http.ResponseWriter, r *http.Request) {
+	var leave func()
+	r, leave = h.enterDelivery(w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -467,6 +503,11 @@ func (h *DocumentHandler) GetSnapshot(w http.ResponseWriter, r *http.Request) {
 		presenter.Error(w, r, err)
 		return
 	}
+	docID, e := parseDocID(r)
+	if e != nil || snap.DocumentID != docID {
+		presenter.Error(w, r, docdom.ErrSnapshotNotFound)
+		return
+	}
 	presenter.OK(w, r, dto.DocSnapshotFromEntity(snap))
 }
 
@@ -476,6 +517,12 @@ func (h *DocumentHandler) GetSnapshot(w http.ResponseWriter, r *http.Request) {
 
 // ListActivities handles GET /projects/:projectId/docs/:docId/activities.
 func (h *DocumentHandler) ListActivities(w http.ResponseWriter, r *http.Request) {
+	var leave func()
+	r, leave = h.enterDelivery(w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -543,7 +590,7 @@ func (h *DocumentHandler) AddComment(w http.ResponseWriter, r *http.Request) {
 		presenter.Error(w, r, err)
 		return
 	}
-	presenter.Created(w, r, h.toDocActivityResponse(r.Context(), a))
+	h.deliverActivity(w, r, a, true)
 }
 
 // UpdateComment handles PATCH /projects/:projectId/docs/:docId/comments/:commentId.
@@ -585,7 +632,7 @@ func (h *DocumentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) 
 		presenter.Error(w, r, err)
 		return
 	}
-	presenter.OK(w, r, h.toDocActivityResponse(r.Context(), a))
+	h.deliverActivity(w, r, a, false)
 }
 
 // DeleteComment handles DELETE /projects/:projectId/docs/:docId/comments/:commentId.
@@ -687,4 +734,116 @@ func docChangedFields(old *docdom.Document, req dto.UpdateDocumentRequest) []doc
 	}
 
 	return changes
+}
+
+func (h *DocumentHandler) WithDeliveryGate(g *delivery.Gate) *DocumentHandler { h.gate = g; return h }
+func (h *DocumentHandler) enterDelivery(w http.ResponseWriter, r *http.Request) (*http.Request, func()) {
+	if h.gate == nil {
+		http.Error(w, "document delivery unavailable", 503)
+		return nil, func() {}
+	}
+	ctx, _, leave, err := h.gate.Enter(r.Context())
+	if err != nil {
+		// The coordinator publishes open before returning, and local subscription
+		// delivery is asynchronous. Bound the wait, then recheck under the lease.
+		timer := time.NewTimer(fileWriteTimeout)
+		defer timer.Stop()
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+	retry:
+		for err != nil {
+			select {
+			case <-r.Context().Done():
+				break retry
+			case <-timer.C:
+				break retry
+			case <-tick.C:
+				ctx, _, leave, err = h.gate.Enter(r.Context())
+			}
+		}
+	}
+	if err != nil {
+		http.Error(w, "document delivery unavailable", 503)
+		return nil, func() {}
+	}
+	controller := http.NewResponseController(w)
+	if err = controller.SetWriteDeadline(time.Now().Add(fileWriteTimeout)); err != nil {
+		leave()
+		http.Error(w, "document delivery unavailable", 503)
+		return nil, func() {}
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	return r.WithContext(ctx), func() {
+		defer leave()
+		defer controller.SetWriteDeadline(time.Time{})
+		// Small JSON bodies remain in net/http's buffer until Flush. Release only
+		// after actual delivery, so a revocation cannot commit before that flush.
+		if err := controller.Flush(); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+	}
+}
+func (h *DocumentHandler) UpdateDocumentAccess(w http.ResponseWriter, r *http.Request) {
+	project, err := parseProjectID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	id, err := parseDocID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	var in docdom.UpdateAccessInput
+	if !middleware.BindJSON(w, r, &in) {
+		return
+	}
+	svc, ok := h.svc.(interface {
+		UpdateDocumentAccess(context.Context, uuid.UUID, uuid.UUID, docdom.UpdateAccessInput) (*docdom.Document, error)
+	})
+	if !ok {
+		presenter.Error(w, r, docdom.ErrDocNotFound)
+		return
+	}
+	d, err := svc.UpdateDocumentAccess(r.Context(), project, id, in)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	presenter.OK(w, r, map[string]any{"id": d.ID, "visibility": d.Visibility, "access_version": d.AccessVersion, "task_ids": d.TaskIDs})
+}
+
+func (h *DocumentHandler) deliverDocument(w http.ResponseWriter, r *http.Request, id uuid.UUID, created bool) {
+	r, leave := h.enterDelivery(w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, err := h.svc.CheckDocumentAccess(r.Context(), uuid.Nil, id, docdom.AccessWrite)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	if created {
+		presenter.Created(w, r, dto.DocumentFromEntity(d))
+	} else {
+		presenter.OK(w, r, dto.DocumentFromEntity(d))
+	}
+}
+
+func (h *DocumentHandler) deliverActivity(w http.ResponseWriter, r *http.Request, a *docdom.Activity, created bool) {
+	r, leave := h.enterDelivery(w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	if _, err := h.svc.CheckDocumentAccess(r.Context(), uuid.Nil, a.DocumentID, docdom.AccessWrite); err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	if created {
+		presenter.Created(w, r, h.toDocActivityResponse(r.Context(), a))
+	} else {
+		presenter.OK(w, r, h.toDocActivityResponse(r.Context(), a))
+	}
 }

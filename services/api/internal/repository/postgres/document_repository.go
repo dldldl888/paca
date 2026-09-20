@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
+	"github.com/Paca-AI/api/internal/apierr"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 )
 
@@ -31,17 +32,22 @@ type docFolderRecord struct {
 }
 
 type documentRecord struct {
-	ID        string           `db:"id"`
-	ProjectID string           `db:"project_id"`
-	FolderID  *string          `db:"folder_id"`
-	Title     string           `db:"title"`
-	Content   *json.RawMessage `db:"content"`
-	Position  int              `db:"position"`
-	CreatedBy *string          `db:"created_by"`
-	UpdatedBy *string          `db:"updated_by"`
-	CreatedAt time.Time        `db:"created_at"`
-	UpdatedAt time.Time        `db:"updated_at"`
-	DeletedAt *time.Time       `db:"deleted_at"`
+	TaskIDs          json.RawMessage  `db:"task_ids"`
+	Visibility       string           `db:"visibility"`
+	OwnerUserID      *uuid.UUID       `db:"owner_user_id"`
+	SourceDocumentID *uuid.UUID       `db:"source_document_id"`
+	AccessVersion    int64            `db:"access_version"`
+	ID               string           `db:"id"`
+	ProjectID        string           `db:"project_id"`
+	FolderID         *string          `db:"folder_id"`
+	Title            string           `db:"title"`
+	Content          *json.RawMessage `db:"content"`
+	Position         int              `db:"position"`
+	CreatedBy        *string          `db:"created_by"`
+	UpdatedBy        *string          `db:"updated_by"`
+	CreatedAt        time.Time        `db:"created_at"`
+	UpdatedAt        time.Time        `db:"updated_at"`
+	DeletedAt        *time.Time       `db:"deleted_at"`
 }
 
 type docSnapshotRecord struct {
@@ -134,6 +140,7 @@ func folderToRecord(f *docdom.DocFolder) docFolderRecord {
 
 func documentFromRecord(r documentRecord) *docdom.Document {
 	d := &docdom.Document{
+		Visibility: r.Visibility, OwnerUserID: r.OwnerUserID, SourceDocumentID: r.SourceDocumentID, AccessVersion: r.AccessVersion,
 		ID:        uuid.MustParse(r.ID),
 		ProjectID: uuid.MustParse(r.ProjectID),
 		Title:     r.Title,
@@ -142,6 +149,7 @@ func documentFromRecord(r documentRecord) *docdom.Document {
 		UpdatedAt: r.UpdatedAt,
 		DeletedAt: r.DeletedAt,
 	}
+	_ = json.Unmarshal(r.TaskIDs, &d.TaskIDs)
 	if r.Content != nil {
 		d.Content = *r.Content
 	}
@@ -162,6 +170,7 @@ func documentFromRecord(r documentRecord) *docdom.Document {
 
 func documentToRecord(d *docdom.Document) documentRecord {
 	r := documentRecord{
+		Visibility: d.Visibility, OwnerUserID: d.OwnerUserID, SourceDocumentID: d.SourceDocumentID, AccessVersion: d.AccessVersion,
 		ID:        d.ID.String(),
 		ProjectID: d.ProjectID.String(),
 		Title:     d.Title,
@@ -243,9 +252,9 @@ func activityFromDocRecord(r docActivityRecord) *docdom.Activity {
 const docFolderCols = `id, project_id, parent_id, name, position, created_by, created_at, updated_at`
 
 // ListFolders returns all folders for a project.
-func (r *DocumentRepository) ListFolders(_ context.Context, projectID uuid.UUID) ([]*docdom.DocFolder, error) {
+func (r *DocumentRepository) ListFolders(ctx context.Context, projectID uuid.UUID) ([]*docdom.DocFolder, error) {
 	var records []docFolderRecord
-	if err := r.db.Select(&records, `SELECT `+docFolderCols+` FROM doc_folders WHERE project_id = $1 ORDER BY position ASC, name ASC`, projectID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, `SELECT `+docFolderCols+` FROM doc_folders WHERE project_id = $1 ORDER BY position ASC, name ASC`, projectID.String()); err != nil {
 		return nil, err
 	}
 	out := make([]*docdom.DocFolder, 0, len(records))
@@ -256,9 +265,9 @@ func (r *DocumentRepository) ListFolders(_ context.Context, projectID uuid.UUID)
 }
 
 // FindFolderByID returns a single folder.
-func (r *DocumentRepository) FindFolderByID(_ context.Context, id uuid.UUID) (*docdom.DocFolder, error) {
+func (r *DocumentRepository) FindFolderByID(ctx context.Context, id uuid.UUID) (*docdom.DocFolder, error) {
 	var rec docFolderRecord
-	if err := r.db.Get(&rec, `SELECT `+docFolderCols+` FROM doc_folders WHERE id = $1`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+docFolderCols+` FROM doc_folders WHERE id = $1`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, docdom.ErrFolderNotFound
 		}
@@ -299,7 +308,7 @@ func (r *DocumentRepository) DeleteFolder(ctx context.Context, id uuid.UUID) err
 // Document CRUD
 // =============================================================================
 
-const documentCols = `id, project_id, folder_id, title, content, position, created_by, updated_by, created_at, updated_at, deleted_at`
+const documentCols = `COALESCE((SELECT jsonb_agg(dt.task_id ORDER BY dt.task_id) FROM document_tasks dt JOIN tasks t ON t.id=dt.task_id AND t.deleted_at IS NULL WHERE dt.document_id=documents.id),'[]'::jsonb) AS task_ids, visibility, owner_user_id, source_document_id, access_version, id, project_id, folder_id, title, content, position, created_by, updated_by, created_at, updated_at, deleted_at`
 
 // ListDocuments returns non-deleted documents for a project, optionally
 // filtered to a folder and/or a case-insensitive title search, and
@@ -309,6 +318,11 @@ const documentCols = `id, project_id, folder_id, title, content, position, creat
 func (r *DocumentRepository) ListDocuments(ctx context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int) ([]*docdom.Document, bool, error) {
 	query := `SELECT ` + documentCols + ` FROM documents WHERE project_id = $1 AND deleted_at IS NULL`
 	args := []any{projectID.String()}
+	predicate, err := DocumentVisibilityPredicate(ctx, r.db, "documents", &args, docdom.AccessRead)
+	if err != nil {
+		return nil, false, err
+	}
+	query += " AND " + predicate
 	if folderID != nil {
 		args = append(args, folderID.String())
 		query += fmt.Sprintf(" AND folder_id = $%d", len(args))
@@ -366,32 +380,79 @@ func (r *DocumentRepository) FindDocumentByID(ctx context.Context, id uuid.UUID)
 
 // CreateDocument persists a new document.
 func (r *DocumentRepository) CreateDocument(ctx context.Context, d *docdom.Document) error {
-	rec := documentToRecord(d)
-	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
-		INSERT INTO documents (id, project_id, folder_id, title, content, position, created_by, updated_by, created_at, updated_at, deleted_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		rec.ID, rec.ProjectID, rec.FolderID, rec.Title, rec.Content,
-		rec.Position, rec.CreatedBy, rec.UpdatedBy, rec.CreatedAt, rec.UpdatedAt, rec.DeletedAt,
-	)
-	return err
+	return r.documentMutation(ctx, func(ctx context.Context) error {
+		user, err := documentHuman(ctx)
+		if err != nil {
+			return err
+		}
+		d.OwnerUserID = &user
+		if d.Visibility == "" {
+			d.Visibility = "private"
+		}
+		d.AccessVersion = 1
+		if err = r.checkDocumentScope(ctx, d.ProjectID, d.Visibility, d.TaskIDs); err != nil {
+			return err
+		}
+		if d.SourceDocumentID != nil {
+			if d.ID == *d.SourceDocumentID || len(d.Content) != 0 {
+				return apierr.New(apierr.CodeBadRequest, "reference must not copy source content")
+			}
+			source, e := r.CheckDocumentAccess(ctx, uuid.Nil, *d.SourceDocumentID, docdom.AccessRead)
+			if e != nil {
+				return e
+			}
+			if source.SourceDocumentID != nil {
+				return apierr.New(apierr.CodeBadRequest, "source must be a canonical original")
+			}
+		}
+		rec := documentToRecord(d)
+		documentWriteStarted(ctx)
+		_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `INSERT INTO documents (id,project_id,folder_id,title,content,position,created_by,updated_by,created_at,updated_at,deleted_at,visibility,owner_user_id,source_document_id,access_version)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, rec.ID, rec.ProjectID, rec.FolderID, rec.Title, rec.Content, rec.Position, rec.CreatedBy, rec.UpdatedBy, rec.CreatedAt, rec.UpdatedAt, rec.DeletedAt, rec.Visibility, rec.OwnerUserID, rec.SourceDocumentID, rec.AccessVersion)
+		if err != nil {
+			return err
+		}
+		return r.setDocumentTasks(ctx, d.ID, d.TaskIDs)
+	})
 }
 
 // UpdateDocument persists mutable changes to a document.
 func (r *DocumentRepository) UpdateDocument(ctx context.Context, d *docdom.Document) error {
-	rec := documentToRecord(d)
-	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
-		UPDATE documents SET folder_id=$1, title=$2, content=$3, position=$4,
+	return r.documentMutation(ctx, func(ctx context.Context) error {
+		if _, err := r.CheckDocumentAccess(ctx, d.ProjectID, d.ID, docdom.AccessWrite); err != nil {
+			return err
+		}
+		var locked uuid.UUID
+		if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &locked, `SELECT id FROM documents WHERE id=$1 FOR UPDATE`, d.ID); err != nil {
+			return err
+		}
+		rec := documentToRecord(d)
+		if d.SourceDocumentID != nil {
+			rec.Content = nil
+		}
+		documentWriteStarted(ctx)
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
+  UPDATE documents SET folder_id=$1, title=$2, content=$3, position=$4,
  updated_by=$5, updated_at=$6 WHERE id=$7 AND deleted_at IS NULL`,
-		rec.FolderID, rec.Title, rec.Content, rec.Position,
-		rec.UpdatedBy, rec.UpdatedAt, rec.ID,
-	)
-	return err
+			rec.FolderID, rec.Title, rec.Content, rec.Position,
+			rec.UpdatedBy, rec.UpdatedAt, rec.ID,
+		)
+		return err
+	})
 }
 
 // DeleteDocument soft-deletes a document.
 func (r *DocumentRepository) DeleteDocument(ctx context.Context, id uuid.UUID) error {
-	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
-		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE documents SET deleted_at = $1 WHERE id = $2`, time.Now(), id.String())
+	return r.documentMutation(ctx, func(ctx context.Context) error {
+		if _, err := r.CheckDocumentAccess(ctx, uuid.Nil, id, docdom.AccessWrite); err != nil {
+			return err
+		}
+		var locked uuid.UUID
+		if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &locked, `SELECT id FROM documents WHERE id=$1 FOR UPDATE`, id); err != nil {
+			return err
+		}
+		documentWriteStarted(ctx)
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE documents SET deleted_at = $1,access_version=access_version+1 WHERE id = $2`, time.Now(), id.String())
 		return err
 	})
 }
@@ -408,9 +469,9 @@ const snapshotJoinSQL = `
 	LEFT JOIN users u ON u.id = pm.user_id`
 
 // ListSnapshots returns all snapshots for a document, newest first.
-func (r *DocumentRepository) ListSnapshots(_ context.Context, documentID uuid.UUID) ([]*docdom.DocSnapshot, error) {
+func (r *DocumentRepository) ListSnapshots(ctx context.Context, documentID uuid.UUID) ([]*docdom.DocSnapshot, error) {
 	var records []docSnapshotRecord
-	if err := r.db.Select(&records, snapshotJoinSQL+` WHERE ds.document_id = $1 ORDER BY ds.snapshot_number DESC`, documentID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, snapshotJoinSQL+` WHERE ds.document_id = $1 ORDER BY ds.snapshot_number DESC`, documentID.String()); err != nil {
 		return nil, err
 	}
 	out := make([]*docdom.DocSnapshot, 0, len(records))
@@ -421,9 +482,9 @@ func (r *DocumentRepository) ListSnapshots(_ context.Context, documentID uuid.UU
 }
 
 // FindSnapshotByID returns a single snapshot.
-func (r *DocumentRepository) FindSnapshotByID(_ context.Context, id uuid.UUID) (*docdom.DocSnapshot, error) {
+func (r *DocumentRepository) FindSnapshotByID(ctx context.Context, id uuid.UUID) (*docdom.DocSnapshot, error) {
 	var rec docSnapshotRecord
-	if err := r.db.Get(&rec, snapshotJoinSQL+` WHERE ds.id = $1`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, snapshotJoinSQL+` WHERE ds.id = $1`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, docdom.ErrSnapshotNotFound
 		}
@@ -433,9 +494,9 @@ func (r *DocumentRepository) FindSnapshotByID(_ context.Context, id uuid.UUID) (
 }
 
 // FindLatestSnapshot returns the snapshot with the highest snapshot_number.
-func (r *DocumentRepository) FindLatestSnapshot(_ context.Context, documentID uuid.UUID) (*docdom.DocSnapshot, error) {
+func (r *DocumentRepository) FindLatestSnapshot(ctx context.Context, documentID uuid.UUID) (*docdom.DocSnapshot, error) {
 	var rec docSnapshotRecord
-	if err := r.db.Get(&rec, snapshotJoinSQL+` WHERE ds.document_id = $1 ORDER BY ds.snapshot_number DESC LIMIT 1`, documentID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, snapshotJoinSQL+` WHERE ds.document_id = $1 ORDER BY ds.snapshot_number DESC LIMIT 1`, documentID.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil // no snapshots yet — not an error
 		}
@@ -486,9 +547,9 @@ const docActivityJoinSQL = `
 	LEFT JOIN agents ag ON ag.id = pm.agent_id`
 
 // ListActivities returns non-deleted activities for a document, oldest first.
-func (r *DocumentRepository) ListActivities(_ context.Context, documentID uuid.UUID) ([]*docdom.Activity, error) {
+func (r *DocumentRepository) ListActivities(ctx context.Context, documentID uuid.UUID) ([]*docdom.Activity, error) {
 	var records []docActivityRecord
-	if err := r.db.Select(&records, docActivityJoinSQL+` WHERE da.document_id = $1 AND da.deleted_at IS NULL ORDER BY da.created_at ASC`, documentID.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &records, docActivityJoinSQL+` WHERE da.document_id = $1 AND da.deleted_at IS NULL ORDER BY da.created_at ASC`, documentID.String()); err != nil {
 		return nil, err
 	}
 	out := make([]*docdom.Activity, 0, len(records))
@@ -499,9 +560,9 @@ func (r *DocumentRepository) ListActivities(_ context.Context, documentID uuid.U
 }
 
 // FindActivityByID returns a single activity (including soft-deleted).
-func (r *DocumentRepository) FindActivityByID(_ context.Context, id uuid.UUID) (*docdom.Activity, error) {
+func (r *DocumentRepository) FindActivityByID(ctx context.Context, id uuid.UUID) (*docdom.Activity, error) {
 	var rec docActivityRecord
-	if err := r.db.Get(&rec, docActivityJoinSQL+` WHERE da.id = $1`, id.String()); err != nil {
+	if err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, docActivityJoinSQL+` WHERE da.id = $1`, id.String()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, docdom.ErrActivityNotFound
 		}
@@ -512,6 +573,18 @@ func (r *DocumentRepository) FindActivityByID(_ context.Context, id uuid.UUID) (
 
 // CreateActivity persists a new activity record.
 func (r *DocumentRepository) CreateActivity(ctx context.Context, a *docdom.Activity) error {
+	if a.ActivityType == docdom.ActivityTypeComment {
+		return r.documentMutation(ctx, func(ctx context.Context) error {
+			if _, err := r.CheckDocumentAccess(ctx, uuid.Nil, a.DocumentID, docdom.AccessWrite); err != nil {
+				return err
+			}
+			documentWriteStarted(ctx)
+			return r.insertActivity(ctx, a)
+		})
+	}
+	return r.insertActivity(ctx, a)
+}
+func (r *DocumentRepository) insertActivity(ctx context.Context, a *docdom.Activity) error {
 	content := a.Content
 	if content == nil {
 		content = json.RawMessage("{}")
@@ -531,16 +604,32 @@ func (r *DocumentRepository) CreateActivity(ctx context.Context, a *docdom.Activ
 
 // UpdateActivity persists mutable changes to an activity.
 func (r *DocumentRepository) UpdateActivity(ctx context.Context, a *docdom.Activity) error {
-	content := a.Content
-	if content == nil {
-		content = json.RawMessage("{}")
-	}
-	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE doc_activities SET content = $1, updated_at = $2 WHERE id = $3`, content, a.UpdatedAt, a.ID.String())
-	return err
+	return r.documentMutation(ctx, func(ctx context.Context) error {
+		if _, err := r.CheckDocumentAccess(ctx, uuid.Nil, a.DocumentID, docdom.AccessWrite); err != nil {
+			return err
+		}
+		documentWriteStarted(ctx)
+		content := a.Content
+		if content == nil {
+			content = json.RawMessage("{}")
+		}
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE doc_activities SET content = $1, updated_at = $2 WHERE id = $3`, content, a.UpdatedAt, a.ID.String())
+		return err
+	})
 }
 
 // DeleteActivity soft-deletes an activity.
 func (r *DocumentRepository) DeleteActivity(ctx context.Context, id uuid.UUID) error {
-	_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE doc_activities SET deleted_at = $1 WHERE id = $2`, time.Now(), id.String())
-	return err
+	return r.documentMutation(ctx, func(ctx context.Context) error {
+		a, err := r.FindActivityByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if _, err = r.CheckDocumentAccess(ctx, uuid.Nil, a.DocumentID, docdom.AccessWrite); err != nil {
+			return err
+		}
+		documentWriteStarted(ctx)
+		_, err = DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE doc_activities SET deleted_at = $1 WHERE id = $2`, time.Now(), id.String())
+		return err
+	})
 }

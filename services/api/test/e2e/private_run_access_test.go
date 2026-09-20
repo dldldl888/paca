@@ -316,7 +316,7 @@ func TestPrivateRunCurrentAuthorization(t *testing.T) {
 	})
 	t.Run("doc_annotation_current_task_and_rich_automation", func(t *testing.T) {
 		doc := uuid.New()
-		exec(`INSERT INTO documents(id,project_id,title) VALUES($1,$2,'real document title')`, doc, pid)
+		exec(`INSERT INTO documents(visibility,id,project_id,title) VALUES('legacy_project',$1,$2,'real document title')`, doc, pid)
 		d := start(ownerCtx, member, ref(agentdom.ContextItemDoc, doc))
 		allowed(d)
 		exec(`UPDATE documents SET deleted_at=now() WHERE id=$1`, doc)
@@ -467,7 +467,7 @@ func TestPrivateRunInternalHTTPAndGlobalIdentity(t *testing.T) {
 		request(body, "synthetic-internal", 400)
 	}
 	first := request(base, "synthetic-internal", 200)
-	if first["has_prior_turns"] != false || first["owner_user_id"] != user.String() || first["instance_id"] != instance.String() || len(first) != 11 {
+	if first["has_prior_turns"] != false || first["owner_user_id"] != user.String() || first["instance_id"] != instance.String() || len(first) != 12 || first["authorization_epoch"] != "" {
 		t.Fatalf("bad identity %+v", first)
 	}
 	if next := request(base, "synthetic-internal", 200); next["has_prior_turns"] != true {
@@ -591,7 +591,7 @@ func TestPrivateFix1AcceptanceAndTerminalPreservation(t *testing.T) {
 		t.Fatal(e)
 	}
 	doc := uuid.New()
-	exec(`INSERT INTO documents(id,project_id,title) VALUES($1,$2,'accepted document')`, doc, pid)
+	exec(`INSERT INTO documents(visibility,id,project_id,title) VALUES('legacy_project',$1,$2,'accepted document')`, doc, pid)
 	p := pid.String()
 	refs := []agentdom.ContextItemRef{{Type: agentdom.ContextItemDoc, ID: doc.String(), ProjectID: &p}}
 	var onBusy string

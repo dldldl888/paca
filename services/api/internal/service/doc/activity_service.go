@@ -28,7 +28,7 @@ type memberLookup interface {
 // document belongs to the project the caller was authorized against, before
 // returning or mutating its activity/comment data.
 type documentLookup interface {
-	FindDocumentByID(ctx context.Context, id uuid.UUID) (*docdom.Document, error)
+	docdom.AccessChecker
 }
 
 // ActivitySvc implements docdom.ActivityService (which includes
@@ -57,15 +57,15 @@ func NewActivityService(repo docdom.ActivityRepository, docRepo documentLookup, 
 // document does not exist at all). Callers use this to scope every
 // activity/comment operation to the project the caller was authorized
 // against, rather than trusting the document/activity ID alone.
-func (s *ActivitySvc) documentInProject(ctx context.Context, projectID, documentID uuid.UUID, notFoundErr error) error {
-	d, err := s.docRepo.FindDocumentByID(ctx, documentID)
-	if err != nil {
-		return err
-	}
-	if d.ProjectID != projectID {
+func (s *ActivitySvc) documentInProject(ctx context.Context, projectID, documentID uuid.UUID, notFoundErr error, action docdom.AccessAction) error {
+	if s.docRepo == nil {
 		return notFoundErr
 	}
-	return nil
+	_, err := s.docRepo.CheckDocumentAccess(ctx, projectID, documentID, action)
+	if errors.Is(err, docdom.ErrDocNotFound) {
+		return notFoundErr
+	}
+	return err
 }
 
 // WithNotificationService attaches a notification service used to dispatch
@@ -104,7 +104,7 @@ func (s *ActivitySvc) RecordActivity(ctx context.Context, in docdom.RecordActivi
 
 // ListActivities returns all non-deleted activities for a document, oldest first.
 func (s *ActivitySvc) ListActivities(ctx context.Context, projectID, documentID uuid.UUID) ([]*docdom.Activity, error) {
-	if err := s.documentInProject(ctx, projectID, documentID, docdom.ErrDocNotFound); err != nil {
+	if err := s.documentInProject(ctx, projectID, documentID, docdom.ErrDocNotFound, docdom.AccessRead); err != nil {
 		return nil, err
 	}
 	return s.repo.ListActivities(ctx, documentID)
@@ -115,7 +115,7 @@ func (s *ActivitySvc) AddComment(ctx context.Context, in docdom.AddCommentInput)
 	if isContentEmpty(in.Content) || !isContentTypeValid(in.Content) {
 		return nil, docdom.ErrCommentContentInvalid
 	}
-	if err := s.documentInProject(ctx, in.ProjectID, in.DocumentID, docdom.ErrDocNotFound); err != nil {
+	if err := s.documentInProject(ctx, in.ProjectID, in.DocumentID, docdom.ErrDocNotFound, docdom.AccessWrite); err != nil {
 		return nil, err
 	}
 	if s.memberRepo == nil {
@@ -160,7 +160,7 @@ func (s *ActivitySvc) UpdateComment(ctx context.Context, id uuid.UUID, projectID
 	if a.ActivityType != docdom.ActivityTypeComment {
 		return nil, docdom.ErrActivityNotAComment
 	}
-	if err := s.documentInProject(ctx, projectID, a.DocumentID, docdom.ErrActivityNotFound); err != nil {
+	if err := s.documentInProject(ctx, projectID, a.DocumentID, docdom.ErrActivityNotFound, docdom.AccessWrite); err != nil {
 		return nil, err
 	}
 
@@ -196,7 +196,7 @@ func (s *ActivitySvc) DeleteComment(ctx context.Context, id uuid.UUID, projectID
 	if a.ActivityType != docdom.ActivityTypeComment {
 		return docdom.ErrActivityNotAComment
 	}
-	if err := s.documentInProject(ctx, projectID, a.DocumentID, docdom.ErrActivityNotFound); err != nil {
+	if err := s.documentInProject(ctx, projectID, a.DocumentID, docdom.ErrActivityNotFound, docdom.AccessWrite); err != nil {
 		return err
 	}
 

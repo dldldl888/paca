@@ -355,7 +355,7 @@ func TestTaskUploadBindingAndCurrentAccess(t *testing.T) {
 		}
 	}
 	store := &boundaryStorage{}
-	svc := attachmentsvc.New(env.attachmentRepo, env.taskSvc, attachmentsvc.NewDocOwnerChecker(pg.NewDocumentRepository(env.db)), store, "test")
+	svc := attachmentsvc.New(env.attachmentRepo, env.taskSvc, attachmentsvc.NewDocAccessChecker(pg.NewDocumentRepository(env.db)), store, "test")
 	upload := func(ctx context.Context, taskID uuid.UUID, multipart bool) *attachmentdom.UploadSession {
 		t.Helper()
 		size := int64(1)
@@ -531,7 +531,7 @@ func TestTaskUploadBindingAndCurrentAccess(t *testing.T) {
 	})
 	t.Run("document_sibling_namespace_and_uploader", func(t *testing.T) {
 		docID := uuid.New()
-		if _, err := env.db.Exec(`INSERT INTO documents(id,project_id,title) VALUES($1,$2,'doc')`, docID, pid); err != nil {
+		if _, err := env.db.Exec(`INSERT INTO documents(visibility,id,project_id,title) VALUES('legacy_project',$1,$2,'doc')`, docID, pid); err != nil {
 			t.Fatal(err)
 		}
 		taskUpload := upload(contexts[0], tasks[2].ID, true)
@@ -548,7 +548,7 @@ func TestTaskUploadBindingAndCurrentAccess(t *testing.T) {
 			t.Fatal("doc foreign uploader", err)
 		}
 		otherDoc := uuid.New()
-		if _, err := env.db.Exec(`INSERT INTO documents(id,project_id,title) VALUES($1,$2,'other')`, otherDoc, pid); err != nil {
+		if _, err := env.db.Exec(`INSERT INTO documents(visibility,id,project_id,title) VALUES('legacy_project',$1,$2,'other')`, otherDoc, pid); err != nil {
 			t.Fatal(err)
 		}
 		input.DocID = otherDoc

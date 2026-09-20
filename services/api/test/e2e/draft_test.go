@@ -796,7 +796,7 @@ func TestDraftImportFencesCrossProjectRevocation(t *testing.T) {
 	instance := uuid.New()
 	other := uuid.MustParse(createProjectForTasksViaAPI(t, env, f.client, f.token))
 	doc := uuid.New()
-	if _, e := env.db.Exec("INSERT INTO documents(id,project_id,title,content) VALUES($1,$2,'private source','[]')", doc, other); e != nil {
+	if _, e := env.db.Exec("INSERT INTO documents(visibility,id,project_id,title,content) VALUES('legacy_project',$1,$2,'private source','[]')", doc, other); e != nil {
 		t.Fatal(e)
 	}
 	env.agentSvc.WithAuthorizer(authz.NewAuthorizer(pg.NewAuthzPermissionStore(env.db))).WithPrivateRuns(instance, env.agentRepo, docsvc.New(pg.NewDocumentRepository(env.db), nil), nil, nil)

@@ -3,6 +3,7 @@ package attachmentsvc
 import (
 	"context"
 	"errors"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	"testing"
 	"time"
 
@@ -26,11 +27,7 @@ var _ taskdom.AccessChecker = fakeTaskChecker{}
 // fakeDocChecker always reports that the document belongs to the project.
 type fakeDocChecker struct{}
 
-func (fakeDocChecker) DocBelongsToProject(_ context.Context, _, _ uuid.UUID) error {
-	return nil
-}
-
-var _ attachmentdom.DocOwnerChecker = fakeDocChecker{}
+var _ attachmentdom.DocAccessChecker = fakeDocChecker{}
 
 // fakeRepo is a minimal in-memory attachmentdom.Repository for exercising
 // service methods without a real database.
@@ -225,4 +222,8 @@ func TestCompleteDocUploadRejectsTaskFile(t *testing.T) {
 
 func (s *fakeStore) OpenObject(context.Context, string, string, string) (*storage.Object, error) {
 	return nil, errors.New("unused streaming storage")
+}
+
+func (fakeDocChecker) CheckDocumentAccess(_ context.Context, project, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {
+	return &docdom.Document{ID: id, ProjectID: project}, nil
 }

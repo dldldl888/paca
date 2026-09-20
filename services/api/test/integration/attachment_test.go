@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	"image"
 	"image/color"
 	"image/png"
@@ -40,17 +41,13 @@ import (
 // Fake doc ownership checker
 // ---------------------------------------------------------------------------
 
-// fakeDocChecker is a permissive attachmentdom.DocOwnerChecker stand-in.
+// fakeDocChecker is a permissive attachmentdom.DocAccessChecker stand-in.
 // This test file's router does not wire up the Document/DocFile handlers, so
 // no test here exercises doc-file endpoints; it exists only to satisfy
 // attachmentsvc.New's constructor.
 type fakeDocChecker struct{}
 
-func (fakeDocChecker) DocBelongsToProject(_ context.Context, _, _ uuid.UUID) error {
-	return nil
-}
-
-var _ attachmentdom.DocOwnerChecker = fakeDocChecker{}
+var _ attachmentdom.DocAccessChecker = fakeDocChecker{}
 
 // ---------------------------------------------------------------------------
 // Fake attachment repository
@@ -1144,4 +1141,8 @@ func TestAvatarUpload_Project_FullFlow(t *testing.T) {
 
 func (s *fakeStorageClient) OpenObject(context.Context, string, string, string) (*storage.Object, error) {
 	return nil, errors.New("unused streaming storage")
+}
+
+func (fakeDocChecker) CheckDocumentAccess(_ context.Context, project, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {
+	return &docdom.Document{ID: id, ProjectID: project}, nil
 }

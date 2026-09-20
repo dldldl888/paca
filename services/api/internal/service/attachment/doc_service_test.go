@@ -14,7 +14,7 @@ import (
 )
 
 // fakeDocRepoForChecker is a minimal docdom.DocumentRepository backing
-// NewDocOwnerChecker in tests. Only FindDocumentByID is exercised by the
+// NewDocAccessChecker in tests. Only FindDocumentByID is exercised by the
 // checker; the remaining methods are unused stubs.
 type fakeDocRepoForChecker struct {
 	docs map[uuid.UUID]*docdom.Document
@@ -37,26 +37,26 @@ func (r *fakeDocRepoForChecker) DeleteDocument(context.Context, uuid.UUID) error
 var _ docdom.DocumentRepository = (*fakeDocRepoForChecker)(nil)
 
 // ---------------------------------------------------------------------------
-// docOwnerChecker (GHSA-xwmv-9c7h-g947 / PACA-003)
+// docAccessChecker (GHSA-xwmv-9c7h-g947 / PACA-003)
 // ---------------------------------------------------------------------------
 
-func TestDocOwnerChecker_DocBelongsToProject(t *testing.T) {
+func TestDocAccessChecker_CurrentObjectPolicy(t *testing.T) {
 	projectID := uuid.New()
 	docID := uuid.New()
 	docRepo := &fakeDocRepoForChecker{docs: map[uuid.UUID]*docdom.Document{
 		docID: {ID: docID, ProjectID: projectID},
 	}}
-	checker := NewDocOwnerChecker(docRepo)
+	checker := NewDocAccessChecker(docRepo)
 
-	if err := checker.DocBelongsToProject(context.Background(), projectID, docID); err != nil {
+	if _, err := checker.CheckDocumentAccess(context.Background(), projectID, docID, docdom.AccessRead); err != nil {
 		t.Fatalf("expected nil for matching project, got %v", err)
 	}
 
-	if err := checker.DocBelongsToProject(context.Background(), uuid.New(), docID); !errors.Is(err, attachmentdom.ErrDocNotInProject) {
+	if _, err := checker.CheckDocumentAccess(context.Background(), uuid.New(), docID, docdom.AccessRead); !errors.Is(err, attachmentdom.ErrDocNotInProject) {
 		t.Fatalf("expected ErrDocNotInProject for mismatched project, got %v", err)
 	}
 
-	if err := checker.DocBelongsToProject(context.Background(), projectID, uuid.New()); !errors.Is(err, attachmentdom.ErrDocNotInProject) {
+	if _, err := checker.CheckDocumentAccess(context.Background(), projectID, uuid.New(), docdom.AccessRead); !errors.Is(err, attachmentdom.ErrDocNotInProject) {
 		t.Fatalf("expected ErrDocNotInProject for a nonexistent document, got %v", err)
 	}
 }
@@ -66,7 +66,7 @@ func TestDocOwnerChecker_DocBelongsToProject(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // newDocFileTestService wires a Service around a doc file whose storage key
-// is scoped under docID, plus a real docOwnerChecker backed by docRepo — so
+// is scoped under docID, plus a real docAccessChecker backed by docRepo — so
 // tests exercise the full project-scoping chain end to end, not just the
 // pre-existing storage-key-prefix check.
 func newDocFileTestService(docRepo *fakeDocRepoForChecker) (svc *Service, fileID, docID uuid.UUID) {
@@ -87,7 +87,7 @@ func newDocFileTestService(docRepo *fakeDocRepoForChecker) (svc *Service, fileID
 		attachments: map[uuid.UUID]*attachmentdom.TaskAttachment{},
 	}
 	store := &fakeStore{objectBytes: []byte("hello")}
-	svc = New(repo, fakeTaskChecker{}, NewDocOwnerChecker(docRepo), store, "test-bucket")
+	svc = New(repo, fakeTaskChecker{}, NewDocAccessChecker(docRepo), store, "test-bucket")
 	return svc, fileID, docID
 }
 
@@ -146,4 +146,16 @@ func TestDeleteDocFile_OwnProject_PassesOwnershipCheck(t *testing.T) {
 	if errors.Is(err, attachmentdom.ErrDocNotInProject) {
 		t.Fatalf("same-project delete must not be rejected by the ownership check, got %v", err)
 	}
+}
+
+// Test fixture's explicit legacy object policy; real scopes are exercised with Postgres.
+func (r *fakeDocRepoForChecker) CheckDocumentAccess(ctx context.Context, project, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {
+	d, err := r.FindDocumentByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if project != uuid.Nil && d.ProjectID != project {
+		return nil, docdom.ErrDocNotFound
+	}
+	return d, nil
 }

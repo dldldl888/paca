@@ -18,6 +18,7 @@ import (
 	projectdom "github.com/Paca-AI/api/internal/domain/project"
 	userdom "github.com/Paca-AI/api/internal/domain/user"
 	"github.com/Paca-AI/api/internal/platform/authz"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 	authsvc "github.com/Paca-AI/api/internal/service/auth"
 	docsvc "github.com/Paca-AI/api/internal/service/doc"
@@ -335,7 +336,7 @@ func buildDocTestRouter(docRepo *fakeDocRepoIT, store *projectPermStore) http.Ha
 	docActivityService := docsvc.NewActivityService(docRepo, docRepo, &fakeDocMemberLookup{}, nil)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	return router.New(router.Deps{
+	engine := router.New(router.Deps{
 		TokenManager:         tm,
 		Authorizer:           authz.NewAuthorizer(store),
 		ProjectVisibilitySvc: projectService,
@@ -347,9 +348,10 @@ func buildDocTestRouter(docRepo *fakeDocRepoIT, store *projectPermStore) http.Ha
 		Task:                 handler.NewTaskHandler(taskService, viewService, activityService),
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
-		Document:             handler.NewDocumentHandler(docService, docActivityService),
+		Document:             handler.NewDocumentHandler(docService, docActivityService).WithDeliveryGate(openDocGate()),
 		Log:                  log,
 	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { engine.ServeHTTP(docDeadlineWriter{w}, r) })
 }
 
 func issueDocToken(t *testing.T, subject string) string {
@@ -1069,4 +1071,26 @@ func TestIntegrationDocuments_CrossProjectAccessReturns404(t *testing.T) {
 	if docEnv.Data.Title != "Victim Doc" {
 		t.Errorf("victim doc title must be unchanged, got %q", docEnv.Data.Title)
 	}
+}
+
+func openDocGate() *delivery.Gate { g := delivery.NewGate(); _ = g.Update("0", false); return g }
+
+// In-memory ResponseRecorder has no network deadline; real HTTP deadline and
+// revocation behavior is covered by the testcontainer E2E matrix.
+type docDeadlineWriter struct{ http.ResponseWriter }
+
+func (docDeadlineWriter) SetWriteDeadline(time.Time) error { return nil }
+
+func (w docDeadlineWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Test fixture's explicit legacy object policy; real scopes are exercised with Postgres.
+func (r *fakeDocRepoIT) CheckDocumentAccess(ctx context.Context, project, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {
+	d, err := r.FindDocumentByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if project != uuid.Nil && d.ProjectID != project {
+		return nil, docdom.ErrDocNotFound
+	}
+	return d, nil
 }

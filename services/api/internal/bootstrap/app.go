@@ -246,7 +246,7 @@ func New(cfg *config.Config) (*App, error) {
 		}
 	}
 
-	attachmentService := attachmentsvc.New(attachmentRepo, taskService, attachmentsvc.NewDocOwnerChecker(docRepo), storageClient, cfg.Storage.Bucket)
+	attachmentService := attachmentsvc.New(attachmentRepo, taskService, attachmentsvc.NewDocAccessChecker(docRepo), storageClient, cfg.Storage.Bucket)
 	// annotationService backs the Paca browser extension's on-page comments
 	// (apps/extension) — attachmentRepo satisfies TaskAttachmentLinker
 	// directly (its own CreateTaskAttachment), and taskService/
@@ -483,7 +483,7 @@ func New(cfg *config.Config) (*App, error) {
 		),
 		View:       handler.NewViewHandler(viewService),
 		Attachment: handler.NewAttachmentHandler(attachmentService).WithFileDelivery(fileDelivery),
-		Document: handler.NewDocumentHandler(docService, docActivityService).
+		Document: handler.NewDocumentHandler(docService, docActivityService).WithDeliveryGate(fileGate).
 			WithDocAvatarService(attachmentService).
 			WithDocNotificationService(notificationService),
 		DocFile:            handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),

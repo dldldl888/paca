@@ -1044,3 +1044,15 @@ func TestGetSnapshot_WrongProject_ReturnsNotFound(t *testing.T) {
 		t.Fatalf("expected ErrSnapshotNotFound for cross-project GetSnapshot, got %v", err)
 	}
 }
+
+// Test fixture's explicit legacy object policy; real scopes are exercised with Postgres.
+func (r *fakeDocRepo) CheckDocumentAccess(ctx context.Context, project, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {
+	d, err := r.FindDocumentByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if project != uuid.Nil && d.ProjectID != project {
+		return nil, docdom.ErrDocNotFound
+	}
+	return d, nil
+}

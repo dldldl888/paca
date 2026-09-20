@@ -222,7 +222,7 @@ func TestDocAndScreenshotURLsRecheckCurrentAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc, eid, pfid, annotation := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	exec(`INSERT INTO documents(id,project_id,title,content)VALUES($1,$2,'test','[]')`, doc, pid)
+	exec(`INSERT INTO documents(visibility,id,project_id,title,content)VALUES('legacy_project',$1,$2,'test','[]')`, doc, pid)
 	exec(`INSERT INTO environments(id,project_id,name,slug,backend,secret_key_encrypted)VALUES($1,$2,'test','test','docker','synthetic')`, eid, pid)
 	exec(`INSERT INTO environment_port_forwards(id,environment_id,label,container_port)VALUES($1,$2,'test',3000)`, pfid, eid)
 	save := func(prefix string) *attachmentdom.File {
@@ -323,7 +323,7 @@ func TestFileDeliveryRejectsDeletedSourceAndAssociation(t *testing.T) {
 	u, _ := env.userRepo.FindByUsername(env.ctx, "delete-manager")
 	ctx := authz.WithActorID(env.ctx, u.ID)
 	doc := uuid.New()
-	if _, err := env.db.Exec(`INSERT INTO documents(id,project_id,title,content)VALUES($1,$2,'test','[]')`, doc, pid); err != nil {
+	if _, err := env.db.Exec(`INSERT INTO documents(visibility,id,project_id,title,content)VALUES('legacy_project',$1,$2,'test','[]')`, doc, pid); err != nil {
 		t.Fatal(err)
 	}
 	task, err := env.taskSvc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: pid, Title: "file"})
@@ -405,7 +405,7 @@ func TestFileMutationRechecksAfterCoordinatorWait(t *testing.T) {
 				t.Fatal(err)
 			}
 			doc, eid, pfid, ann := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-			exec(`INSERT INTO documents(id,project_id,title,content)VALUES($1,$2,'test','[]')`, doc, pid)
+			exec(`INSERT INTO documents(visibility,id,project_id,title,content)VALUES('legacy_project',$1,$2,'test','[]')`, doc, pid)
 			exec(`INSERT INTO environments(id,project_id,name,slug,backend,secret_key_encrypted)VALUES($1,$2,'test','test','docker','synthetic')`, eid, pid)
 			exec(`INSERT INTO environment_port_forwards(id,environment_id,label,container_port)VALUES($1,$2,'test',3000)`, pfid, eid)
 			file := &attachmentdom.File{ID: uuid.New(), StorageKey: "docs/" + doc.String() + "/file", Bucket: "paca-attachments-e2e", FileName: "file", ContentType: "text/plain", FileSize: 5, UploadStatus: attachmentdom.UploadStatusUploaded, UploadedBy: &user.ID, CreatedAt: time.Now(), UpdatedAt: time.Now()}
@@ -547,7 +547,7 @@ func TestDocFileCleanupFailureIsRevokedAndRetryable(t *testing.T) {
 	u, _ := env.userRepo.FindByUsername(env.ctx, "cleanup-manager")
 	ctx := authz.WithActorID(env.ctx, u.ID)
 	doc := uuid.New()
-	if _, err := env.db.Exec(`INSERT INTO documents(id,project_id,title,content)VALUES($1,$2,'test','[]')`, doc, pid); err != nil {
+	if _, err := env.db.Exec(`INSERT INTO documents(visibility,id,project_id,title,content)VALUES('legacy_project',$1,$2,'test','[]')`, doc, pid); err != nil {
 		t.Fatal(err)
 	}
 	f := &attachmentdom.File{ID: uuid.New(), Bucket: "paca-attachments-e2e", FileName: "file", ContentType: "text/plain", FileSize: 5, UploadStatus: attachmentdom.UploadStatusUploaded, UploadedBy: &u.ID, CreatedAt: time.Now(), UpdatedAt: time.Now()}
@@ -563,7 +563,7 @@ func TestDocFileCleanupFailureIsRevokedAndRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &failingCleanupStore{Client: env.fileStore, fail: true}
-	svc := attachmentsvc.New(env.attachmentRepo, env.taskSvc, attachmentsvc.NewDocOwnerChecker(pg.NewDocumentRepository(env.db)), store, f.Bucket)
+	svc := attachmentsvc.New(env.attachmentRepo, env.taskSvc, attachmentsvc.NewDocAccessChecker(pg.NewDocumentRepository(env.db)), store, f.Bucket)
 	if err := svc.DeleteDocFile(ctx, pid, doc, f.ID); err == nil || !strings.Contains(err.Error(), "physical cleanup failed") {
 		t.Fatal("logical revocation/cleanup failure not reported distinctly", err)
 	}

@@ -2,17 +2,14 @@ package attachmentdom
 
 import (
 	"context"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// DocOwnerChecker validates that a document belongs to a given project.
-type DocOwnerChecker interface {
-	// DocBelongsToProject loads the document by id and returns a non-nil
-	// error when the document does not belong to projectID (or does not exist).
-	DocBelongsToProject(ctx context.Context, projectID, docID uuid.UUID) error
-}
+// DocAccessChecker uses the shared current document/source policy.
+type DocAccessChecker = docdom.AccessChecker
 
 // DocFileService manages files attached directly to documents.
 // Unlike the task attachment flow, there is no join table — files are stored
@@ -42,6 +39,7 @@ type DocFileService interface {
 
 // DocUploadInput carries the client-supplied metadata for initiating a doc file upload.
 type DocUploadInput struct {
+	ProjectID   uuid.UUID
 	DocID       uuid.UUID
 	FileName    string
 	ContentType string

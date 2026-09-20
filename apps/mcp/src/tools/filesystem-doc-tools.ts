@@ -260,10 +260,8 @@ export function getFilesystemDocTools(): Tool[] {
 		{
 			name: "write_doc",
 			description:
-				"Create or update a document at the given path. " +
-				"If the document already exists it will be updated; otherwise it will be created. " +
-				"Missing intermediate folders are created automatically. " +
-				"Always prefer this over creating local files when writing project documentation.",
+				"Update an existing authorized document at the given path. " +
+				"New documents are private and require creation in a verified human session first.",
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -461,34 +459,20 @@ export async function handleFilesystemDocTool(
 				};
 			}
 
-			const folderNames = parts.slice(0, -1);
-			const docTitle = parts[parts.length - 1];
-			const folderId = await ensureFolderPath(
-				projectId,
-				folderNames,
-				docClient,
-				tree,
-			);
-
-			const siblingDocs = tree.docsByFolder.get(folderId) || [];
-			const existing = siblingDocs.find((d) => d.title === docTitle);
-
-			if (existing) {
-				await apiClient.updateDocument(projectId, existing.id, { content });
+			const existing = resolvePath(path, tree);
+			if (existing?.type !== "doc") {
 				return {
-					content: [{ type: "text", text: `Updated document: ${path}` }],
+					isError: true,
+					content: [
+						{
+							type: "text",
+							text: "New documents are private and require a verified human owner. Create the document in a human session first; this tool can edit existing authorized documents.",
+						},
+					],
 				};
 			}
-
-			await apiClient.createDocument({
-				project_id: projectId,
-				title: docTitle,
-				content,
-				folder_id: folderId,
-			});
-			return {
-				content: [{ type: "text", text: `Created document: ${path}` }],
-			};
+			await apiClient.updateDocument(projectId, existing.doc.id, { content });
+			return { content: [{ type: "text", text: `Updated document: ${path}` }] };
 		}
 
 		case "delete_doc": {
