@@ -5,11 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mime"
 	"path"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 
@@ -20,12 +18,8 @@ import (
 	"github.com/Paca-AI/api/internal/platform/storage"
 )
 
-const (
-	// presignedUploadTTL is how long a presigned upload URL remains valid.
-	presignedUploadTTL = 1 * time.Hour
-	// presignedDownloadTTL is how long a presigned download URL remains valid.
-	presignedDownloadTTL = 15 * time.Minute
-)
+// presignedUploadTTL is how long a presigned upload URL remains valid.
+const presignedUploadTTL = time.Hour
 
 // Service is the concrete implementation of attachmentdom.Service.
 type Service struct {
@@ -186,59 +180,38 @@ func (s *Service) CompleteUpload(ctx context.Context, projectID uuid.UUID, in at
 	return a, nil
 }
 
-// GetDownloadURL returns a presigned GET URL for the given attachment's file.
-// When forceDownload is true the URL includes a Content-Disposition: attachment
-// header so the browser downloads the file rather than previewing it inline.
-// Verifies the attachment belongs to taskID before generating the URL.
+// GetDownloadURL returns a stable API URL; every download rechecks current access.
 func (s *Service) GetDownloadURL(ctx context.Context, projectID, taskID, attachmentID uuid.UUID, ttl time.Duration, forceDownload bool) (string, error) {
-	if err := s.checkTask(ctx, projectID, taskID, taskdom.AccessRead); err != nil {
+	if _, err := s.GetAttachmentFile(ctx, projectID, taskID, attachmentID); err != nil {
 		return "", err
+	}
+	url := fmt.Sprintf("/api/v1/projects/%s/tasks/%s/attachments/%s/download", projectID, taskID, attachmentID)
+	if forceDownload {
+		url += "?download=true"
+	}
+	return url, nil
+}
+
+// GetAttachmentFile resolves metadata only; object IO and delivery happen outside the authorization lease.
+func (s *Service) GetAttachmentFile(ctx context.Context, projectID, taskID, attachmentID uuid.UUID) (*attachmentdom.File, error) {
+	if err := s.checkTask(ctx, projectID, taskID, taskdom.AccessRead); err != nil {
+		return nil, err
 	}
 	a, err := s.repo.FindTaskAttachmentByID(ctx, attachmentID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if a.TaskID != taskID {
-		return "", attachmentdom.ErrAttachmentNotFound
+		return nil, attachmentdom.ErrAttachmentNotFound
 	}
-
 	f, err := s.repo.FindFileByID(ctx, a.FileID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-
-	contentDisposition := ""
-	if forceDownload {
-		// Strip ASCII control characters (including CR and LF) to prevent header
-		// injection, then use mime.FormatMediaType which produces a correctly
-		// RFC-quoted or RFC-5987-encoded filename parameter.
-		safeName := strings.Map(func(r rune) rune {
-			if unicode.IsControl(r) {
-				return -1
-			}
-			return r
-		}, f.FileName)
-		if safeName == "" {
-			safeName = "file"
-		}
-		cd := mime.FormatMediaType("attachment", map[string]string{"filename": safeName})
-		if cd == "" {
-			// Fallback: bare disposition without a filename parameter.
-			cd = "attachment"
-		}
-		contentDisposition = cd
+	if f.UploadStatus != attachmentdom.UploadStatusUploaded {
+		return nil, attachmentdom.ErrFileNotFound
 	}
-
-	bucket := f.Bucket
-	if bucket == "" {
-		bucket = s.bucket
-	}
-
-	url, err := s.store.PresignGetObject(ctx, bucket, f.StorageKey, ttl, contentDisposition)
-	if err != nil {
-		return "", fmt.Errorf("attachment svc: presign get: %w", err)
-	}
-	return url, nil
+	return f, nil
 }
 
 // GetAttachmentContent reads the attachment's bytes directly from the object
@@ -311,6 +284,7 @@ func (s *Service) DeleteTaskAttachment(ctx context.Context, projectID, taskID, a
 	if a.TaskID != taskID {
 		return attachmentdom.ErrAttachmentNotFound
 	}
+	ctx = authz.WithMutationCheck(ctx, func(ctx context.Context) error { return s.checkTask(ctx, projectID, taskID, taskdom.AccessProgress) })
 	return s.repo.DeleteTaskAttachment(ctx, attachmentID)
 }
 

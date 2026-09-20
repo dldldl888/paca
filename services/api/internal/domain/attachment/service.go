@@ -11,6 +11,7 @@ import (
 
 // Service is the combined attachment management contract.
 type Service interface {
+	GetAttachmentFile(ctx context.Context, projectID, taskID, attachmentID uuid.UUID) (*File, error)
 	// InitiateUpload creates a pending File record and returns either a
 	// single-part presigned PUT URL (files < MultipartThreshold) or the
 	// multipart upload descriptor with per-part presigned URLs.
@@ -24,24 +25,13 @@ type Service interface {
 	// Verifies taskID belongs to projectID before proceeding.
 	CompleteUpload(ctx context.Context, projectID uuid.UUID, in CompleteUploadInput) (*TaskAttachment, error)
 
-	// GetDownloadURL returns a short-lived presigned GET URL for the file
-	// that backs the given attachment. Verifies the attachment belongs to taskID
-	// and that taskID belongs to projectID.
-	// Set forceDownload true to embed Content-Disposition: attachment so the
-	// browser downloads the file rather than previewing it inline.
+	// GetDownloadURL returns a same-origin authenticated API URL. The ttl
+	// argument is retained for caller compatibility; URLs grant no bearer access.
 	GetDownloadURL(ctx context.Context, projectID, taskID, attachmentID uuid.UUID, ttl time.Duration, forceDownload bool) (string, error)
 
-	// GetAttachmentContent reads the file's bytes directly from the object
-	// store and returns them along with its content type. Unlike
-	// GetDownloadURL (which hands back a presigned object-store URL meant for
-	// a browser), this goes through the API itself — the right path for
-	// server-side callers such as the MCP server, which may not have network
-	// access to the object store's public-facing endpoint (e.g. when running
-	// inside an agent sandbox container that can reach `api`/`gateway` by
-	// their internal Docker hostnames but not the browser-facing public URL
-	// presigned URLs are rewritten to). Verifies the attachment belongs to
-	// taskID and that taskID belongs to projectID. Returns
-	// ErrAttachmentContentTooLarge if the file exceeds MaxAttachmentContentSize.
+	// GetAttachmentContent preserves the bounded raw-read contract for internal callers.
+	// Browser delivery uses the full streaming download route; MCP's HTTP content
+	// route retains MaxAttachmentContentSize and returns ErrAttachmentContentTooLarge.
 	GetAttachmentContent(ctx context.Context, projectID, taskID, attachmentID uuid.UUID) (data []byte, contentType string, err error)
 
 	// ListTaskAttachments returns all confirmed attachments for the given task.

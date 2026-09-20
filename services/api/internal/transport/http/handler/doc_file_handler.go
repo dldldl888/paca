@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"net/http"
 	"time"
 
@@ -16,7 +18,8 @@ import (
 
 // DocFileHandler handles file upload/download endpoints for documents.
 type DocFileHandler struct {
-	svc attachmentdom.DocFileService
+	files *FileDelivery
+	svc   attachmentdom.DocFileService
 }
 
 // NewDocFileHandler returns a DocFileHandler wired to the doc file service.
@@ -105,7 +108,7 @@ func (h *DocFileHandler) CompleteDocUpload(w http.ResponseWriter, r *http.Reques
 }
 
 // GetDocFileDownloadURL handles GET /projects/:projectId/docs/:docId/files/:fileId/download-url.
-// Returns a short-lived presigned URL valid for 15 minutes.
+// Returns a same-origin API URL which requires current authenticated access.
 func (h *DocFileHandler) GetDocFileDownloadURL(w http.ResponseWriter, r *http.Request) {
 	projectID, err := parseProjectID(r)
 	if err != nil {
@@ -166,4 +169,30 @@ func parseDocFileID(r *http.Request) (uuid.UUID, error) {
 		return uuid.Nil, apierr.New(apierr.CodeBadRequest, "invalid file id")
 	}
 	return id, nil
+}
+
+func (h *DocFileHandler) WithFileDelivery(files *FileDelivery) *DocFileHandler {
+	h.files = files
+	return h
+}
+
+func (h *DocFileHandler) GetDocFileContent(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseProjectID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	docID, err := parseDocID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	fileID, err := parseDocFileID(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	h.files.serve(w, r, authz.PermissionDocsRead, func(ctx context.Context) (*attachmentdom.File, error) {
+		return h.svc.GetDocFile(ctx, projectID, docID, fileID)
+	}, false)
 }

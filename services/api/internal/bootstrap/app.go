@@ -265,10 +265,12 @@ func New(cfg *config.Config) (*App, error) {
 	}
 	agentService.WithPrivateRuns(instanceID, agentRepo, docService, annotationService, automationService)
 	draftService := draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher)
+	var fileGate *delivery.Gate
 	var coordinator *pgRepo.AuthorizationDelivery
 	var deliveryStop func(context.Context) error
 	if instanceID != uuid.Nil {
 		gate := delivery.NewGate()
+		fileGate = gate
 		coordinator = pgRepo.NewAuthorizationDelivery(db, redisClient, instanceID.String())
 		coordinator.Reconcile = agentService.ReconcilePrivateRuns
 		agentService.WithDeliveryGate(gate)
@@ -437,7 +439,8 @@ func New(cfg *config.Config) (*App, error) {
 		WithAvatarService(attachmentService)
 	environmentHandler := handler.NewEnvironmentHandler(environmentService, cfg.AIAgentInternalKey).
 		WithDeploymentConfig(cfg.SSHBastionHost, cfg.PortForwardHost)
-	annotationHandler := handler.NewAnnotationHandler(annotationService).
+	fileDelivery := handler.NewFileDelivery(fileGate, storageClient, cfg.Storage.Bucket, authorizer)
+	annotationHandler := handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery).
 		WithAvatarService(attachmentService).
 		WithMemberRepo(projectRepo)
 	convHandler := handler.NewConversationHandler(agentService).WithMemberRepo(projectRepo)
@@ -479,11 +482,11 @@ func New(cfg *config.Config) (*App, error) {
 			handler.WithSprintDefaultTaskStatuses(taskService),
 		),
 		View:       handler.NewViewHandler(viewService),
-		Attachment: handler.NewAttachmentHandler(attachmentService),
+		Attachment: handler.NewAttachmentHandler(attachmentService).WithFileDelivery(fileDelivery),
 		Document: handler.NewDocumentHandler(docService, docActivityService).
 			WithDocAvatarService(attachmentService).
 			WithDocNotificationService(notificationService),
-		DocFile:            handler.NewDocFileHandler(attachmentService),
+		DocFile:            handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),
 		Notification:       handler.NewNotificationHandler(notificationService, handler.WithNotificationAvatarService(attachmentService)),
 		APIKey:             handler.NewAPIKeyHandler(apiKeyService),
 		Skills:             handler.NewSkillsHandler(pluginService, cfg.Plugins.SkillsDir),

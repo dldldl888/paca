@@ -85,7 +85,7 @@ func (r *AttachmentRepository) CreateFile(ctx context.Context, f *attachmentdom.
 // FindFileByID returns the file with the given ID.
 func (r *AttachmentRepository) FindFileByID(ctx context.Context, id uuid.UUID) (*attachmentdom.File, error) {
 	var rec fileRecord
-	err := r.db.GetContext(ctx, &rec, `SELECT `+fileSelectCols+` FROM files WHERE id = $1`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &rec, `SELECT `+fileSelectCols+` FROM files WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, attachmentdom.ErrFileNotFound
 	}
@@ -97,27 +97,35 @@ func (r *AttachmentRepository) FindFileByID(ctx context.Context, id uuid.UUID) (
 
 // UpdateFileStatus updates the upload_status and multipart_upload_id of a file.
 func (r *AttachmentRepository) UpdateFileStatus(ctx context.Context, id uuid.UUID, status attachmentdom.UploadStatus, multipartUploadID *string) error {
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE files SET upload_status = $1, multipart_upload_id = $2, updated_at = $3 WHERE id = $4`,
-		string(status), multipartUploadID, time.Now(), id.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("attachment repo: update file status: %w", err)
+	update := func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
+		UPDATE files SET upload_status = $1, multipart_upload_id = $2, updated_at = $3 WHERE id = $4 AND ($1 = 'failed' OR upload_status = 'pending')`,
+			string(status), multipartUploadID, time.Now(), id.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("attachment repo: update file status: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return attachmentdom.ErrFileNotFound
+		}
+		return nil
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return attachmentdom.ErrFileNotFound
+	if status == attachmentdom.UploadStatusFailed {
+		return authorityMutation(ctx, r.db, update)
 	}
-	return nil
+	return update(ctx)
 }
 
 // DeleteFile removes a file record permanently.
 func (r *AttachmentRepository) DeleteFile(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM files WHERE id = $1`, id.String())
-	if err != nil {
-		return fmt.Errorf("attachment repo: delete file: %w", err)
-	}
-	return nil
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM files WHERE id = $1`, id.String())
+		if err != nil {
+			return fmt.Errorf("attachment repo: delete file: %w", err)
+		}
+		return nil
+	})
 }
 
 // --- Task attachments ------------------------------------------------------
@@ -150,7 +158,7 @@ func (r *AttachmentRepository) ListTaskAttachments(ctx context.Context, taskID u
 // FindTaskAttachmentByID returns a single task attachment by ID.
 func (r *AttachmentRepository) FindTaskAttachmentByID(ctx context.Context, id uuid.UUID) (*attachmentdom.TaskAttachment, error) {
 	var row taskAttachmentWithFileRow
-	err := r.db.GetContext(ctx, &row, taskAttachmentJoinSQL+` WHERE ta.id = $1`, id.String())
+	err := DeliveryQuery(ctx, r.db).GetContext(ctx, &row, taskAttachmentJoinSQL+` WHERE ta.id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, attachmentdom.ErrAttachmentNotFound
 	}
@@ -176,15 +184,17 @@ func (r *AttachmentRepository) CreateTaskAttachment(ctx context.Context, a *atta
 
 // DeleteTaskAttachment removes a task attachment by ID.
 func (r *AttachmentRepository) DeleteTaskAttachment(ctx context.Context, id uuid.UUID) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM task_attachments WHERE id = $1`, id.String())
-	if err != nil {
-		return fmt.Errorf("attachment repo: delete task attachment: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return attachmentdom.ErrAttachmentNotFound
-	}
-	return nil
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `DELETE FROM task_attachments WHERE id = $1`, id.String())
+		if err != nil {
+			return fmt.Errorf("attachment repo: delete task attachment: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return attachmentdom.ErrAttachmentNotFound
+		}
+		return nil
+	})
 }
 
 // --- helpers ---------------------------------------------------------------

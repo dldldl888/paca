@@ -85,6 +85,7 @@ func TestE2EAttachmentManagement_CRUD(t *testing.T) {
 		t.Skip("attachment service not available (MinIO container did not start)")
 	}
 
+	startFileDelivery(t, env)
 	seedAttachmentUser(t, env, "attach-crud-user", "attachpass1!")
 	client, token := attachmentUserLogin(t, env, "attach-crud-user", "attachpass1!")
 	projID := createProjectForTasksViaAPI(t, env, client, token)
@@ -264,8 +265,8 @@ func TestE2EAttachmentManagement_CRUD(t *testing.T) {
 		if dlURL == "" {
 			t.Fatal("expected non-empty url in download-url response")
 		}
-		if !strings.Contains(strings.ToLower(dlURL), "response-content-disposition") {
-			t.Errorf("force-download URL should contain response-content-disposition param, got %q", dlURL)
+		if !strings.HasSuffix(dlURL, "?download=true") {
+			t.Errorf("force-download API URL missing download flag, got %q", dlURL)
 		}
 	})
 

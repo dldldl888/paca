@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/Paca-AI/api/internal/platform/delivery"
+	"github.com/Paca-AI/api/internal/platform/storage"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,8 +87,13 @@ func newAttachmentRouterWithAuth() chi.Router {
 	return r
 }
 
-func newAttachmentContentRouter(svc *fakeAttachmentSvc) chi.Router {
+func newAttachmentContentRouter(svc *fakeAttachmentSvc, gated ...bool) chi.Router {
 	h := handler.NewAttachmentHandler(svc)
+	if len(gated) == 0 || gated[0] {
+		gate := delivery.NewGate()
+		_ = gate.Update("1", false)
+		h.WithFileDelivery(handler.NewFileDelivery(gate, handlerFileStore{data: svc.contentData}, "test", nil))
+	}
 	r := chi.NewRouter()
 	r.Use(injectAuthClaimsMiddleware(uuid.New().String()))
 	r.Route("/projects/{projectId}/tasks/{taskId}/attachments", func(r chi.Router) {
@@ -107,7 +116,7 @@ func doAttachRequest(t *testing.T, r chi.Router, method, path string, body any) 
 		req.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(deadlineRecorder{w}, req)
 	return w
 }
 
@@ -186,7 +195,7 @@ func TestGetAttachmentContent_ReturnsRawBytesWithContentType(t *testing.T) {
 	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Fatalf("expected X-Content-Type-Options nosniff, got %q", got)
 	}
-	if got := w.Header().Get("Content-Disposition"); got != "attachment" {
+	if got := w.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") {
 		t.Fatalf("expected Content-Disposition attachment, got %q", got)
 	}
 	if got := w.Body.String(); got != "hello world" {
@@ -236,3 +245,28 @@ func TestDocCompleteUploadBindsRoute(t *testing.T) {
 		t.Fatal("invalid route reached completion")
 	}
 }
+
+func TestAttachmentContentFailsWithoutDeliveryGate(t *testing.T) {
+	r := newAttachmentContentRouter(&fakeAttachmentSvc{contentData: []byte("secret"), contentType: "text/plain"}, false)
+	w := doAttachRequest(t, r, "GET", "/projects/"+uuid.NewString()+"/tasks/"+uuid.NewString()+"/attachments/"+uuid.NewString()+"/content", nil)
+	if w.Code != 503 {
+		t.Fatalf("missing gate must fail closed: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func (f *fakeAttachmentSvc) GetAttachmentFile(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*attachmentdom.File, error) {
+	return &attachmentdom.File{FileName: "fixture", ContentType: f.contentType}, f.contentErr
+}
+
+type handlerFileStore struct {
+	storage.Client
+	data []byte
+}
+
+func (s handlerFileStore) OpenObject(context.Context, string, string, string) (*storage.Object, error) {
+	return &storage.Object{Body: io.NopCloser(bytes.NewReader(s.data)), Size: int64(len(s.data))}, nil
+}
+
+type deadlineRecorder struct{ *httptest.ResponseRecorder }
+
+func (deadlineRecorder) SetWriteDeadline(time.Time) error { return nil }

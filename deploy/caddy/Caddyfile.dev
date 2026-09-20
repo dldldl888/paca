@@ -77,6 +77,12 @@
 	}
 
 	handle_path /storage/* {
+        @businessRead {
+            method GET HEAD
+            not path_regexp ^/[^/]+/avatars/(users|agents|projects|workspace_logo|workspace_favicon)/[0-9a-f-]+/[0-9a-f-]+/(full|thumb)\.png$
+        }
+        respond @businessRead 403
+
 		reverse_proxy minio:9000 {
 			header_up Host minio:9000
 		}

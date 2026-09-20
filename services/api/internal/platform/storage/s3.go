@@ -293,3 +293,15 @@ func (c *S3Client) EnsureBucket(ctx context.Context, bucket string) error {
 	}
 	return nil
 }
+
+func (c *S3Client) OpenObject(ctx context.Context, bucket, key, byteRange string) (*Object, error) {
+	input := &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}
+	if byteRange != "" {
+		input.Range = aws.String(byteRange)
+	}
+	out, err := c.s3.GetObject(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return &Object{Body: out.Body, Size: aws.ToInt64(out.ContentLength), ContentRange: aws.ToString(out.ContentRange)}, nil
+}

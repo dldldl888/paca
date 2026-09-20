@@ -222,3 +222,7 @@ func TestCompleteDocUploadRejectsTaskFile(t *testing.T) {
 		t.Fatal("document completion accepted task file")
 	}
 }
+
+func (s *fakeStore) OpenObject(context.Context, string, string, string) (*storage.Object, error) {
+	return nil, errors.New("unused streaming storage")
+}

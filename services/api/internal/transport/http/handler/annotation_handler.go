@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ import (
 // docs/ai-agent/environment-management.md's "Port Forwarding" section for
 // the underlying forwarded-port feature these attach to.
 type AnnotationHandler struct {
+	files      *FileDelivery
 	svc        annotationdom.Service
 	avatarSvc  attachmentdom.AvatarService
 	memberRepo projectdom.MemberRepository
@@ -494,4 +497,20 @@ func (h *AnnotationHandler) ResolvePortForward(w http.ResponseWriter, r *http.Re
 		PortForwardID: match.PortForwardID,
 		Label:         match.Label,
 	})
+}
+
+func (h *AnnotationHandler) WithFileDelivery(files *FileDelivery) *AnnotationHandler {
+	h.files = files
+	return h
+}
+
+func (h *AnnotationHandler) GetScreenshotContent(w http.ResponseWriter, r *http.Request) {
+	projectID, _, _, annotationID, err := h.parseAnnotation(r)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	h.files.serve(w, r, authz.PermissionAnnotationsRead, func(ctx context.Context) (*attachmentdom.File, error) {
+		return h.svc.GetScreenshotFile(ctx, projectID, annotationID)
+	}, false)
 }

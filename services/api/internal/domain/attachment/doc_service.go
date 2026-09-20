@@ -19,6 +19,7 @@ type DocOwnerChecker interface {
 // in the shared `files` table and referenced by their ID directly from the
 // BlockNote document content.
 type DocFileService interface {
+	GetDocFile(ctx context.Context, projectID, docID, fileID uuid.UUID) (*File, error)
 	// InitiateDocUpload creates a pending File record and returns a presigned
 	// upload session (single-part or multipart).
 	InitiateDocUpload(ctx context.Context, in DocUploadInput) (*UploadSession, error)
@@ -26,7 +27,7 @@ type DocFileService interface {
 	// CompleteDocUpload marks the file as uploaded and returns the file record.
 	CompleteDocUpload(ctx context.Context, in DocCompleteUploadInput) (*File, error)
 
-	// GetDocFileDownloadURL returns a short-lived presigned GET URL for the
+	// GetDocFileDownloadURL returns an authenticated same-origin API URL for the
 	// given file. docID is used to verify the file belongs to the document,
 	// and projectID is used to verify docID belongs to the caller's
 	// authorized project.

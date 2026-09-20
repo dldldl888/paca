@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -29,6 +30,7 @@ type CompletedPart struct {
 
 // Client is the object-storage operations contract.
 type Client interface {
+	OpenObject(ctx context.Context, bucket, key, byteRange string) (*Object, error)
 	// PresignPutObject returns a pre-signed URL that the client can use to
 	// upload a single object (for files smaller than MultipartThreshold).
 	PresignPutObject(ctx context.Context, bucket, key, contentType string, ttl time.Duration) (string, error)
@@ -61,8 +63,8 @@ type Client interface {
 
 	// GetObject downloads an object's contents. Intended for small objects
 	// the server needs to process itself (e.g. re-encoding an uploaded
-	// avatar) — not for client-facing downloads, which should use
-	// PresignGetObject instead.
+	// avatar). Client-facing business downloads use OpenObject behind the
+	// authenticated delivery gate.
 	//
 	// maxBytes bounds the read itself (not just a post-read length check):
 	// the underlying stream is wrapped in an io.LimitReader, so a caller
@@ -83,3 +85,10 @@ const MultipartThreshold = 5 * 1024 * 1024 // 5 MiB
 
 // DefaultPartSize is the chunk size used for each part of a multipart upload.
 const DefaultPartSize = 5 * 1024 * 1024 // 5 MiB
+
+// Object is a streaming S3 response. Size is the selected representation length.
+type Object struct {
+	Body         io.ReadCloser
+	Size         int64
+	ContentRange string
+}

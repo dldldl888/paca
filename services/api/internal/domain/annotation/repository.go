@@ -33,7 +33,7 @@ type Repository interface {
 	// filter.Limit is set.
 	SearchInProject(ctx context.Context, projectID uuid.UUID, filter SearchFilter) (results []*PageAnnotation, hasMore bool, err error)
 	Create(ctx context.Context, a *PageAnnotation) error
-	// SetScreenshotFileID attaches (or replaces) an already-uploaded
+	// SetScreenshotFileID atomically marks uploaded and attaches (or replaces) a
 	// screenshot on an existing annotation — used by
 	// Service.CompleteScreenshotUpload for the "attach a screenshot after
 	// the comment already exists" path; Service.Create sets it inline for

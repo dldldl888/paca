@@ -212,7 +212,7 @@ func TestCompleteScreenshotUpload_OwnFile_Succeeds(t *testing.T) {
 		annotationID: {ID: annotationID, ProjectID: projectID, CreatedBy: uploader},
 	}}
 	files := &fakeFileFinder{files: map[uuid.UUID]*attachmentdom.File{
-		fileID: {ID: fileID, StorageKey: "annotations/" + fileID.String() + "/shot.png", UploadedBy: &uploader},
+		fileID: {ID: fileID, UploadStatus: attachmentdom.UploadStatusUploaded, StorageKey: "annotations/" + fileID.String() + "/shot.png", UploadedBy: &uploader},
 	}}
 	svc := New(repo, nil, nil, nil, files, nil, "test-bucket")
 
@@ -275,7 +275,7 @@ func TestGetScreenshotURL_LegitimateScreenshot_Succeeds(t *testing.T) {
 		annotationID: {ID: annotationID, ProjectID: projectID, CreatedBy: creator, ScreenshotFileID: &fileID},
 	}}
 	files := &fakeFileFinder{files: map[uuid.UUID]*attachmentdom.File{
-		fileID: {ID: fileID, StorageKey: "annotations/" + fileID.String() + "/shot.png", UploadedBy: &creator},
+		fileID: {ID: fileID, UploadStatus: attachmentdom.UploadStatusUploaded, StorageKey: "annotations/" + fileID.String() + "/shot.png", UploadedBy: &creator},
 	}}
 	svc := New(repo, nil, nil, nil, files, fakeStoreNoGet{}, "test-bucket")
 
@@ -305,7 +305,7 @@ func TestGetScreenshotURL_UploaderDifferentFromCreator_StillSucceeds(t *testing.
 		annotationID: {ID: annotationID, ProjectID: projectID, CreatedBy: creator, ScreenshotFileID: &fileID},
 	}}
 	files := &fakeFileFinder{files: map[uuid.UUID]*attachmentdom.File{
-		fileID: {ID: fileID, StorageKey: "annotations/" + fileID.String() + "/shot.png", UploadedBy: &teammateWhoAttachedIt},
+		fileID: {ID: fileID, UploadStatus: attachmentdom.UploadStatusUploaded, StorageKey: "annotations/" + fileID.String() + "/shot.png", UploadedBy: &teammateWhoAttachedIt},
 	}}
 	svc := New(repo, nil, nil, nil, files, fakeStoreNoGet{}, "test-bucket")
 

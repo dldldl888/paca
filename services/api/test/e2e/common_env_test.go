@@ -34,16 +34,20 @@ import (
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/cache"
 	"github.com/Paca-AI/api/internal/platform/database"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/Paca-AI/api/internal/platform/messaging"
 	"github.com/Paca-AI/api/internal/platform/storage"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 	pgRepo "github.com/Paca-AI/api/internal/repository/postgres"
 	redisRepo "github.com/Paca-AI/api/internal/repository/redis"
 	agentsvc "github.com/Paca-AI/api/internal/service/agent"
+	annotationsvc "github.com/Paca-AI/api/internal/service/annotation"
 	apikeysvc "github.com/Paca-AI/api/internal/service/apikey"
 	attachmentsvc "github.com/Paca-AI/api/internal/service/attachment"
 	authsvc "github.com/Paca-AI/api/internal/service/auth"
 	automationsvc "github.com/Paca-AI/api/internal/service/automation"
+	docsvc "github.com/Paca-AI/api/internal/service/doc"
+	environmentsvc "github.com/Paca-AI/api/internal/service/environment"
 	globalrolesvc "github.com/Paca-AI/api/internal/service/globalrole"
 	notificationsvc "github.com/Paca-AI/api/internal/service/notification"
 	projectsvc "github.com/Paca-AI/api/internal/service/project"
@@ -85,6 +89,8 @@ var (
 )
 
 type e2eEnv struct {
+	fileGate       *delivery.Gate
+	fileStore      storage.Client
 	ctx            context.Context
 	base           string
 	client         *http.Client
@@ -235,6 +241,8 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	pluginRepoForAgent := pgRepo.NewPluginRepository(db)
 	agentService := agentsvc.New(agentRepo, noopMemberCacheInvalidator{}, publisher, pluginRepoForAgent).WithTaskAccess(taskService, taskService)
 	var attachmentService *attachmentsvc.Service
+	var fileStore storage.Client
+	fileGate := delivery.NewGate()
 	if sharedMinIOEndpoint != "" {
 		minIOEndpoint := sharedMinIOEndpoint
 		storageClient, storageErr := storage.NewS3Client(ctx, storage.S3Config{
@@ -247,6 +255,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		if storageErr != nil {
 			t.Fatalf("init storage client: %v", storageErr)
 		}
+		fileStore = storageClient
 		const attachBucket = "paca-attachments-e2e"
 		if err := storageClient.EnsureBucket(ctx, attachBucket); err != nil {
 			t.Fatalf("ensure bucket: %v", err)
@@ -261,7 +270,15 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		RefreshTTL:        e2eRefreshTTL,
 		RefreshSessionTTL: e2eRefreshSessionTTL,
 	}
+	fileDelivery := handler.NewFileDelivery(fileGate, fileStore, "paca-attachments-e2e", authz.NewAuthorizer(authzStore))
+	docRepo := pgRepo.NewDocumentRepository(db)
+	environmentService := environmentsvc.New(pgRepo.NewEnvironmentRepository(db), "", "")
+	annotationService := annotationsvc.New(pgRepo.NewAnnotationRepository(db), environmentService, taskService, attachmentRepo, attachmentRepo, fileStore, "paca-attachments-e2e").WithTaskAccess(taskService, taskService)
 	engine := router.New(router.Deps{
+		DocFile:              handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),
+		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), nil),
+		Environment:          handler.NewEnvironmentHandler(environmentService, ""),
+		Annotation:           handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery),
 		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher)),
 		TokenManager:         tm,
 		APIKeyAuth:           apiKeyService,
@@ -275,7 +292,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		Task:                 handler.NewTaskHandler(taskService, viewService, activityService, handler.WithTaskAssignedProjectService(projectService)),
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
-		Attachment:           handler.NewAttachmentHandler(attachmentService),
+		Attachment:           handler.NewAttachmentHandler(attachmentService).WithFileDelivery(fileDelivery),
 		Notification:         handler.NewNotificationHandler(notificationService),
 		APIKey:               handler.NewAPIKeyHandler(apiKeyService),
 		Automation:           handler.NewAutomationHandler(automationService),
@@ -293,6 +310,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	}
 
 	return &e2eEnv{
+		fileGate: fileGate, fileStore: fileStore,
 		ctx:  ctx,
 		base: srv.URL,
 		client: &http.Client{

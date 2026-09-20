@@ -2,6 +2,7 @@ package annotationdom
 
 import (
 	"context"
+	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 // environmentsvc.Service depends on secret.Encryptor without that leaking
 // into environmentdom.Service's own interface.
 type Service interface {
+	GetScreenshotFile(ctx context.Context, projectID, annotationID uuid.UUID) (*attachmentdom.File, error)
 	// ListForPage returns every annotation (open and resolved alike) for
 	// the given page — callers filter resolved ones client-side, so a
 	// "show resolved" toggle never needs a second round trip.

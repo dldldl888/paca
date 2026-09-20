@@ -251,19 +251,24 @@ func (r *AnnotationRepository) Create(ctx context.Context, a *annotationdom.Page
 // SetScreenshotFileID attaches an already-uploaded screenshot file to
 // annotation id.
 func (r *AnnotationRepository) SetScreenshotFileID(ctx context.Context, id, fileID uuid.UUID) error {
-	result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
+	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
+		if err := r.MarkScreenshotFileUploaded(ctx, fileID); err != nil {
+			return err
+		}
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `
 		UPDATE page_annotations SET screenshot_file_id = $1, updated_at = $2
 		WHERE id = $3 AND deleted_at IS NULL`,
-		fileID.String(), time.Now(), id.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("annotation repo: set screenshot file id: %w", err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return annotationdom.ErrAnnotationNotFound
-	}
-	return nil
+			fileID.String(), time.Now(), id.String(),
+		)
+		if err != nil {
+			return fmt.Errorf("annotation repo: set screenshot file id: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return annotationdom.ErrAnnotationNotFound
+		}
+		return nil
+	})
 }
 
 // SetStatus updates annotation id's resolved status.

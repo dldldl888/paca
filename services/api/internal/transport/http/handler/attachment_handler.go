@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,7 +18,8 @@ import (
 
 // AttachmentHandler handles task-attachment endpoints.
 type AttachmentHandler struct {
-	svc attachmentdom.Service
+	files *FileDelivery
+	svc   attachmentdom.Service
 }
 
 // NewAttachmentHandler returns an AttachmentHandler wired to the attachment service.
@@ -164,7 +167,7 @@ func (h *AttachmentHandler) ListTaskAttachments(w http.ResponseWriter, r *http.R
 }
 
 // GetDownloadURL handles GET /projects/:projectId/tasks/:taskId/attachments/:attachmentId/download-url.
-// Returns a short-lived presigned URL valid for 15 minutes.
+// Returns a same-origin API URL which requires current authenticated access.
 // Add ?download=true to receive a URL with Content-Disposition: attachment
 // so the browser forces a file download instead of inline preview.
 func (h *AttachmentHandler) GetDownloadURL(w http.ResponseWriter, r *http.Request) {
@@ -222,20 +225,9 @@ func (h *AttachmentHandler) GetAttachmentContent(w http.ResponseWriter, r *http.
 		return
 	}
 
-	data, contentType, err := h.svc.GetAttachmentContent(r.Context(), projectID, taskID, attachmentID)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Disposition", "attachment")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	h.files.serve(w, r, "", func(ctx context.Context) (*attachmentdom.File, error) {
+		return h.svc.GetAttachmentFile(ctx, projectID, taskID, attachmentID)
+	}, strings.HasSuffix(r.URL.Path, "/content"))
 }
 
 // DeleteTaskAttachment handles DELETE /projects/:projectId/tasks/:taskId/attachments/:attachmentId.
@@ -272,4 +264,13 @@ func parseAttachmentID(r *http.Request) (uuid.UUID, error) {
 		return uuid.Nil, apierr.New(apierr.CodeBadRequest, "invalid attachment id")
 	}
 	return id, nil
+}
+
+func (h *AttachmentHandler) WithFileDelivery(files *FileDelivery) *AttachmentHandler {
+	h.files = files
+	return h
+}
+
+func (h *AttachmentHandler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
+	h.GetAttachmentContent(w, r)
 }

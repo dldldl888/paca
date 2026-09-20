@@ -574,3 +574,7 @@ func TestTaskUploadBindingAndCurrentAccess(t *testing.T) {
 		}
 	})
 }
+
+func (s *boundaryStorage) OpenObject(context.Context, string, string, string) (*storage.Object, error) {
+	return nil, errors.New("unused streaming storage")
+}

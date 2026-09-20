@@ -626,6 +626,9 @@ func New(deps Deps) http.Handler {
 							httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
 							httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionTasksRead}},
 						)).Get("/{attachmentId}/download-url", deps.Attachment.GetDownloadURL)
+						r.Get("/{attachmentId}/download", deps.Attachment.DownloadAttachment)
+						r.Head("/{attachmentId}/download", deps.Attachment.DownloadAttachment)
+						r.Head("/{attachmentId}/content", deps.Attachment.GetAttachmentContent)
 						r.With(httpmw.RequirePublicProjectOrPermissions(deps.ProjectVisibilitySvc, deps.Authorizer,
 							httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
 							httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionTasksRead}},
@@ -723,6 +726,8 @@ func New(deps Deps) http.Handler {
 							httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
 							httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionDocsRead}},
 						)).Get("/files/{fileId}/download-url", deps.DocFile.GetDocFileDownloadURL)
+						r.Get("/files/{fileId}/content", deps.DocFile.GetDocFileContent)
+						r.Head("/files/{fileId}/content", deps.DocFile.GetDocFileContent)
 						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionDocsWrite)).
 							Delete("/files/{fileId}", deps.DocFile.DeleteDocFile)
 					})
@@ -954,6 +959,8 @@ func New(deps Deps) http.Handler {
 									Post("/{annotationId}/complete-upload", deps.Annotation.CompleteScreenshotUpload)
 								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsRead)).
 									Get("/{annotationId}/screenshot-url", deps.Annotation.GetScreenshotURL)
+								r.Get("/{annotationId}/screenshot", deps.Annotation.GetScreenshotContent)
+								r.Head("/{annotationId}/screenshot", deps.Annotation.GetScreenshotContent)
 								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsResolve)).
 									Patch("/{annotationId}/resolve", deps.Annotation.Resolve)
 								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsResolve)).
@@ -1066,6 +1073,8 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 }
+
+func (sr *statusRecorder) Unwrap() http.ResponseWriter { return sr.ResponseWriter }
 
 func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code

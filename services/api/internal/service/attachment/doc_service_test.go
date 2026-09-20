@@ -3,6 +3,7 @@ package attachmentsvc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,12 +75,13 @@ func newDocFileTestService(docRepo *fakeDocRepoForChecker) (svc *Service, fileID
 	repo := &fakeRepo{
 		files: map[uuid.UUID]*attachmentdom.File{
 			fileID: {
-				ID:          fileID,
-				StorageKey:  "docs/" + docID.String() + "/" + fileID.String() + "/file.txt",
-				Bucket:      "test-bucket",
-				FileName:    "file.txt",
-				ContentType: "text/plain",
-				FileSize:    5,
+				ID:           fileID,
+				StorageKey:   "docs/" + docID.String() + "/" + fileID.String() + "/file.txt",
+				Bucket:       "test-bucket",
+				FileName:     "file.txt",
+				ContentType:  "text/plain",
+				FileSize:     5,
+				UploadStatus: attachmentdom.UploadStatusUploaded,
 			},
 		},
 		attachments: map[uuid.UUID]*attachmentdom.TaskAttachment{},
@@ -108,12 +110,9 @@ func TestGetDocFileDownloadURL_OwnProject_PassesOwnershipCheck(t *testing.T) {
 	svc, fileID, docID := newDocFileTestService(docRepo)
 	docRepo.docs[docID] = &docdom.Document{ID: docID, ProjectID: ownerProjectID}
 
-	// fakeStore.PresignGetObject is an unimplemented stub, so this can't
-	// return a real URL — the point is that the request gets past the
-	// project-ownership gate instead of being rejected by it.
-	_, err := svc.GetDocFileDownloadURL(context.Background(), ownerProjectID, docID, fileID, 15*time.Minute)
-	if errors.Is(err, attachmentdom.ErrDocNotInProject) {
-		t.Fatalf("same-project download must not be rejected by the ownership check, got %v", err)
+	url, err := svc.GetDocFileDownloadURL(context.Background(), ownerProjectID, docID, fileID, time.Minute)
+	if err != nil || !strings.HasSuffix(url, "/content") {
+		t.Fatalf("same-project API URL: %q %v", url, err)
 	}
 }
 

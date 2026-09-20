@@ -37,7 +37,6 @@ const maxTaskTitleLength = 120
 // the object store — *storage.S3Client satisfies this directly.
 type ObjectStore interface {
 	PresignPutObject(ctx context.Context, bucket, key, contentType string, ttl time.Duration) (string, error)
-	PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, contentDisposition string) (string, error)
 }
 
 // TaskCreator is the minimal task.Service surface CreateTaskFromAnnotation
@@ -61,11 +60,6 @@ type TaskAttachmentLinker interface {
 type FileFinder interface {
 	FindFileByID(ctx context.Context, id uuid.UUID) (*attachmentdom.File, error)
 }
-
-// screenshotURLTTL bounds how long a screenshot's presigned GET URL stays
-// valid — long enough for a browser to load the image, short enough that
-// a leaked URL (e.g. cached in a proxy log) is useless shortly after.
-const screenshotURLTTL = 15 * time.Minute
 
 // annotationScreenshotPrefix is the storage-key prefix every screenshot
 // uploaded via InitiateScreenshotUpload gets (see that method) — screenshots
@@ -481,9 +475,10 @@ func (s *Service) CompleteScreenshotUpload(ctx context.Context, projectID, annot
 	if err := verifyAnnotationScreenshotFile(f, actor); err != nil {
 		return nil, err
 	}
-	if err := s.repo.MarkScreenshotFileUploaded(ctx, fileID); err != nil {
-		return nil, err
-	}
+	ctx = authz.WithMutationCheck(ctx, func(ctx context.Context) error {
+		_, err := s.get(ctx, projectID, annotationID, taskdom.AccessProgress)
+		return err
+	})
 	if err := s.repo.SetScreenshotFileID(ctx, annotationID, fileID); err != nil {
 		return nil, err
 	}
@@ -496,40 +491,37 @@ func (s *Service) ResolvePortForward(ctx context.Context, userID uuid.UUID, host
 	return s.repo.ResolvePortForward(ctx, userID, hostPort)
 }
 
-// GetScreenshotURL returns a presigned GET URL for an annotation's uploaded
-// screenshot.
+// GetScreenshotURL uses the annotation's own authenticated route (including extension token scope).
 func (s *Service) GetScreenshotURL(ctx context.Context, projectID, annotationID uuid.UUID) (string, error) {
+	if _, err := s.GetScreenshotFile(ctx, projectID, annotationID); err != nil {
+		return "", err
+	}
 	a, err := s.Get(ctx, projectID, annotationID)
 	if err != nil {
 		return "", err
 	}
+	return fmt.Sprintf("/api/v1/projects/%s/environments/%s/port-forwards/%s/annotations/%s/screenshot", projectID, a.EnvironmentID, a.PortForwardID, annotationID), nil
+}
+
+func (s *Service) GetScreenshotFile(ctx context.Context, projectID, annotationID uuid.UUID) (*attachmentdom.File, error) {
+	a, err := s.Get(ctx, projectID, annotationID)
+	if err != nil {
+		return nil, err
+	}
 	if a.ScreenshotFileID == nil {
-		return "", annotationdom.ErrAnnotationScreenshotNotUploaded
+		return nil, annotationdom.ErrAnnotationScreenshotNotUploaded
 	}
 	f, err := s.files.FindFileByID(ctx, *a.ScreenshotFileID)
 	if err != nil {
-		return "", fmt.Errorf("annotation svc: find screenshot file: %w", err)
+		return nil, err
 	}
-	// Defense in depth: Create/CompleteScreenshotUpload already reject a
-	// mismatched file at attach time, but re-checking the prefix here means
-	// a future bug in either (or a screenshot_file_id set some other way)
-	// can never turn into presigning a URL for a task attachment, doc, or
-	// avatar instead of an actual screenshot. Not the uploader-identity half
-	// of that check (see verifyAnnotationScreenshotFile's own doc comment on
-	// why) — any project member with annotations.write may legitimately be
-	// the one who attached this screenshot, not just annotation's creator.
 	if !isAnnotationScreenshotFile(f) {
-		return "", annotationdom.ErrAnnotationScreenshotMismatch
+		return nil, annotationdom.ErrAnnotationScreenshotMismatch
 	}
-	bucket := f.Bucket
-	if bucket == "" {
-		bucket = s.bucket
+	if f.UploadStatus != attachmentdom.UploadStatusUploaded {
+		return nil, annotationdom.ErrAnnotationScreenshotNotUploaded
 	}
-	url, err := s.store.PresignGetObject(ctx, bucket, f.StorageKey, screenshotURLTTL, "")
-	if err != nil {
-		return "", fmt.Errorf("annotation svc: presign screenshot get: %w", err)
-	}
-	return url, nil
+	return f, nil
 }
 
 // taskTitleFromBody derives a task title from a comment body, truncated to

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -702,8 +703,8 @@ func TestGetDownloadURL(t *testing.T) {
 	if previewEnv.Data.URL == "" {
 		t.Errorf("expected non-empty download URL")
 	}
-	if bytes.Contains([]byte(previewEnv.Data.URL), []byte("attachment")) {
-		t.Errorf("preview URL should not contain attachment content-disposition, got %q", previewEnv.Data.URL)
+	if !strings.HasSuffix(previewEnv.Data.URL, "/download") {
+		t.Errorf("preview URL should be the authenticated download route, got %q", previewEnv.Data.URL)
 	}
 
 	// Force-download URL (?download=true).
@@ -719,8 +720,8 @@ func TestGetDownloadURL(t *testing.T) {
 	if err := json.NewDecoder(wForce.Body).Decode(&forceEnv); err != nil {
 		t.Fatalf("decode download url force: %v", err)
 	}
-	if !bytes.Contains([]byte(forceEnv.Data.URL), []byte("attachment")) {
-		t.Errorf("force-download URL should contain attachment content-disposition, got %q", forceEnv.Data.URL)
+	if !strings.HasSuffix(forceEnv.Data.URL, "/download?download=true") {
+		t.Errorf("force-download URL should request attachment disposition, got %q", forceEnv.Data.URL)
 	}
 }
 
@@ -1139,4 +1140,8 @@ func TestAvatarUpload_Project_FullFlow(t *testing.T) {
 	if deleteData["avatar_url"] != nil {
 		t.Errorf("expected avatar_url to be cleared after delete, got %v", deleteData["avatar_url"])
 	}
+}
+
+func (s *fakeStorageClient) OpenObject(context.Context, string, string, string) (*storage.Object, error) {
+	return nil, errors.New("unused streaming storage")
 }
