@@ -24,7 +24,7 @@ export interface Notification {
 	task_id: string | null;
 	task_title: string;
 	task_number: number;
-	project_id: string;
+	project_id: string | null;
 	project_name: string;
 	read_at: string | null;
 	created_at: string;

@@ -977,6 +977,11 @@ export interface TaskLink {
 	created_at: string;
 }
 
+export interface TaskLinkListResult {
+	items: TaskLink[];
+	waiting_on_hidden_blocker: boolean;
+}
+
 export const LINK_TYPE_LABELS: Record<DisplayLinkType, string> = {
 	blocks: "blocks",
 	is_blocked_by: "is blocked by",
@@ -988,11 +993,11 @@ export const LINK_TYPE_LABELS: Record<DisplayLinkType, string> = {
 export async function listTaskLinks(
 	projectId: string,
 	taskId: string,
-): Promise<TaskLink[]> {
+): Promise<TaskLinkListResult> {
 	const { data } = await apiClient.instance.get<
-		SuccessEnvelope<{ items: TaskLink[] }>
+		SuccessEnvelope<TaskLinkListResult>
 	>(`/projects/${projectId}/tasks/${taskId}/links`);
-	return data.data.items;
+	return data.data;
 }
 
 export async function createTaskLink(

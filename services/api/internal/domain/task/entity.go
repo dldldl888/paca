@@ -149,6 +149,13 @@ type TaskLink struct {
 	DisplayLinkType string
 }
 
+// TaskLinkList contains visible links plus a non-identifying wait signal for
+// an incomplete blocker the caller cannot read.
+type TaskLinkList struct {
+	Items                  []*TaskLink
+	WaitingOnHiddenBlocker bool
+}
+
 // LinkedTaskSummary is a lightweight projection of a Task embedded in
 // TaskLink responses to avoid N+1 lookups.
 type LinkedTaskSummary struct {

@@ -448,6 +448,7 @@ func TestNotificationReplayRecoveryAndRevocation(t *testing.T) {
 	f := newDraftFixture(t)
 	env := f.env
 	seedUser(t, env, "notify-recipient", "password1", "Recipient")
+	recipientClient, recipientToken := taskMemberLogin(t, env, "notify-recipient", "password1")
 	recipient, e := env.userRepo.FindByUsername(env.ctx, "notify-recipient")
 	if e != nil {
 		t.Fatal(e)
@@ -487,16 +488,72 @@ func TestNotificationReplayRecoveryAndRevocation(t *testing.T) {
 	if e = repo.MarkAsRead(env.ctx, rows[0].ID, owner); !errors.Is(e, notificationdom.ErrNotificationNotFound) {
 		t.Fatal("other user marked read", e)
 	}
-	if _, e = env.db.Exec("UPDATE project_roles SET permissions='{}' WHERE project_id=$1 AND role_name='Editor'", f.pid); e != nil {
+	var adminRole, editorRole uuid.UUID
+	if e = env.db.Get(&adminRole, "SELECT id FROM project_roles WHERE project_id=$1 AND role_name='Admin'", f.pid); e != nil {
 		t.Fatal(e)
 	}
-	rows, _, e = repo.ListForUser(env.ctx, recipient.ID, 20, nil)
+	if e = env.db.Get(&editorRole, "SELECT id FROM project_roles WHERE project_id=$1 AND role_name='Editor'", f.pid); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = env.db.Exec("UPDATE project_members SET project_role_id=$1 WHERE id=$2", adminRole, mid); e != nil {
+		t.Fatal(e)
+	}
+	creatorTask, e := env.taskSvc.CreateTask(authz.WithActorID(env.ctx, recipient.ID), taskdom.CreateTaskInput{ProjectID: f.pid, Title: "CREATOR_ONLY_NOTIFICATION", AssigneeIDs: []uuid.UUID{mid}})
 	if e != nil {
 		t.Fatal(e)
 	}
+	creatorTaskID := creatorTask.ID
+	if e = repo.Create(env.ctx, &notificationdom.Notification{ID: uuid.New(), RecipientUserID: recipient.ID, Type: notificationdom.NotificationTypeMentioned, TaskID: &creatorTaskID, ProjectID: f.pid, CreatedAt: time.Now()}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = env.db.Exec("UPDATE project_members SET project_role_id=$1 WHERE id=$2", editorRole, mid); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = env.db.Exec("DELETE FROM task_assignees WHERE task_id IN ($1,$2)", task.ID, creatorTask.ID); e != nil {
+		t.Fatal(e)
+	}
+	rows, _, e = repo.ListForUser(env.ctx, recipient.ID, 20, nil)
+	if e != nil || len(rows) != 3 {
+		t.Fatal(e)
+	}
 	for _, row := range rows {
-		if row.TaskTitle != "" || row.TaskNumber != 0 {
-			t.Fatal("revoked summary leaked", row)
+		if row.TaskID != nil || row.TaskTitle != "" || row.TaskNumber != 0 || row.ProjectID != f.pid || row.ProjectName == "" {
+			t.Fatal("revoked task projection leaked or hid current project", row)
+		}
+	}
+	request := func() []any {
+		t.Helper()
+		req := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/users/me/notifications", nil)
+		req.Header.Set("Authorization", "Bearer "+recipientToken)
+		resp := mustDo(t, recipientClient, req)
+		defer resp.Body.Close()
+		assertStatus(t, resp, http.StatusOK)
+		var result envelope
+		decodeJSON(t, resp, &result)
+		return assertDataMap(t, result)["items"].([]any)
+	}
+	for _, raw := range request() {
+		item := raw.(map[string]any)
+		if item["task_id"] != nil || item["task_title"] != "" || item["task_number"] != float64(0) || item["project_id"] != f.pid.String() || item["project_name"] == "" {
+			t.Fatal("revoked notification API projection", item)
+		}
+	}
+	if _, e = env.db.Exec("UPDATE project_members SET deleted_at=now() WHERE id=$1", mid); e != nil {
+		t.Fatal(e)
+	}
+	rows, _, e = repo.ListForUser(env.ctx, recipient.ID, 20, nil)
+	if e != nil || len(rows) != 3 {
+		t.Fatal(rows, e)
+	}
+	for _, row := range rows {
+		if row.TaskID != nil || row.ProjectID != uuid.Nil || row.ProjectName != "" {
+			t.Fatal("former project notification leaked navigation", row)
+		}
+	}
+	for _, raw := range request() {
+		item := raw.(map[string]any)
+		if item["task_id"] != nil || item["project_id"] != nil || item["project_name"] != "" {
+			t.Fatal("former project notification API leaked navigation", item)
 		}
 	}
 }

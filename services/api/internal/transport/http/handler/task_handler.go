@@ -1632,11 +1632,11 @@ func (h *TaskHandler) ListTaskLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]dto.TaskLinkResponse, 0, len(links))
-	for _, l := range links {
+	resp := make([]dto.TaskLinkResponse, 0, len(links.Items))
+	for _, l := range links.Items {
 		resp = append(resp, dto.TaskLinkFromEntity(l))
 	}
-	presenter.OK(w, r, map[string]any{"items": resp})
+	presenter.OK(w, r, map[string]any{"items": resp, "waiting_on_hidden_blocker": links.WaitingOnHiddenBlocker})
 }
 
 // CreateTaskLink handles POST /projects/:projectId/tasks/:taskId/links.

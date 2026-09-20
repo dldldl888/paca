@@ -292,8 +292,8 @@ func (f *fakeTaskSvc) DeleteCustomFieldDefinition(_ context.Context, _, _ uuid.U
 
 // --- TaskLinkService stubs --------------------------------------------------
 
-func (f *fakeTaskSvc) ListTaskLinks(_ context.Context, _, _ uuid.UUID) ([]*taskdom.TaskLink, error) {
-	return []*taskdom.TaskLink{}, nil
+func (f *fakeTaskSvc) ListTaskLinks(_ context.Context, _, _ uuid.UUID) (*taskdom.TaskLinkList, error) {
+	return &taskdom.TaskLinkList{Items: []*taskdom.TaskLink{}}, nil
 }
 
 func (f *fakeTaskSvc) CreateTaskLink(_ context.Context, in taskdom.CreateTaskLinkInput) (*taskdom.TaskLink, error) {

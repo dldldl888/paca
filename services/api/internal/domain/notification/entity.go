@@ -55,9 +55,9 @@ type Notification struct {
 	// TaskTitle and TaskNumber are denormalised from the task record.
 	TaskTitle  string
 	TaskNumber int
-	// ProjectID is the project the task belongs to.
+	// ProjectID is zero when current access cannot expose the historical project.
 	ProjectID uuid.UUID
-	// ProjectName is denormalised from the project record.
+	// ProjectName is empty when the project is not currently visible.
 	ProjectName string
 	// ReadAt is nil when the notification has not yet been read.
 	ReadAt    *time.Time

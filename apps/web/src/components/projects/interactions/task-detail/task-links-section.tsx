@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Link2, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Hourglass, Link2, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -55,9 +55,10 @@ export function TaskLinksSection({
 	const qc = useQueryClient();
 	const [modalOpen, setModalOpen] = useState(false);
 
-	const { data: links = [] } = useQuery(
+	const { data = { items: [], waiting_on_hidden_blocker: false } } = useQuery(
 		taskLinksQueryOptions(projectId, taskId),
 	);
+	const links = data.items;
 
 	const createMutation = useMutation({
 		mutationFn: ({
@@ -190,7 +191,17 @@ export function TaskLinksSection({
 				</div>
 			)}
 
-			{orderedKeys.length === 0 && (
+			{data.waiting_on_hidden_blocker && (
+				<div
+					className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground"
+					role="status"
+				>
+					<Hourglass className="size-4 shrink-0" />
+					<span>{t("taskDetail.links.waitingOnHiddenBlocker")}</span>
+				</div>
+			)}
+
+			{orderedKeys.length === 0 && !data.waiting_on_hidden_blocker && (
 				<div className="flex items-center gap-3 px-1 py-3 text-muted-foreground/45">
 					<Link2 className="size-4 opacity-70" />
 					<p className="text-sm italic">{t("taskDetail.links.empty")}</p>

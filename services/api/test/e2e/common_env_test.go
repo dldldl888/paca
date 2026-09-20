@@ -45,6 +45,7 @@ import (
 	authsvc "github.com/Paca-AI/api/internal/service/auth"
 	automationsvc "github.com/Paca-AI/api/internal/service/automation"
 	globalrolesvc "github.com/Paca-AI/api/internal/service/globalrole"
+	notificationsvc "github.com/Paca-AI/api/internal/service/notification"
 	projectsvc "github.com/Paca-AI/api/internal/service/project"
 	sprintsvc "github.com/Paca-AI/api/internal/service/sprint"
 	tasksvc "github.com/Paca-AI/api/internal/service/task"
@@ -228,6 +229,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	apiKeyService := apikeysvc.New(apiKeyRepo)
 	activityRepo := pgRepo.NewTaskActivityRepository(db)
 	activityService := tasksvc.NewActivityService(activityRepo, taskRepo, projectRepo, publisher).WithTaskAccessChecker(taskService)
+	notificationService := notificationsvc.New(pgRepo.NewNotificationRepository(db), projectRepo, nil).WithCurrentDelivery(nil, taskService)
 	automationRepo := pgRepo.NewAutomationRepository(db)
 	automationService := automationsvc.New(automationRepo, taskRepo, projectRepo, publisher).WithTaskAccess(taskService).WithSprintLookup(sprintRepo)
 	pluginRepoForAgent := pgRepo.NewPluginRepository(db)
@@ -274,6 +276,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
 		Attachment:           handler.NewAttachmentHandler(attachmentService),
+		Notification:         handler.NewNotificationHandler(notificationService),
 		APIKey:               handler.NewAPIKeyHandler(apiKeyService),
 		Automation:           handler.NewAutomationHandler(automationService),
 		Agent:                handler.NewAgentHandler(agentService, "", "", "").WithMemberRepo(projectRepo),

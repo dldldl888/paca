@@ -9,8 +9,8 @@ import (
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 )
 
-// ListTaskLinks returns all links for a task, computing display labels.
-func (s *Service) ListTaskLinks(ctx context.Context, projectID, taskID uuid.UUID) ([]*taskdom.TaskLink, error) {
+// ListTaskLinks returns visible links and an anonymous incomplete-blocker signal.
+func (s *Service) ListTaskLinks(ctx context.Context, projectID, taskID uuid.UUID) (*taskdom.TaskLinkList, error) {
 	if _, err := s.CheckTaskAccess(ctx, projectID, taskID, taskdom.AccessRead); err != nil {
 		return nil, err
 	}
@@ -19,12 +19,16 @@ func (s *Service) ListTaskLinks(ctx context.Context, projectID, taskID uuid.UUID
 		return nil, err
 	}
 	repo, ok := s.repo.(interface {
-		ListTaskLinksVisible(context.Context, uuid.UUID, taskdom.AccessScope) ([]*taskdom.TaskLink, error)
+		ListTaskLinksVisible(context.Context, uuid.UUID, taskdom.AccessScope) ([]*taskdom.TaskLink, bool, error)
 	})
 	if !ok {
 		return nil, taskdom.ErrTaskNotFound
 	}
-	return repo.ListTaskLinksVisible(ctx, taskID, scope)
+	links, waiting, err := repo.ListTaskLinksVisible(ctx, taskID, scope)
+	if err != nil {
+		return nil, err
+	}
+	return &taskdom.TaskLinkList{Items: links, WaitingOnHiddenBlocker: waiting}, nil
 }
 
 // CreateTaskLink validates and persists a new directed link.

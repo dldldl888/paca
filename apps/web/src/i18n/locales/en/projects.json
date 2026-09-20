@@ -1163,6 +1163,7 @@
 			"addButton": "Add Link",
 			"openTask": "Open task",
 			"removeLink": "Remove link",
+			"waitingOnHiddenBlocker": "Waiting for prerequisite work to finish",
 			"empty": "No linked tasks"
 		},
 		"attachments": {

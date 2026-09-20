@@ -58,8 +58,27 @@ func (r *TaskLinkRepository) ListTaskLinks(ctx context.Context, taskID uuid.UUID
 	return r.listTaskLinks(ctx, taskID, nil)
 }
 
-func (r *TaskLinkRepository) ListTaskLinksVisible(ctx context.Context, taskID uuid.UUID, scope taskdom.AccessScope) ([]*taskdom.TaskLink, error) {
-	return r.listTaskLinks(ctx, taskID, &scope)
+func (r *TaskLinkRepository) ListTaskLinksVisible(ctx context.Context, taskID uuid.UUID, scope taskdom.AccessScope) ([]*taskdom.TaskLink, bool, error) {
+	links, err := r.listTaskLinks(ctx, taskID, &scope)
+	if err != nil {
+		return nil, false, err
+	}
+	b := &queryBuilder{idx: 2, args: []any{taskID.String()}}
+	applyTaskVisibility(b, []taskdom.AccessScope{scope})
+	visible := strings.Join(b.whereClauses, " AND ")
+	baseVisible := strings.ReplaceAll(visible, "tasks.", "base_tasks.")
+	var waiting bool
+	err = r.db.GetContext(ctx, &waiting, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM task_links tl
+			JOIN tasks ON tasks.id=tl.source_task_id AND tasks.deleted_at IS NULL
+			WHERE tl.target_task_id=$1 AND tl.link_type='blocks'
+			  AND NOT EXISTS (SELECT 1 FROM task_statuses ts WHERE ts.id=tasks.status_id AND ts.category='done')
+			  AND NOT (`+visible+`)
+			  AND EXISTS (SELECT 1 FROM tasks base_tasks WHERE base_tasks.id=$1 AND base_tasks.deleted_at IS NULL AND (`+baseVisible+`))
+		)`, b.args...)
+	return links, waiting, err
 }
 
 func (r *TaskLinkRepository) listTaskLinks(ctx context.Context, taskID uuid.UUID, scope *taskdom.AccessScope) ([]*taskdom.TaskLink, error) {

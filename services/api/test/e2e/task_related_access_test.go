@@ -44,6 +44,8 @@ func TestUS005RelatedTaskBoundaries(t *testing.T) {
 	managerCtx := authz.WithActorID(env.ctx, manager.ID)
 	var member [2]uuid.UUID
 	var userCtx [2]context.Context
+	var userClient [2]*http.Client
+	var userToken [2]string
 	for i, name := range []string{"related-a", "related-b"} {
 		seedUser(t, env, name, "password1", name)
 		u, err := env.userRepo.FindByUsername(env.ctx, name)
@@ -55,6 +57,7 @@ func TestUS005RelatedTaskBoundaries(t *testing.T) {
 		if _, err := env.db.Exec(`INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type) SELECT $1,$2,$3,id,'human' FROM project_roles WHERE project_id=$2 AND role_name='Editor'`, member[i], pid, u.ID); err != nil {
 			t.Fatal(err)
 		}
+		userClient[i], userToken[i] = taskMemberLogin(t, env, name, "password1")
 	}
 	var task [3]*taskdom.Task
 	for i := range task {
@@ -81,6 +84,13 @@ func TestUS005RelatedTaskBoundaries(t *testing.T) {
 		if _, err := env.taskSvc.CreateTaskLink(managerCtx, taskdom.CreateTaskLinkInput{ProjectID: pid, SourceTaskID: task[0].ID, TargetTaskID: target.ID, LinkType: taskdom.LinkTypeBlocks}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	hiddenBlock, err := env.taskSvc.CreateTaskLink(managerCtx, taskdom.CreateTaskLinkInput{ProjectID: pid, SourceTaskID: task[1].ID, TargetTaskID: task[2].ID, LinkType: taskdom.LinkTypeBlocks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.taskSvc.CreateTaskLink(managerCtx, taskdom.CreateTaskLinkInput{ProjectID: pid, SourceTaskID: task[1].ID, TargetTaskID: task[0].ID, LinkType: taskdom.LinkTypeRelatesTo}); err != nil {
+		t.Fatal(err)
 	}
 	parent := &task[1].ID
 	if _, err := env.taskSvc.UpdateTask(managerCtx, pid, task[0].ID, taskdom.UpdateTaskInput{ParentTaskID: &parent}); err != nil {
@@ -121,9 +131,9 @@ func TestUS005RelatedTaskBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		links, err := linkRepo.ListTaskLinksVisible(userCtx[0], task[0].ID, scope)
-		if err != nil || len(links) != 1 || links[0].LinkedTask.ID != task[2].ID {
-			t.Errorf("SQL returned hidden links: %+v %v", links, err)
+		links, waiting, err := linkRepo.ListTaskLinksVisible(userCtx[0], task[0].ID, scope)
+		if err != nil || waiting || len(links) != 1 || links[0].LinkedTask.ID != task[2].ID {
+			t.Errorf("SQL returned hidden links or wrong wait state: %+v %v %v", links, waiting, err)
 		}
 		positions, err := viewRepo.ListTaskPositionsVisible(userCtx[0], v.ID, scope)
 		if err != nil || len(positions) != 2 {
@@ -133,6 +143,45 @@ func TestUS005RelatedTaskBoundaries(t *testing.T) {
 			if p.TaskID == task[1].ID || p.GroupKey != nil && *p.GroupKey == "secret-group-1" {
 				t.Fatal("hidden ID/group returned")
 			}
+		}
+		requestLinks := func(client *http.Client, token string, taskID uuid.UUID) map[string]any {
+			t.Helper()
+			req := mustRequest(env.ctx, t, http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%s/tasks/%s/links", env.base, pid, taskID), nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			resp := mustDo(t, client, req)
+			defer resp.Body.Close()
+			assertStatus(t, resp, http.StatusOK)
+			var result envelope
+			decodeJSON(t, resp, &result)
+			return assertDataMap(t, result)
+		}
+		blocked := requestLinks(userClient[0], userToken[0], task[2].ID)
+		encoded, _ := json.Marshal(blocked)
+		if blocked["waiting_on_hidden_blocker"] != true || len(blocked["items"].([]any)) != 1 || strings.Contains(string(encoded), hiddenBlock.ID.String()) || strings.Contains(string(encoded), task[1].ID.String()) || strings.Contains(string(encoded), task[1].Title) || strings.Contains(string(encoded), fmt.Sprintf(`"task_number":%d`, task[1].TaskNumber)) {
+			t.Fatalf("anonymous wait leaked blocker or disappeared: %s", encoded)
+		}
+		notBlocked := requestLinks(userClient[0], userToken[0], task[0].ID)
+		if notBlocked["waiting_on_hidden_blocker"] != false {
+			t.Fatalf("outgoing block or relates_to became waiting: %+v", notBlocked)
+		}
+		managerLinks := requestLinks(client, token, task[2].ID)
+		if managerLinks["waiting_on_hidden_blocker"] != false || len(managerLinks["items"].([]any)) != 2 {
+			t.Fatalf("manager lost full links: %+v", managerLinks)
+		}
+		done, err := env.taskSvc.CreateTaskStatus(managerCtx, taskdom.CreateTaskStatusInput{ProjectID: pid, Name: "dependency done", Category: taskdom.StatusCategoryDone})
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalStatus := task[1].StatusID
+		doneID := &done.ID
+		if _, err := env.taskSvc.UpdateTask(managerCtx, pid, task[1].ID, taskdom.UpdateTaskInput{StatusID: &doneID}); err != nil {
+			t.Fatal(err)
+		}
+		if completed := requestLinks(userClient[0], userToken[0], task[2].ID); completed["waiting_on_hidden_blocker"] != false {
+			t.Fatalf("completed hidden blocker still waiting: %+v", completed)
+		}
+		if _, err := env.taskSvc.UpdateTask(managerCtx, pid, task[1].ID, taskdom.UpdateTaskInput{StatusID: &originalStatus}); err != nil {
+			t.Fatal(err)
 		}
 	})
 

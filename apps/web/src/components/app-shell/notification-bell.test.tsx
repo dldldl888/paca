@@ -141,6 +141,43 @@ describe("NotificationBell", () => {
 		qc.clear();
 	});
 
+	it("never builds a task or project route from a revoked notification", async () => {
+		const user = userEvent.setup();
+		mocks.listNotificationsMock.mockResolvedValue({
+			items: [makeNotification({ task_id: null })],
+			page_size: 20,
+			next_cursor: null,
+			unread_count: 1,
+		});
+		const projectView = render(<NotificationBell />, { wrapper });
+		await user.click(screen.getByRole("button", { name: "Notifications" }));
+		await user.click(
+			await screen.findByRole("button", { name: /Ship the thing/ }),
+		);
+		expect(mocks.navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "proj-a" },
+		});
+		expect(mocks.navigateMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({ to: "/projects/$projectId/tasks/$taskId" }),
+		);
+		projectView.unmount();
+
+		mocks.navigateMock.mockReset();
+		mocks.listNotificationsMock.mockResolvedValue({
+			items: [makeNotification({ task_id: null, project_id: null })],
+			page_size: 20,
+			next_cursor: null,
+			unread_count: 1,
+		});
+		render(<NotificationBell />, { wrapper });
+		await user.click(screen.getByRole("button", { name: "Notifications" }));
+		await user.click(
+			await screen.findByRole("button", { name: /Ship the thing/ }),
+		);
+		expect(mocks.navigateMock).not.toHaveBeenCalled();
+	});
+
 	it("renders an actor's initials and the assigned/mentioned badge icon", async () => {
 		mocks.listNotificationsMock.mockResolvedValue({
 			items: [

@@ -20,8 +20,8 @@ type Service interface {
 
 // TaskLinkService defines task-link use cases.
 type TaskLinkService interface {
-	// ListTaskLinks returns all links for taskID, computing inverse display labels.
-	ListTaskLinks(ctx context.Context, projectID, taskID uuid.UUID) ([]*TaskLink, error)
+	// ListTaskLinks returns visible links and an anonymous incomplete-blocker signal.
+	ListTaskLinks(ctx context.Context, projectID, taskID uuid.UUID) (*TaskLinkList, error)
 	// CreateTaskLink creates a directed link between two tasks in the same project.
 	CreateTaskLink(ctx context.Context, in CreateTaskLinkInput) (*TaskLink, error)
 	// DeleteTaskLink removes the link identified by linkID, verifying it

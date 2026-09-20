@@ -1163,6 +1163,7 @@
 			"addButton": "添加关联",
 			"openTask": "打开任务",
 			"removeLink": "移除关联",
+			"waitingOnHiddenBlocker": "等待前置工作完成",
 			"empty": "暂无关联任务"
 		},
 		"attachments": {

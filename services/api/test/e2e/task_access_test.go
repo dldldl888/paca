@@ -402,6 +402,67 @@ func TestUS002To004TaskIsolation(t *testing.T) {
 	})
 }
 
+// This node exercises only the SQL collection barrier. It deliberately avoids
+// GetTask/Require so a creator-only SQL regression cannot be hidden by an
+// earlier object-level failure.
+func TestTaskSQLVisibilityExcludesHistoricalCreator(t *testing.T) {
+	env := newE2EEnv(t)
+	seedTaskMemberUser(t, env, "sql-scope-manager", "password1")
+	client, token := taskMemberLogin(t, env, "sql-scope-manager", "password1")
+	pid := uuid.MustParse(createProjectForTasksViaAPI(t, env, client, token))
+
+	var users [2]uuid.UUID
+	var members [2]uuid.UUID
+	for i, name := range []string{"sql-scope-a", "sql-scope-b"} {
+		seedUser(t, env, name, "password1", name)
+		u, err := env.userRepo.FindByUsername(env.ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		users[i], members[i] = u.ID, uuid.New()
+		if _, err := env.db.Exec(`INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type) SELECT $1,$2,$3,id,'human' FROM project_roles WHERE project_id=$2 AND role_name='Editor'`, members[i], pid, users[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var adminRole, editorRole uuid.UUID
+	if err := env.db.Get(&adminRole, `SELECT id FROM project_roles WHERE project_id=$1 AND role_name='Admin'`, pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.db.Get(&editorRole, `SELECT id FROM project_roles WHERE project_id=$1 AND role_name='Editor'`, pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.db.Exec(`UPDATE project_members SET project_role_id=$1 WHERE id=$2`, adminRole, members[0]); err != nil {
+		t.Fatal(err)
+	}
+	points := 13
+	ctx := authz.WithActorID(env.ctx, users[0])
+	created, err := env.taskSvc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: pid, Title: "SQL_CREATOR_ONLY", AssigneeIDs: []uuid.UUID{members[1]}, StoryPoints: &points})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.db.Exec(`UPDATE project_members SET project_role_id=$1 WHERE id=$2`, editorRole, members[0]); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := authz.NewTaskAccessPolicy(pgRepo.NewAuthzPermissionStore(env.db)).ResolveTaskAccess(ctx, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	search := created.Title
+	filter := taskdom.TaskFilter{Search: &search, Visibility: &scope}
+	rows, more, err := env.taskRepo.ListTasks(env.ctx, pid, filter, 1, taskdom.TaskSort{})
+	if err != nil || more || len(rows) != 0 {
+		t.Errorf("creator-only SQL list: rows=%+v more=%v err=%v", rows, more, err)
+	}
+	count, err := env.taskRepo.CountTasks(env.ctx, pid, filter)
+	if err != nil || count != 0 {
+		t.Errorf("creator-only SQL count: %d %v", count, err)
+	}
+	sum, err := env.taskRepo.SumTaskField(env.ctx, pid, filter, "story_points")
+	if err != nil || sum != 0 {
+		t.Errorf("creator-only SQL sum: %v %v", sum, err)
+	}
+}
+
 // The read barrier controls the interleaving without a timing-based sleep.
 type taskReadBarrierRepo struct {
 	*pgRepo.TaskRepository

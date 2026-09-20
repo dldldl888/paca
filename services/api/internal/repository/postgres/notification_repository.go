@@ -24,7 +24,7 @@ type notificationReadRow struct {
 	ActorMemberID   *string    `db:"actor_member_id"`
 	Type            string     `db:"type"`
 	TaskID          *string    `db:"task_id"`
-	ProjectID       string     `db:"project_id"`
+	ProjectID       *string    `db:"project_id"`
 	ReadAt          *time.Time `db:"read_at"`
 	CreatedAt       time.Time  `db:"created_at"`
 
@@ -43,7 +43,7 @@ type notificationReadRow struct {
 	ActorAgentACPProvider *string `db:"actor_agent_acp_provider"`
 	TaskTitle             *string `db:"task_title"`
 	TaskNumber            *int    `db:"task_number"`
-	ProjectName           string  `db:"project_name"`
+	ProjectName           *string `db:"project_name"`
 }
 
 // --- Repository struct -------------------------------------------------------
@@ -62,7 +62,7 @@ func NewNotificationRepository(db *sqlx.DB) *NotificationRepository {
 
 const notificationReadCols = `
 	n.id, n.recipient_user_id, n.actor_member_id, n.type,
-	n.task_id, n.project_id, n.read_at, n.created_at,
+	t.id AS task_id, p.id AS project_id, n.read_at, n.created_at,
 	COALESCE(u.full_name, ag.name) AS actor_full_name,
 	COALESCE(u.username, ag.handle) AS actor_username,
 	COALESCE(u.avatar_key, ag.avatar_key) AS actor_avatar_key,
@@ -79,10 +79,14 @@ func notificationFromRow(r notificationReadRow) *notificationdom.Notification {
 		ID:              uuid.MustParse(r.ID),
 		RecipientUserID: uuid.MustParse(r.RecipientUserID),
 		Type:            notificationdom.NotificationType(r.Type),
-		ProjectID:       uuid.MustParse(r.ProjectID),
-		ProjectName:     r.ProjectName,
 		ReadAt:          r.ReadAt,
 		CreatedAt:       r.CreatedAt,
+	}
+	if r.ProjectID != nil {
+		n.ProjectID = uuid.MustParse(*r.ProjectID)
+	}
+	if r.ProjectName != nil {
+		n.ProjectName = *r.ProjectName
 	}
 	if r.ActorMemberID != nil {
 		id := uuid.MustParse(*r.ActorMemberID)
@@ -187,6 +191,15 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 	b := &queryBuilder{idx: len(args) + 1}
 	applyTaskVisibility(b, scopes)
 	visible := strings.ReplaceAll(strings.Join(b.whereClauses, " AND "), "tasks.", "t.")
+	projectVisible := "FALSE"
+	if len(scopes) > 0 {
+		placeholders := make([]string, 0, len(scopes))
+		for _, scope := range scopes {
+			placeholders = append(placeholders, b.placeholder())
+			b.args = append(b.args, scope.ProjectID.String())
+		}
+		projectVisible = "p.id IN (" + strings.Join(placeholders, ",") + ")"
+	}
 	args = append(args, b.args...)
 	var rows []notificationReadRow
 	query := `
@@ -196,7 +209,7 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
 		LEFT JOIN agents ag ON ag.id = pm.agent_id
 		LEFT JOIN tasks t ON t.id = n.task_id AND t.deleted_at IS NULL AND (` + visible + `)
-		JOIN projects p ON p.id = n.project_id
+		LEFT JOIN projects p ON p.id = n.project_id AND (` + projectVisible + `)
 		WHERE n.recipient_user_id = $1` + whereCursor + `
 		ORDER BY n.created_at DESC, n.id DESC
 		LIMIT ` + limitPlaceholder

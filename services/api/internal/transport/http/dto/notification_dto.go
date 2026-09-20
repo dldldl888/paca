@@ -27,7 +27,7 @@ type NotificationResponse struct {
 	TaskID                *uuid.UUID `json:"task_id"`
 	TaskTitle             string     `json:"task_title"`
 	TaskNumber            int        `json:"task_number"`
-	ProjectID             uuid.UUID  `json:"project_id"`
+	ProjectID             *uuid.UUID `json:"project_id"`
 	ProjectName           string     `json:"project_name"`
 	ReadAt                *time.Time `json:"read_at"`
 	CreatedAt             time.Time  `json:"created_at"`
@@ -35,6 +35,10 @@ type NotificationResponse struct {
 
 // NotificationFromEntity converts a domain Notification to a response DTO.
 func NotificationFromEntity(n *notificationdom.Notification) NotificationResponse {
+	var projectID *uuid.UUID
+	if n.ProjectID != uuid.Nil {
+		projectID = &n.ProjectID
+	}
 	return NotificationResponse{
 		ID:                    n.ID,
 		Type:                  string(n.Type),
@@ -47,7 +51,7 @@ func NotificationFromEntity(n *notificationdom.Notification) NotificationRespons
 		TaskID:                n.TaskID,
 		TaskTitle:             n.TaskTitle,
 		TaskNumber:            n.TaskNumber,
-		ProjectID:             n.ProjectID,
+		ProjectID:             projectID,
 		ProjectName:           n.ProjectName,
 		ReadAt:                n.ReadAt,
 		CreatedAt:             n.CreatedAt,
