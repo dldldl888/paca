@@ -222,7 +222,7 @@ func (r *NotificationRepository) ListForUser(ctx context.Context, userID uuid.UU
 		LEFT JOIN users u ON u.id = pm.user_id AND u.deleted_at IS NULL
 		LEFT JOIN agents ag ON ag.id = pm.agent_id
 		LEFT JOIN tasks t ON t.id = n.task_id AND t.deleted_at IS NULL AND (` + visible + `)
-		LEFT JOIN projects p ON p.id = n.project_id AND ((` + projectVisible + `) OR t.id IS NOT NULL)
+		LEFT JOIN projects p ON p.id = n.project_id AND p.deleted_at IS NULL AND ((` + projectVisible + `) OR t.id IS NOT NULL)
 		WHERE n.recipient_user_id = $1` + whereCursor + `
 		ORDER BY n.created_at DESC, n.id DESC
 		LIMIT ` + limitPlaceholder

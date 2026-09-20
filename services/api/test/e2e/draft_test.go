@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
+	globalroledom "github.com/Paca-AI/api/internal/domain/globalrole"
 	notificationdom "github.com/Paca-AI/api/internal/domain/notification"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
@@ -599,6 +600,16 @@ func TestNotificationReplayRecoveryAndRevocation(t *testing.T) {
 			t.Fatal("former project notification API leaked navigation", item)
 		}
 	}
+	globalReadRole := "NOTIFICATION_GLOBAL_READ_" + uuid.NewString()
+	if e = env.roleRepo.Create(env.ctx, &globalroledom.GlobalRole{ID: uuid.New(), Name: globalReadRole, Permissions: map[string]any{"projects.read": true}, CreatedAt: time.Now(), UpdatedAt: time.Now()}); e != nil {
+		t.Fatal(e)
+	}
+	assignGlobalRolesByName(t, env, "notify-recipient", globalReadRole)
+	assertProjection("global project read", false, true)
+	if e = env.projectSvc.Delete(env.ctx, f.pid); e != nil {
+		t.Fatal(e)
+	}
+	assertProjection("soft-deleted project", false, false)
 }
 
 func TestPublishLocksCurrentAuthorityAndMembers(t *testing.T) {
