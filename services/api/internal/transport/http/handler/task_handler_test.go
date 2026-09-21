@@ -20,6 +20,7 @@ import (
 	projectdom "github.com/Paca-AI/api/internal/domain/project"
 	sprintdom "github.com/Paca-AI/api/internal/domain/sprint"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/Paca-AI/api/internal/transport/http/handler"
 	"github.com/Paca-AI/api/internal/transport/http/middleware"
 )
@@ -458,12 +459,18 @@ func (f *fakeViewSvcTask) ReorderProjectViews(_ context.Context, _ uuid.UUID, _ 
 // Router helper
 // ---------------------------------------------------------------------------
 
+func openTaskDeliveryGate() *delivery.Gate {
+	gate := delivery.NewGate()
+	_ = gate.Update("0", false)
+	return gate
+}
+
 func buildTaskHandlerRouter(svc *fakeTaskSvc) chi.Router {
 	return buildTaskHandlerRouterWithActivity(svc, newFakeActivitySvc())
 }
 
 func buildTaskHandlerRouterWithActivity(svc *fakeTaskSvc, actSvc *fakeActivitySvc) chi.Router {
-	h := handler.NewTaskHandler(svc, &fakeViewSvcTask{}, actSvc)
+	h := handler.NewTaskHandler(svc, &fakeViewSvcTask{}, actSvc).WithDeliveryGate(openTaskDeliveryGate())
 	r := chi.NewRouter()
 	r.Route("/projects/{projectId}", func(r chi.Router) {
 		r.Get("/task-types", h.ListTaskTypes)
@@ -497,7 +504,7 @@ func doTaskRequest(r chi.Router, method, path string, body any) *httptest.Respon
 		req.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(deadlineRecorder{w}, req)
 	return w
 }
 
@@ -885,7 +892,7 @@ func TestTaskHandler_ListTasks_ResponseIncludesTotalCount(t *testing.T) {
 
 func buildAssignedToMeRouter(taskSvc *fakeTaskSvc, projectSvc *mockProjectSvc, userID uuid.UUID) chi.Router {
 	h := handler.NewTaskHandler(taskSvc, &fakeViewSvcTask{}, newFakeActivitySvc(),
-		handler.WithTaskAssignedProjectService(projectSvc))
+		handler.WithTaskAssignedProjectService(projectSvc)).WithDeliveryGate(openTaskDeliveryGate())
 	r := chi.NewRouter()
 	r.Use(claimsMiddleware(userID.String()))
 	r.Get("/users/me/tasks", h.ListAssignedToMe)
@@ -991,7 +998,7 @@ func TestTaskHandler_ListAssignedToMe_NoProjectsReturnsEmptyList(t *testing.T) {
 }
 
 func TestTaskHandler_ListAssignedToMe_UnauthenticatedReturns401(t *testing.T) {
-	h := handler.NewTaskHandler(newFakeTaskSvc(), &fakeViewSvcTask{}, newFakeActivitySvc())
+	h := handler.NewTaskHandler(newFakeTaskSvc(), &fakeViewSvcTask{}, newFakeActivitySvc()).WithDeliveryGate(openTaskDeliveryGate())
 	r := chi.NewRouter()
 	r.Get("/users/me/tasks", h.ListAssignedToMe)
 
@@ -1339,7 +1346,7 @@ func doTaskRequestWithActor(r chi.Router, method, path string, body any, actorID
 		req.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(deadlineRecorder{w}, req)
 	return w
 }
 

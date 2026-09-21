@@ -476,7 +476,7 @@ func New(cfg *config.Config) (*App, error) {
 			handler.WithTaskPublisher(publisher),
 			handler.WithTaskAssignedProjectService(projectService),
 			handler.WithTaskAvatarService(attachmentService),
-			handler.WithTaskNotificationService(notificationService)),
+			handler.WithTaskNotificationService(notificationService)).WithDeliveryGate(fileGate),
 		Sprint: handler.NewSprintHandler(sprintService, viewService,
 			handler.WithSprintDefaultTaskTypes(taskService),
 			handler.WithSprintDefaultTaskStatuses(taskService),

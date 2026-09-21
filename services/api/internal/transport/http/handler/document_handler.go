@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -738,51 +737,9 @@ func docChangedFields(old *docdom.Document, req dto.UpdateDocumentRequest) []doc
 
 func (h *DocumentHandler) WithDeliveryGate(g *delivery.Gate) *DocumentHandler { h.gate = g; return h }
 func (h *DocumentHandler) enterDelivery(w http.ResponseWriter, r *http.Request) (*http.Request, func()) {
-	if h.gate == nil {
-		http.Error(w, "document delivery unavailable", 503)
-		return nil, func() {}
-	}
-	ctx, _, leave, err := h.gate.Enter(r.Context())
-	if err != nil {
-		// The coordinator publishes open before returning, and local subscription
-		// delivery is asynchronous. Bound the wait, then recheck under the lease.
-		timer := time.NewTimer(fileWriteTimeout)
-		defer timer.Stop()
-		tick := time.NewTicker(5 * time.Millisecond)
-		defer tick.Stop()
-	retry:
-		for err != nil {
-			select {
-			case <-r.Context().Done():
-				break retry
-			case <-timer.C:
-				break retry
-			case <-tick.C:
-				ctx, _, leave, err = h.gate.Enter(r.Context())
-			}
-		}
-	}
-	if err != nil {
-		http.Error(w, "document delivery unavailable", 503)
-		return nil, func() {}
-	}
-	controller := http.NewResponseController(w)
-	if err = controller.SetWriteDeadline(time.Now().Add(fileWriteTimeout)); err != nil {
-		leave()
-		http.Error(w, "document delivery unavailable", 503)
-		return nil, func() {}
-	}
-	w.Header().Set("Cache-Control", "private, no-store")
-	return r.WithContext(ctx), func() {
-		defer leave()
-		defer controller.SetWriteDeadline(time.Time{})
-		// Small JSON bodies remain in net/http's buffer until Flush. Release only
-		// after actual delivery, so a revocation cannot commit before that flush.
-		if err := controller.Flush(); err != nil {
-			panic(http.ErrAbortHandler)
-		}
-	}
+	return enterJSONDelivery(h.gate, w, r)
 }
+
 func (h *DocumentHandler) UpdateDocumentAccess(w http.ResponseWriter, r *http.Request) {
 	project, err := parseProjectID(r)
 	if err != nil {

@@ -89,6 +89,7 @@ var (
 )
 
 type e2eEnv struct {
+	handler        http.Handler
 	fileGate       *delivery.Gate
 	fileStore      storage.Client
 	ctx            context.Context
@@ -290,7 +291,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(globalRoleService),
 		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore)),
-		Task:                 handler.NewTaskHandler(taskService, viewService, activityService, handler.WithTaskAssignedProjectService(projectService)),
+		Task:                 handler.NewTaskHandler(taskService, viewService, activityService, handler.WithTaskAssignedProjectService(projectService)).WithDeliveryGate(fileGate),
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
 		Attachment:           handler.NewAttachmentHandler(attachmentService).WithFileDelivery(fileDelivery),
@@ -311,6 +312,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	}
 
 	return &e2eEnv{
+		handler:  engine,
 		fileGate: fileGate, fileStore: fileStore,
 		ctx:  ctx,
 		base: srv.URL,

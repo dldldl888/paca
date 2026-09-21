@@ -22,6 +22,7 @@ import (
 	sprintdom "github.com/Paca-AI/api/internal/domain/sprint"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/events"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/Paca-AI/api/internal/platform/messaging"
 	"github.com/Paca-AI/api/internal/transport/http/dto"
 	"github.com/Paca-AI/api/internal/transport/http/middleware"
@@ -30,6 +31,7 @@ import (
 
 // TaskHandler handles task management endpoints.
 type TaskHandler struct {
+	gate            *delivery.Gate
 	svc             taskdom.Service
 	viewSvc         sprintdom.ViewService
 	activitySvc     taskdom.ActivityService
@@ -48,6 +50,9 @@ func NewTaskHandler(svc taskdom.Service, viewSvc sprintdom.ViewService, activity
 	}
 	return h
 }
+
+// WithDeliveryGate shares the authority coordinator's short-response gate.
+func (h *TaskHandler) WithDeliveryGate(g *delivery.Gate) *TaskHandler { h.gate = g; return h }
 
 // TaskHandlerOption is a functional option for TaskHandler.
 type TaskHandlerOption func(*TaskHandler)
@@ -511,6 +516,12 @@ func parseImportanceRanges(raw string) ([]taskdom.IntRange, error) {
 //   - importance_ranges=<json> (array of {"min":int,"max":int}, OR'd together)
 //   - tags=<tag,tag,...> (matches tasks with ANY of these tags)
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -776,6 +787,12 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 // first), keyset-paginated via the same opaque "cursor" query param used by
 // ListTasks. Powers the cross-project "assigned to me" widget on the home page.
 func (h *TaskHandler) ListAssignedToMe(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+
 	claims := middleware.ClaimsFrom(r)
 	if claims == nil {
 		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "unauthenticated"))
@@ -849,6 +866,12 @@ func (h *TaskHandler) ListAssignedToMe(w http.ResponseWriter, r *http.Request) {
 
 // GetTask handles GET /projects/:projectId/tasks/:taskId.
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -870,6 +893,12 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 // GetTaskByNumber handles GET /projects/:projectId/tasks/by-number/:taskNumber.
 // It looks up a task by its project-scoped sequential number.
 func (h *TaskHandler) GetTaskByNumber(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -1464,6 +1493,12 @@ func parseCommentID(r *http.Request) (uuid.UUID, error) {
 
 // ListTaskActivities handles GET /projects/:projectId/tasks/:taskId/activities.
 func (h *TaskHandler) ListTaskActivities(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -1615,6 +1650,12 @@ func (h *TaskHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 
 // ListTaskLinks handles GET /projects/:projectId/tasks/:taskId/links.
 func (h *TaskHandler) ListTaskLinks(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
