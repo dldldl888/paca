@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"net/http"
 	"slices"
 	"strconv"
@@ -67,6 +68,7 @@ func parseCreatedBeforeBound(raw string) (*time.Time, bool) {
 
 // ConversationHandler handles agent conversation endpoints.
 type ConversationHandler struct {
+	gate       *delivery.Gate
 	svc        agentdom.Service
 	memberRepo projectdom.MemberRepository
 }
@@ -197,6 +199,11 @@ func writeConversationListResponse(w http.ResponseWriter, r *http.Request, convs
 
 // ListConversations handles GET /projects/:projectId/conversations.
 func (h *ConversationHandler) ListConversations(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -227,6 +234,11 @@ func (h *ConversationHandler) ListConversations(w http.ResponseWriter, r *http.R
 // the caller's own global-chat conversations — see
 // agentdom.Service.ListGlobalConversations.
 func (h *ConversationHandler) ListGlobalConversations(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	userID, err := callerUserID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -248,6 +260,11 @@ func (h *ConversationHandler) ListGlobalConversations(w http.ResponseWriter, r *
 
 // GetConversation handles GET /projects/:projectId/conversations/:conversationId.
 func (h *ConversationHandler) GetConversation(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -290,6 +307,11 @@ func currentConversationIDFromHeader(r *http.Request) uuid.UUID {
 // URL (unlike GetConversation) since the calling agent doesn't need to
 // already know which project a referenced conversation lives in.
 func (h *ConversationHandler) GetConversationForAgent(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	agentID, ok := middleware.AgentIDFromRequest(r)
 	if !ok {
 		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "agent identity required"))
@@ -313,6 +335,11 @@ func (h *ConversationHandler) GetConversationForAgent(w http.ResponseWriter, r *
 // sibling of ListConversationEvents/GetGlobalConversationEvents. See
 // GetConversationForAgent's doc comment for why this needs its own path.
 func (h *ConversationHandler) GetConversationEventsForAgent(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	agentID, ok := middleware.AgentIDFromRequest(r)
 	if !ok {
 		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "agent identity required"))
@@ -415,6 +442,11 @@ func writeConversationEventWindowResponse(w http.ResponseWriter, r *http.Request
 
 // ListConversationEvents handles GET /projects/:projectId/conversations/:conversationId/events.
 func (h *ConversationHandler) ListConversationEvents(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -570,6 +602,11 @@ func (h *ConversationHandler) SendConversationMessage(w http.ResponseWriter, r *
 // Scoped to the caller's own conversation — see
 // agentdom.Service.GetGlobalConversation's doc comment.
 func (h *ConversationHandler) GetGlobalConversation(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	convID, err := parseParamUUID(r, "conversationId")
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -594,6 +631,11 @@ func (h *ConversationHandler) GetGlobalConversation(w http.ResponseWriter, r *ht
 // GetGlobalConversation is called first to gate on both "is this a global
 // conversation" and "does it belong to the caller" before ever reaching it.
 func (h *ConversationHandler) GetGlobalConversationEvents(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	convID, err := parseParamUUID(r, "conversationId")
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -705,4 +747,9 @@ func (h *ConversationHandler) SendGlobalConversationMessage(w http.ResponseWrite
 		return
 	}
 	presenter.OK(w, r, map[string]any{"message": "message sent"})
+}
+
+func (h *ConversationHandler) WithDeliveryGate(g *delivery.Gate) *ConversationHandler {
+	h.gate = g
+	return h
 }

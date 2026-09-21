@@ -959,6 +959,11 @@ const conversationCols = `id, agent_id, project_id, trigger_type, task_id, comme
 // whether more pages remain, without a separate COUNT query.
 func (r *AgentRepository) ListConversations(ctx context.Context, in agentdom.ListConversationsFilter, limit int) ([]*agentdom.AgentConversation, bool, error) {
 	b := newQueryBuilder()
+	if in.ChatSessionID != nil {
+		p := b.placeholder()
+		b.args = append(b.args, in.ChatSessionID.String())
+		b.whereClauses = append(b.whereClauses, "chat_session_id = "+p)
+	}
 
 	if len(in.AgentIDs) > 0 {
 		b.addInClause("agent_id", uuidSliceToStrSlice(in.AgentIDs))

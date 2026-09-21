@@ -432,7 +432,7 @@ func New(cfg *config.Config) (*App, error) {
 		WithRouteAuth(tokenManager, apiKeyService, authorizer).
 		WithMarketplace(marketplaceClient, pluginInstaller, pluginMigrationRunner)
 
-	agentHandler := handler.NewAgentHandler(agentService, cfg.AIAgentURL, cfg.AIAgentInternalKey, cfg.Server.PublicURL).
+	agentHandler := handler.NewAgentHandler(agentService, cfg.AIAgentURL, cfg.AIAgentInternalKey, cfg.Server.PublicURL).WithDeliveryGate(fileGate).
 		WithActivityRecorder(activityService).
 		WithMemberRepo(projectRepo).
 		WithGlobalPermissionReader(permissionStore).
@@ -443,7 +443,7 @@ func New(cfg *config.Config) (*App, error) {
 	annotationHandler := handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery).
 		WithAvatarService(attachmentService).
 		WithMemberRepo(projectRepo)
-	convHandler := handler.NewConversationHandler(agentService).WithMemberRepo(projectRepo)
+	convHandler := handler.NewConversationHandler(agentService).WithMemberRepo(projectRepo).WithDeliveryGate(fileGate)
 	automationHandler := handler.NewAutomationHandler(automationService).WithPluginRuntime(pluginRuntime)
 
 	// --- Handlers -----------------------------------------------------------

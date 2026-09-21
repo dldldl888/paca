@@ -298,8 +298,8 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		Notification:         handler.NewNotificationHandler(notificationService),
 		APIKey:               handler.NewAPIKeyHandler(apiKeyService),
 		Automation:           handler.NewAutomationHandler(automationService),
-		Agent:                handler.NewAgentHandler(agentService, "", "", "").WithMemberRepo(projectRepo),
-		Conversation:         handler.NewConversationHandler(agentService).WithMemberRepo(projectRepo),
+		Agent:                handler.NewAgentHandler(agentService, "", "", "").WithMemberRepo(projectRepo).WithDeliveryGate(fileGate),
+		Conversation:         handler.NewConversationHandler(agentService).WithMemberRepo(projectRepo).WithDeliveryGate(fileGate),
 		Log:                  log,
 	})
 

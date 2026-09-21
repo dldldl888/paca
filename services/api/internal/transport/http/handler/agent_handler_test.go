@@ -283,7 +283,7 @@ var _ agentdom.Service = (*mockAgentSvc)(nil)
 // newAgentRouter request and CreateAgent dereferences it unconditionally
 // once validation passes.
 func newAgentRouterWithClaims(svc agentdom.Service) chi.Router {
-	h := handler.NewAgentHandler(svc, "", "", "")
+	h := handler.NewAgentHandler(svc, "", "", "").WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Use(claimsMiddleware(uuid.New().String()))
 	r.Route("/projects/{projectId}", func(r chi.Router) {
@@ -293,7 +293,7 @@ func newAgentRouterWithClaims(svc agentdom.Service) chi.Router {
 }
 
 func newAgentRouter(svc agentdom.Service) chi.Router {
-	h := handler.NewAgentHandler(svc, "", "", "")
+	h := handler.NewAgentHandler(svc, "", "", "").WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Route("/projects/{projectId}", func(r chi.Router) {
 		r.Post("/agents", h.CreateAgent)
@@ -313,7 +313,7 @@ func newAgentRouter(svc agentdom.Service) chi.Router {
 }
 
 func newGlobalAgentAcpRouter(svc agentdom.Service) chi.Router {
-	h := handler.NewAgentHandler(svc, "", "", "")
+	h := handler.NewAgentHandler(svc, "", "", "").WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Route("/admin/agents/{agentId}", func(r chi.Router) {
 		r.Post("/acp-bridge-token", h.GenerateGlobalACPBridgeToken)
@@ -400,7 +400,7 @@ func claimsMiddleware(subject string) func(http.Handler) http.Handler {
 // injects claims with the given subject, so resolveMemberID's branches can
 // be exercised end-to-end through the HTTP layer.
 func newAgentRouterWithMemberRepo(svc agentdom.Service, memberRepo projectdom.MemberRepository, subject string) chi.Router {
-	h := handler.NewAgentHandler(svc, "", "", "")
+	h := handler.NewAgentHandler(svc, "", "", "").WithDeliveryGate(openHistoryGate())
 	if memberRepo != nil {
 		h = h.WithMemberRepo(memberRepo)
 	}
@@ -427,7 +427,7 @@ func doAgentRequest(t *testing.T, r chi.Router, method, path string, body any) *
 		req.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(deadlineRecorder{w}, req)
 	return w
 }
 
@@ -523,7 +523,7 @@ func TestCreateAgent_EmptyLLMBaseURL_Allowed(t *testing.T) {
 			}, nil
 		},
 	}
-	h := handler.NewAgentHandler(svc, "", "", "")
+	h := handler.NewAgentHandler(svc, "", "", "").WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Use(claimsMiddleware(uuid.New().String()))
 	r.Post("/projects/{projectId}/agents", h.CreateAgent)

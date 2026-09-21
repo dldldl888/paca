@@ -1479,7 +1479,7 @@ func (s *Service) DeleteEnvVar(ctx context.Context, agentID, envVarID uuid.UUID)
 
 // ListConversations returns a page of conversations matching the filter.
 func (s *Service) ListConversations(ctx context.Context, in agentdom.ListConversationsFilter, limit int) ([]*agentdom.AgentConversation, bool, error) {
-	return s.repo.ListConversations(ctx, in, limit)
+	return s.listReadableConversations(ctx, in, limit)
 }
 
 // ListAgentActivities returns a page of an agent's unified task+doc activity feed.
@@ -1501,6 +1501,18 @@ func (s *Service) ListAgentActivities(ctx context.Context, in agentdom.ListAgent
 // GetConversation returns a single conversation after verifying project
 // ownership and, for owner-private conversations, chat-session ownership.
 func (s *Service) GetConversation(ctx context.Context, projectID, conversationID, memberID uuid.UUID) (*agentdom.AgentConversation, error) {
+	c, err := s.getConversation(ctx, projectID, conversationID, memberID)
+	if err != nil {
+		return nil, err
+	}
+	user, _ := authz.ActorIDFromContext(ctx)
+	if err = s.authorizeHistory(ctx, c, user); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Service) getConversation(ctx context.Context, projectID, conversationID, memberID uuid.UUID) (*agentdom.AgentConversation, error) {
 	c, err := s.repo.FindConversationByID(ctx, conversationID)
 	if err != nil {
 		return nil, err
@@ -1540,6 +1552,9 @@ func (s *Service) GetConversationForAgent(ctx context.Context, conversationID, c
 	// the common case (no other conversation was attached) without a
 	// second lookup.
 	if target.ID == currentConversationID {
+		if err := s.authorizeAgentHistory(ctx, target, target); err != nil {
+			return nil, err
+		}
 		return target, nil
 	}
 	if err := s.authorizeConversationsReadForConversation(ctx, callerAgentID, target); err != nil {
@@ -1558,6 +1573,9 @@ func (s *Service) GetConversationForAgent(ctx context.Context, conversationID, c
 		return nil, agentdom.ErrConversationNotFound
 	}
 	if err := s.authorizeAgentConversationRead(ctx, current, target); err != nil {
+		return nil, err
+	}
+	if err := s.authorizeAgentHistory(ctx, current, target); err != nil {
 		return nil, err
 	}
 	return target, nil
@@ -1673,7 +1691,7 @@ func (s *Service) ListConversationEvents(ctx context.Context, conversationID uui
 // a terminal status — ai-agent has no turn-end hook to do it from here,
 // since the stop can land while no turn is even in flight.
 func (s *Service) StopConversation(ctx context.Context, projectID, conversationID, memberID uuid.UUID) error {
-	c, err := s.GetConversation(ctx, projectID, conversationID, memberID)
+	c, err := s.getConversation(ctx, projectID, conversationID, memberID)
 	if err != nil {
 		return err
 	}
@@ -1715,7 +1733,7 @@ func (s *Service) StopConversation(ctx context.Context, projectID, conversationI
 // the interrupt. No DB write here: ai-agent's run_conversation writes the
 // resulting status itself once the turn actually pauses.
 func (s *Service) PauseConversation(ctx context.Context, projectID, conversationID, memberID uuid.UUID) error {
-	c, err := s.GetConversation(ctx, projectID, conversationID, memberID)
+	c, err := s.getConversation(ctx, projectID, conversationID, memberID)
 	if err != nil {
 		return err
 	}
@@ -1736,7 +1754,7 @@ func (s *Service) PauseConversation(ctx context.Context, projectID, conversation
 // rather than resting the whole authorization boundary on ai-agent's
 // in-memory check.
 func (s *Service) Heartbeat(ctx context.Context, projectID, conversationID, memberID uuid.UUID) error {
-	if _, err := s.GetConversation(ctx, projectID, conversationID, memberID); err != nil {
+	if _, err := s.getConversation(ctx, projectID, conversationID, memberID); err != nil {
 		return err
 	}
 	return s.publishTrigger(ctx, events.TopicAgentHeartbeat, map[string]any{
@@ -1774,7 +1792,7 @@ func (s *Service) SendConversationMessage(ctx context.Context, projectID, conver
 	if err := validateOnBusy(onBusy); err != nil {
 		return err
 	}
-	c, err := s.GetConversation(ctx, projectID, conversationID, memberID)
+	c, err := s.getConversation(ctx, projectID, conversationID, memberID)
 	if err != nil {
 		return err
 	}
@@ -1934,7 +1952,7 @@ func (s *Service) ListGlobalConversations(ctx context.Context, actorUserID uuid.
 	in.GlobalOnly = true
 	in.ProjectID = nil
 	in.ActorUserID = &actorUserID
-	return s.repo.ListConversations(ctx, in, limit)
+	return s.listReadableConversations(ctx, in, limit)
 }
 
 // GetGlobalConversation returns a single conversation after verifying it is
@@ -1945,6 +1963,17 @@ func (s *Service) ListGlobalConversations(ctx context.Context, actorUserID uuid.
 // conversation simply by knowing its ID, since global conversations have no
 // project-team membership to gate access the way project conversations do.
 func (s *Service) GetGlobalConversation(ctx context.Context, conversationID, actorUserID uuid.UUID) (*agentdom.AgentConversation, error) {
+	c, err := s.getGlobalConversation(ctx, conversationID, actorUserID)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.authorizeHistory(ctx, c, actorUserID); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Service) getGlobalConversation(ctx context.Context, conversationID, actorUserID uuid.UUID) (*agentdom.AgentConversation, error) {
 	c, err := s.repo.FindConversationByID(ctx, conversationID)
 	if err != nil {
 		return nil, err
@@ -1957,7 +1986,7 @@ func (s *Service) GetGlobalConversation(ctx context.Context, conversationID, act
 
 // StopGlobalConversation stops a global conversation that is not already finished.
 func (s *Service) StopGlobalConversation(ctx context.Context, conversationID, actorUserID uuid.UUID) error {
-	c, err := s.GetGlobalConversation(ctx, conversationID, actorUserID)
+	c, err := s.getGlobalConversation(ctx, conversationID, actorUserID)
 	if err != nil {
 		return err
 	}
@@ -1986,7 +2015,7 @@ func (s *Service) StopGlobalConversation(ctx context.Context, conversationID, ac
 
 // PauseGlobalConversation interrupts a global conversation's in-flight turn.
 func (s *Service) PauseGlobalConversation(ctx context.Context, conversationID, actorUserID uuid.UUID) error {
-	c, err := s.GetGlobalConversation(ctx, conversationID, actorUserID)
+	c, err := s.getGlobalConversation(ctx, conversationID, actorUserID)
 	if err != nil {
 		return err
 	}
@@ -2000,7 +2029,7 @@ func (s *Service) PauseGlobalConversation(ctx context.Context, conversationID, a
 
 // GlobalHeartbeat refreshes a global conversation's idle timer.
 func (s *Service) GlobalHeartbeat(ctx context.Context, conversationID, actorUserID uuid.UUID) error {
-	if _, err := s.GetGlobalConversation(ctx, conversationID, actorUserID); err != nil {
+	if _, err := s.getGlobalConversation(ctx, conversationID, actorUserID); err != nil {
 		return err
 	}
 	return s.publishTrigger(ctx, events.TopicAgentHeartbeat, map[string]any{
@@ -2018,7 +2047,7 @@ func (s *Service) SendGlobalConversationMessage(ctx context.Context, conversatio
 	if err := validateOnBusy(onBusy); err != nil {
 		return err
 	}
-	c, err := s.GetGlobalConversation(ctx, conversationID, actorUserID)
+	c, err := s.getGlobalConversation(ctx, conversationID, actorUserID)
 	if err != nil {
 		return err
 	}
@@ -2115,7 +2144,11 @@ func (s *Service) ListChatSessions(ctx context.Context, projectID, agentID, memb
 	if _, err := s.GetAgent(ctx, projectID, agentID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListChatSessions(ctx, agentID, memberID)
+	sessions, err := s.repo.ListChatSessions(ctx, agentID, memberID)
+	if err != nil {
+		return nil, err
+	}
+	return s.readableChatSessions(ctx, sessions)
 }
 
 // StartChatSession creates a new chat session and publishes the initial message trigger.
@@ -2510,7 +2543,11 @@ func (s *Service) SendChatMessage(ctx context.Context, projectID, sessionID, mem
 // ListGlobalChatSessions returns all global chat sessions for the given
 // agent and human actor.
 func (s *Service) ListGlobalChatSessions(ctx context.Context, agentID, actorUserID uuid.UUID) ([]*agentdom.AgentChatSession, error) {
-	return s.repo.ListGlobalChatSessions(ctx, agentID, actorUserID)
+	sessions, err := s.repo.ListGlobalChatSessions(ctx, agentID, actorUserID)
+	if err != nil {
+		return nil, err
+	}
+	return s.readableChatSessions(ctx, sessions)
 }
 
 // StartGlobalChatSession creates a new global chat session and publishes
@@ -2709,6 +2746,10 @@ func (s *Service) ListChatMessages(ctx context.Context, sessionID, memberID uuid
 	// grows a real caller that expects offset-based paging to work.
 	if offset != 0 {
 		return nil, 0, fmt.Errorf("ListChatMessages: non-zero offset %d is not supported by cursor-based ListConversationEvents", offset)
+	}
+	user, _ := authz.ActorIDFromContext(ctx)
+	if err := s.authorizeHistory(ctx, latest, user); err != nil {
+		return nil, 0, err
 	}
 	return s.repo.ListConversationEvents(ctx, latest.ID, agentdom.ConversationEventWindow{Limit: limit})
 }

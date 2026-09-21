@@ -3,11 +3,13 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +33,7 @@ func fixedTime() time.Time {
 // ---------------------------------------------------------------------------
 
 func newConversationRouter(svc agentdom.Service) chi.Router {
-	h := handler.NewConversationHandler(svc).WithMemberRepo(&fakeMemberRepo{
+	h := handler.NewConversationHandler(svc).WithDeliveryGate(openHistoryGate()).WithMemberRepo(&fakeMemberRepo{
 		findByUserProject: func(_ context.Context, _, _ uuid.UUID) (*projectdom.ProjectMember, error) {
 			return &projectdom.ProjectMember{ID: uuid.New()}, nil
 		},
@@ -66,7 +68,7 @@ func doListConversations(t *testing.T, svc agentdom.Service, projectID, query st
 	}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	var resp listConversationsResp
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -169,7 +171,7 @@ func doListConversationEvents(t *testing.T, svc agentdom.Service, projectID, con
 	}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 	return rec
 }
 
@@ -707,7 +709,7 @@ func TestListConversations_InvalidProjectIDReturnsBadRequest(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func newGlobalConversationsListRouter(svc agentdom.Service, subject string) chi.Router {
-	h := handler.NewConversationHandler(svc)
+	h := handler.NewConversationHandler(svc).WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Use(claimsMiddleware(subject))
 	r.Get("/agents/conversations", h.ListGlobalConversations)
@@ -732,7 +734,7 @@ func TestListGlobalConversations_ScopesToCallerAndGlobalOnly(t *testing.T) {
 	r := newGlobalConversationsListRouter(svc, callerID.String())
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/conversations", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -750,12 +752,12 @@ func TestListGlobalConversations_ScopesToCallerAndGlobalOnly(t *testing.T) {
 
 func TestListGlobalConversations_Unauthenticated401s(t *testing.T) {
 	svc := &mockAgentSvc{}
-	h := handler.NewConversationHandler(svc)
+	h := handler.NewConversationHandler(svc).WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Get("/agents/conversations", h.ListGlobalConversations)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/conversations", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 with no claims in context, got %d", rec.Code)
@@ -771,7 +773,7 @@ func TestListGlobalConversations_Unauthenticated401s(t *testing.T) {
 // route behind claims for the given subject, so ownership-enforcement tests
 // can exercise each verb through the real HTTP layer.
 func newGlobalConversationRouter(svc agentdom.Service, subject string) chi.Router {
-	h := handler.NewConversationHandler(svc)
+	h := handler.NewConversationHandler(svc).WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Use(claimsMiddleware(subject))
 	r.Route("/agents/conversations/{conversationId}", func(r chi.Router) {
@@ -808,7 +810,7 @@ func TestGetGlobalConversationEvents_ReturnsEvents(t *testing.T) {
 	r := newGlobalConversationRouter(svc, callerID.String())
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/conversations/"+convID.String()+"/events", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -844,7 +846,7 @@ func TestGetGlobalConversationEvents_UnknownConversationNotFound(t *testing.T) {
 	r := newGlobalConversationRouter(svc, uuid.New().String())
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/conversations/"+uuid.New().String()+"/events", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d: %s", rec.Code, rec.Body.String())
@@ -883,13 +885,80 @@ func TestGetGlobalConversation_ForwardsCallerIDNotConversationOwner(t *testing.T
 	r := newGlobalConversationRouter(svc, callerID.String())
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/conversations/"+convID.String(), nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if gotActorUserID != callerID {
 		t.Fatalf("handler must forward the authenticated caller's own id, got %s want %s", gotActorUserID, callerID)
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for a conversation the caller doesn't own, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+type blockingJSONFlush struct {
+	*httptest.ResponseRecorder
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *blockingJSONFlush) SetWriteDeadline(time.Time) error { return nil }
+func (w *blockingJSONFlush) FlushError() error {
+	w.once.Do(func() { close(w.entered); <-w.release })
+	w.ResponseRecorder.Flush()
+	return nil
+}
+
+func TestGetGlobalConversation_RevocationWaitsForJSONFlush(t *testing.T) {
+	gate := delivery.NewGate()
+	if err := gate.Update("1", false); err != nil {
+		t.Fatal(err)
+	}
+	callerID, convID := uuid.New(), uuid.New()
+	svc := &mockAgentSvc{
+		getGlobalConversation: func(_ context.Context, id, actorUserID uuid.UUID) (*agentdom.AgentConversation, error) {
+			if id != convID || actorUserID != callerID {
+				t.Fatal("unexpected authorization input")
+			}
+			return &agentdom.AgentConversation{ID: convID, ActorUserID: &callerID, Status: "finished"}, nil
+		},
+	}
+	h := handler.NewConversationHandler(svc).WithDeliveryGate(gate)
+	r := chi.NewRouter()
+	r.Use(claimsMiddleware(callerID.String()))
+	r.Get("/agents/conversations/{conversationId}", h.GetGlobalConversation)
+	w := &blockingJSONFlush{ResponseRecorder: httptest.NewRecorder(), entered: make(chan struct{}), release: make(chan struct{})}
+	delivered := make(chan struct{})
+	go func() {
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/agents/conversations/"+convID.String(), nil))
+		close(delivered)
+	}()
+	<-w.entered
+	closed := make(chan struct{})
+	go func() { _ = gate.Close("2"); close(closed) }()
+	deadline := time.After(time.Second)
+	for !gate.State().Blocked {
+		select {
+		case <-deadline:
+			t.Fatal("revocation did not begin")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	select {
+	case <-closed:
+		t.Fatal("revocation committed before the authorized JSON flush")
+	default:
+	}
+	close(w.release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("revocation did not commit after the JSON flush")
+	}
+	<-delivered
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -926,7 +995,7 @@ func TestStopPauseHeartbeatGlobalConversation_ForwardCallerID(t *testing.T) {
 			r := newGlobalConversationRouter(svc, callerID.String())
 			req := httptest.NewRequestWithContext(context.Background(), tc.method, "/agents/conversations/"+convID.String()+tc.path, nil)
 			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
+			r.ServeHTTP(deadlineRecorder{rec}, req)
 
 			if gotConvID != convID {
 				t.Errorf("expected conversation id %s forwarded, got %s", convID, gotConvID)
@@ -957,7 +1026,7 @@ func TestSendGlobalConversationMessage_ForwardsCallerIDNotBodySuppliedActor(t *t
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
 		"/agents/conversations/"+convID.String()+"/messages", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -986,7 +1055,7 @@ func TestSendGlobalConversationMessage_RejectsInvalidContextItems(t *testing.T) 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
 		"/agents/conversations/"+convID.String()+"/messages", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for an invalid context_items type, got %d: %s", rec.Code, rec.Body.String())
@@ -1015,7 +1084,7 @@ func TestSendGlobalConversationMessage_RejectsInvalidContextItems(t *testing.T) 
 // or injects no agent identity at all when agentID is nil, to exercise the
 // "agent identity required" 401 path a request with no X-Agent-ID takes.
 func newAgentSelfServiceConversationRouter(svc agentdom.Service, agentID *uuid.UUID) chi.Router {
-	h := handler.NewConversationHandler(svc)
+	h := handler.NewConversationHandler(svc).WithDeliveryGate(openHistoryGate())
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1037,7 +1106,7 @@ func TestGetConversationForAgent_NoAgentIdentity401s(t *testing.T) {
 	r := newAgentSelfServiceConversationRouter(svc, nil)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/me/conversations/"+uuid.New().String(), nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 with no agent identity, got %d: %s", rec.Code, rec.Body.String())
@@ -1063,7 +1132,7 @@ func TestGetConversationForAgent_ReturnsOwnConversation(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/me/conversations/"+convID.String(), nil)
 	req.Header.Set("X-Conversation-ID", currentConvID.String())
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1108,7 +1177,7 @@ func TestGetConversationForAgent_MissingConversationIDHeaderStillForwards(t *tes
 	r := newAgentSelfServiceConversationRouter(svc, &agentID)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/me/conversations/"+convID.String(), nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1131,7 +1200,7 @@ func TestGetConversationForAgent_DifferentAgentNotFound(t *testing.T) {
 	r := newAgentSelfServiceConversationRouter(svc, &agentID)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/me/conversations/"+uuid.New().String(), nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for a conversation the agent doesn't own, got %d: %s", rec.Code, rec.Body.String())
@@ -1143,7 +1212,7 @@ func TestGetConversationEventsForAgent_NoAgentIdentity401s(t *testing.T) {
 	r := newAgentSelfServiceConversationRouter(svc, nil)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/me/conversations/"+uuid.New().String()+"/events", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 with no agent identity, got %d: %s", rec.Code, rec.Body.String())
@@ -1167,7 +1236,7 @@ func TestGetConversationEventsForAgent_ReturnsEvents(t *testing.T) {
 	r := newAgentSelfServiceConversationRouter(svc, &agentID)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/me/conversations/"+convID.String()+"/events", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1200,7 +1269,7 @@ func TestGetConversationEventsForAgent_UnknownConversationNotFound(t *testing.T)
 	r := newAgentSelfServiceConversationRouter(svc, &agentID)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/agents/me/conversations/"+uuid.New().String()+"/events", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(deadlineRecorder{rec}, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
@@ -1209,3 +1278,5 @@ func TestGetConversationEventsForAgent_UnknownConversationNotFound(t *testing.T)
 		t.Error("ListConversationEvents must not be called when the agent doesn't own the conversation")
 	}
 }
+
+func openHistoryGate() *delivery.Gate { g := delivery.NewGate(); _ = g.Update("0", false); return g }

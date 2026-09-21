@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/Paca-AI/api/internal/platform/database"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"time"
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
@@ -122,26 +123,13 @@ func (s *Service) chatAuthority(ctx context.Context, project, agent, member, use
 // validateRun covers dynamic descendants each time and also returns their
 // snapshot dependencies for accumulation into the destination conversation.
 func (s *Service) validateRun(ctx context.Context, c *agentdom.AgentConversation, owner uuid.UUID, visited map[uuid.UUID]bool) ([]agentdom.ContextItemRef, error) {
-	actual, err := s.runOwner(ctx, c)
-	if err != nil {
-		return nil, err
-	}
-	if actual != owner || c.ContextItems == nil {
+	if c.Audience != agentdom.AudienceOwnerPrivate {
 		return nil, agentdom.ErrConversationNotFound
 	}
-	if err = s.chatAuthority(ctx, c.ProjectID, c.AgentID, uuid.Nil, owner); err != nil {
+	if err := s.chatAuthority(ctx, c.ProjectID, c.AgentID, uuid.Nil, owner); err != nil {
 		return nil, err
 	}
-	refs := append([]agentdom.ContextItemRef{}, c.ContextItems...)
-	if c.TaskID != nil {
-		p := c.ProjectID.String()
-		refs = append(refs, agentdom.ContextItemRef{Type: agentdom.ContextItemTask, ID: c.TaskID.String(), ProjectID: &p})
-	}
-	if visited[c.ID] {
-		return []agentdom.ContextItemRef{}, nil
-	}
-	visited[c.ID] = true
-	return s.checkContext(ctx, c.ProjectID, owner, refs, visited)
+	return s.validateHistory(ctx, c, owner, visited)
 }
 
 func (s *Service) checkContext(ctx context.Context, project, owner uuid.UUID, refs []agentdom.ContextItemRef, visited map[uuid.UUID]bool) ([]agentdom.ContextItemRef, error) {
@@ -174,10 +162,10 @@ func (s *Service) checkContext(ctx context.Context, project, owner uuid.UUID, re
 			if e != nil {
 				return nil, e
 			}
-			if obj.ProjectID != pid {
+			if obj.ProjectID != pid || obj.Audience != agentdom.AudienceOwnerPrivate {
 				return nil, agentdom.ErrConversationNotFound
 			}
-			nested, e := s.validateRun(ctx, obj, owner, visited)
+			nested, e := s.validateHistory(ctx, obj, owner, visited)
 			if e != nil {
 				return nil, e
 			}
@@ -283,7 +271,7 @@ func (s *Service) AuthorizeRun(ctx context.Context, conversation, agent uuid.UUI
 	defer cancel()
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
-	actorCtx := authz.WithActorID(database.CopyTransaction(humanCtx, ctx), owner)
+	actorCtx := authz.WithActorID(delivery.CopyLease(database.CopyTransaction(humanCtx, ctx), ctx), owner)
 	refs, err := s.validateRun(actorCtx, c, owner, map[uuid.UUID]bool{})
 	if err != nil {
 		return nil, err

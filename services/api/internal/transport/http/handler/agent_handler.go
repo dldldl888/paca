@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"io"
 	"log/slog"
 	"net/http"
@@ -45,6 +46,7 @@ type agentGlobalPermissionReader interface {
 
 // AgentHandler handles AI agent management endpoints.
 type AgentHandler struct {
+	gate               *delivery.Gate
 	svc                agentdom.Service
 	aiAgentURL         string
 	aiAgentInternalKey string
@@ -1229,6 +1231,11 @@ func (h *AgentHandler) DeleteGlobalAgentEnvVar(w http.ResponseWriter, r *http.Re
 
 // ListChatSessions handles GET /projects/:projectId/agents/:agentId/chat-sessions.
 func (h *AgentHandler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	projectID, err := parseProjectID(r)
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -1347,6 +1354,11 @@ func (h *AgentHandler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 
 // ListGlobalChatSessions handles GET /agents/:agentId/chat-sessions (global).
 func (h *AgentHandler) ListGlobalChatSessions(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	agentID, err := parseParamUUID(r, "agentId")
 	if err != nil {
 		presenter.Error(w, r, err)
@@ -2036,3 +2048,5 @@ func (h *AgentHandler) ListAgentActivities(w http.ResponseWriter, r *http.Reques
 		"next_cursor": nextCursor,
 	})
 }
+
+func (h *AgentHandler) WithDeliveryGate(g *delivery.Gate) *AgentHandler { h.gate = g; return h }

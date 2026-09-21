@@ -224,8 +224,9 @@ type ChatSessionRepository interface {
 
 // ListConversationsFilter carries optional filters for listing conversations.
 type ListConversationsFilter struct {
-	AgentIDs  []uuid.UUID
-	ProjectID *uuid.UUID
+	ChatSessionID *uuid.UUID
+	AgentIDs      []uuid.UUID
+	ProjectID     *uuid.UUID
 	// GlobalOnly, when true, restricts the listing to global-chat
 	// conversations (project_id IS NULL) — used by the "my global
 	// conversations" endpoint. Mutually exclusive with ProjectID; callers

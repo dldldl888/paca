@@ -168,11 +168,11 @@ func TestPrivateRunCurrentAuthorization(t *testing.T) {
 	}
 	c := start(ownerCtx, member, ref(agentdom.ContextItemTask, task.ID))
 	allowed(c)
-	t.Run("owner_history_is_separate_from_generation", func(t *testing.T) {
+	t.Run("owner_history_tracks_persisted_source_access", func(t *testing.T) {
 		exec(`DELETE FROM task_assignees WHERE task_id=$1`, task.ID)
 		denied(c)
-		if _, e := env.agentSvc.GetConversation(ownerCtx, pid, c.ID, member); e != nil {
-			t.Fatalf("owner history lost: %v", e)
+		if _, e := env.agentSvc.GetConversation(ownerCtx, pid, c.ID, member); e == nil {
+			t.Fatal("revoked source history remained readable")
 		}
 		for _, send := range []func() error{
 			func() error {
@@ -192,6 +192,9 @@ func TestPrivateRunCurrentAuthorization(t *testing.T) {
 			t.Fatal("denied resume changed status")
 		}
 		exec(`INSERT INTO task_assignees(task_id,member_id) VALUES($1,$2)`, task.ID, member)
+		if _, e := env.agentSvc.GetConversation(ownerCtx, pid, c.ID, member); e != nil {
+			t.Fatalf("restored source history unreadable: %v", e)
+		}
 		allowed(c)
 	})
 	t.Run("manager_cannot_read_control_or_search_other_private_chat", func(t *testing.T) {
@@ -248,8 +251,8 @@ func TestPrivateRunCurrentAuthorization(t *testing.T) {
 		legacy := start(ownerCtx, member)
 		exec(`UPDATE agent_conversations SET context_items=NULL WHERE id=$1`, legacy.ID)
 		denied(legacy)
-		if _, e := env.agentSvc.GetConversation(ownerCtx, pid, legacy.ID, member); e != nil {
-			t.Fatal("legacy history unreadable")
+		if _, e := env.agentSvc.GetConversation(ownerCtx, pid, legacy.ID, member); e == nil {
+			t.Fatal("legacy history with unknown sources was readable")
 		}
 		if e := env.agentRepo.MergeConversationContext(env.ctx, legacy.ID, []agentdom.ContextItemRef{}); e == nil {
 			t.Fatal("legacy metadata certified")

@@ -9,6 +9,7 @@ import (
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/database"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/google/uuid"
 	"strings"
 	"time"
@@ -65,7 +66,7 @@ func (s *Service) CompanyContext(ctx context.Context, conversation, agent uuid.U
 	defer cancel()
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
-	actorCtx := authz.WithActorID(database.CopyTransaction(human, ctx), owner)
+	actorCtx := authz.WithActorID(delivery.CopyLease(database.CopyTransaction(human, ctx), ctx), owner)
 	projects, err := repo.ListCompanyProjects(actorCtx, owner)
 	if err != nil {
 		return nil, err

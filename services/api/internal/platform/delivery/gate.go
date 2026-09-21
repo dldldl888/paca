@@ -60,3 +60,12 @@ func (g *Gate) Enter(ctx context.Context) (context.Context, string, func(), erro
 	}
 	return context.WithValue(ctx, leaseKey{}, s.Epoch), s.Epoch, g.work.RUnlock, nil
 }
+
+// CopyLease preserves an existing delivery lease when stripping caller grants.
+// It does not acquire or extend a lease; the original caller still owns release.
+func CopyLease(dst, src context.Context) context.Context {
+	if epoch, ok := src.Value(leaseKey{}).(string); ok {
+		return context.WithValue(dst, leaseKey{}, epoch)
+	}
+	return dst
+}
