@@ -32,9 +32,15 @@ func TestValidatePortRange(t *testing.T) {
 }
 
 func TestLoad_RequiresStableInstanceID(t *testing.T) {
-	for _, value := range []string{"", "not-a-uuid", "00000000-0000-0000-0000-000000000000", "11111111-2222-4333-8444-555555555555"} {
-		t.Run(value, func(t *testing.T) {
-			t.Setenv("PACA_INSTANCE_ID", value)
+	for _, tc := range []struct{ value, want string }{
+		{"", ""},
+		{"not-a-uuid", ""},
+		{"00000000-0000-0000-0000-000000000000", ""},
+		{"11111111-2222-4333-8444-555555555555", "11111111-2222-4333-8444-555555555555"},
+		{"AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("PACA_INSTANCE_ID", tc.value)
 			t.Setenv("INTERNAL_API_KEY", "synthetic-test-key")
 			t.Setenv("DATABASE_URL", "postgres://test")
 			t.Setenv("VALKEY_URL", "redis://localhost:6379")
@@ -42,9 +48,12 @@ func TestLoad_RequiresStableInstanceID(t *testing.T) {
 			t.Setenv("AGENT_SERVER_IMAGE", "synthetic-test")
 			t.Setenv("AGENT_RUNNER_ALLOWED_AGENT_IDS", "*")
 			cfg, err := Load()
-			if value == "11111111-2222-4333-8444-555555555555" {
-				if err != nil || cfg.InstanceID != value {
-					t.Fatalf("valid stable instance rejected: %v", err)
+			if tc.want != "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.InstanceID != tc.want {
+					t.Fatalf("instance = %q, want canonical %q", cfg.InstanceID, tc.want)
 				}
 			} else if err == nil || !strings.Contains(err.Error(), "PACA_INSTANCE_ID") {
 				t.Fatalf("invalid instance must fail before startup: %v", err)

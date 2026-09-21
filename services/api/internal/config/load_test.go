@@ -279,14 +279,23 @@ func setLoadDefaults(t *testing.T) {
 }
 
 func TestLoad_RequiresStableInstanceID(t *testing.T) {
-	for _, value := range []string{"", "not-a-uuid", "00000000-0000-0000-0000-000000000000", "11111111-2222-4333-8444-555555555555"} {
-		t.Run(value, func(t *testing.T) {
+	for _, tc := range []struct{ value, want string }{
+		{"", ""},
+		{"not-a-uuid", ""},
+		{"00000000-0000-0000-0000-000000000000", ""},
+		{"11111111-2222-4333-8444-555555555555", "11111111-2222-4333-8444-555555555555"},
+		{"AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
 			setLoadDefaults(t)
-			t.Setenv("PACA_INSTANCE_ID", value)
+			t.Setenv("PACA_INSTANCE_ID", tc.value)
 			cfg, err := Load()
-			if value == "11111111-2222-4333-8444-555555555555" {
-				if err != nil || cfg.InstanceID != value {
-					t.Fatalf("valid stable instance rejected: %v", err)
+			if tc.want != "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.InstanceID != tc.want {
+					t.Fatalf("instance = %q, want canonical %q", cfg.InstanceID, tc.want)
 				}
 			} else if err == nil || !strings.Contains(err.Error(), "PACA_INSTANCE_ID") {
 				t.Fatalf("invalid instance must fail before startup: %v", err)

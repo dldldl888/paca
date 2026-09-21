@@ -13,6 +13,8 @@ test("requires one stable nonzero deployment instance ID", () => {
         }
         process.env.PACA_INSTANCE_ID = "11111111-2222-4333-8444-555555555555";
         expect(loadConfig().instanceID).toBe(process.env.PACA_INSTANCE_ID);
+        process.env.PACA_INSTANCE_ID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE";
+        expect(loadConfig().instanceID).toBe("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
     } finally {
         process.env = saved;
     }

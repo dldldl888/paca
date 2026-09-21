@@ -151,6 +151,8 @@ func Load() (*Config, error) {
 	instanceID := os.Getenv("PACA_INSTANCE_ID")
 	if id, e := uuid.Parse(instanceID); e != nil || id == uuid.Nil {
 		errs = append(errs, fmt.Errorf("config: PACA_INSTANCE_ID must be set to a stable nonzero UUID shared by API, agent-runner and realtime"))
+	} else {
+		instanceID = id.String()
 	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)

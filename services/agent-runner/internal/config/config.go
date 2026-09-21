@@ -182,6 +182,8 @@ func Load() (Settings, error) {
 	instanceID := os.Getenv("PACA_INSTANCE_ID")
 	if id, err := uuid.Parse(instanceID); err != nil || id == uuid.Nil {
 		return Settings{}, fmt.Errorf("config: PACA_INSTANCE_ID must be set to a stable nonzero UUID shared by API, agent-runner and realtime")
+	} else {
+		instanceID = id.String()
 	}
 	s := Settings{
 		DatabaseURL:                     os.Getenv("DATABASE_URL"),

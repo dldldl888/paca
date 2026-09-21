@@ -32,7 +32,7 @@ export function loadConfig(): Config {
 		// Internal API base URL (service-to-service, not via the public gateway).
 		apiUrl: requireEnv("API_URL"),
 		internalAPIKey: requireEnv("INTERNAL_API_KEY"),
-		instanceID,
+		instanceID: instanceID.toLowerCase(),
 		valkey: {
 			url: requireEnv("REDIS_URL"),
 		},
