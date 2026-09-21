@@ -49,6 +49,18 @@ func (s *Service) validateHistory(ctx context.Context, c *agentdom.AgentConversa
 	if actual != user {
 		return nil, agentdom.ErrConversationNotFound
 	}
+	if c.ProjectID != uuid.Nil {
+		if s.authorizer == nil {
+			return nil, agentdom.ErrConversationNotFound
+		}
+		allowed, err := s.authorizer.HasPermissions(ctx, user, &c.ProjectID, "", authz.PermissionConversationsRead)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, agentdom.ErrConversationNotFound
+		}
+	}
 	if visited[c.ID] {
 		return []agentdom.ContextItemRef{}, nil
 	}

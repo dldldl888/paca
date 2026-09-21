@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/Paca-AI/api/internal/transport/http/handler"
 	"github.com/Paca-AI/api/migrations"
 	"github.com/google/uuid"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +30,135 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPrivateHistoryReadPermissionBlocksGlobalContextRefs(t *testing.T) {
+	env := newE2EEnv(t)
+	authorizer := authz.NewAuthorizer(pgRepo.NewAuthzPermissionStore(env.db))
+	env.agentSvc.WithAuthorizer(authorizer).WithPrivateRuns(uuid.New(), env.agentRepo, nil, nil, env.automationSvc).WithDeliveryGate(env.fileGate)
+	client, token, project, agentRole := seedACPUser(t, env)
+	status, result := createAgentRequest(t, env, client, token, project, acpAgentBody(agentRole, "history-read-gate", nil))
+	if status != http.StatusCreated {
+		t.Fatalf("create project agent: %d", status)
+	}
+	projectAgent := uuid.MustParse(assertDataMap(t, result)["id"].(string))
+	pid := uuid.MustParse(project)
+	var member, user, humanRole uuid.UUID
+	if err := env.db.QueryRow(`SELECT id,user_id,project_role_id FROM project_members WHERE project_id=$1 AND member_type='human' LIMIT 1`, pid).Scan(&member, &user, &humanRole); err != nil {
+		t.Fatal(err)
+	}
+	ownerCtx := authz.WithActorID(env.ctx, user)
+	_, projectConversation, err := env.agentSvc.StartChatSession(ownerCtx, pid, projectAgent, member, "source", nil, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = env.db.Exec(`UPDATE agent_conversations SET status='finished' WHERE id=$1`, projectConversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	globalAgent := uuid.New()
+	if _, err = env.db.Exec(`INSERT INTO agents(id,name,handle,agent_type,agent_scope,acp_provider,llm_provider,llm_model,llm_api_key_secret) VALUES($1,'Global','history-read-global','acp','global','claude-code','','','')`, globalAgent); err != nil {
+		t.Fatal(err)
+	}
+	globalChatSession, globalConversation, err := env.agentSvc.StartGlobalChatSession(ownerCtx, globalAgent, user, "baseline", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = env.db.Exec(`UPDATE agent_conversations SET status='finished' WHERE id=$1`, globalConversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	var roles envelope
+	req := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/projects/"+project+"/roles", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp := mustDo(t, client, req)
+	decodeJSON(t, resp, &roles)
+	resp.Body.Close()
+	var patched bool
+	for _, item := range roles.Data.([]any) {
+		role := item.(map[string]any)
+		if role["id"] != humanRole.String() {
+			continue
+		}
+		permissions := role["permissions"].(map[string]any)
+		delete(permissions, string(authz.PermissionConversationsRead))
+		delete(permissions, string(authz.PermissionConversationsWrite))
+		delete(permissions, string(authz.PermissionConversationsAll))
+		body, _ := json.Marshal(map[string]any{"role_name": role["role_name"], "permissions": permissions})
+		req = mustRequest(env.ctx, t, http.MethodPatch, env.base+"/api/v1/projects/"+project+"/roles/"+humanRole.String(), bytes.NewBuffer(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp = mustDo(t, client, req)
+		assertStatus(t, resp, http.StatusOK)
+		resp.Body.Close()
+		patched = true
+		break
+	}
+	if !patched {
+		t.Fatal("human project role not found")
+	}
+	allowed, err := authorizer.HasPermissions(ownerCtx, user, &pid, "", authz.PermissionConversationsRead)
+	if err != nil || allowed {
+		t.Fatalf("project conversations.read remained granted: %v %v", allowed, err)
+	}
+	ref := []agentdom.ContextItemRef{{Type: agentdom.ContextItemConversation, ID: projectConversation.ID.String(), ProjectID: func() *string { s := project; return &s }()}}
+	count := func(table string) int {
+		t.Helper()
+		var n int
+		if err := env.db.Get(&n, "SELECT count(*) FROM "+table); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	triggerCount := func() int64 {
+		t.Helper()
+		n, err := env.redisClient.XLen(env.ctx, events.StreamAgentTriggers).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	startReq := func() *http.Response {
+		t.Helper()
+		body := jsonBody(t, map[string]any{"message": "must reject", "context_items": ref})
+		req := mustRequest(env.ctx, t, http.MethodPost, env.base+"/api/v1/agents/"+globalAgent.String()+"/chat-sessions", body)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		return mustDo(t, client, req)
+	}
+	sessionsBefore, conversationsBefore, triggersBefore := count("agent_chat_sessions"), count("agent_conversations"), triggerCount()
+	resp = startReq()
+	if resp.StatusCode != http.StatusNotFound {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("global start accepted revoked project history: %d %s", resp.StatusCode, raw)
+	}
+	resp.Body.Close()
+	if got := count("agent_chat_sessions"); got != sessionsBefore {
+		t.Fatalf("rejected global start wrote session: %d -> %d", sessionsBefore, got)
+	}
+	if got := count("agent_conversations"); got != conversationsBefore {
+		t.Fatalf("rejected global start wrote conversation: %d -> %d", conversationsBefore, got)
+	}
+	if got := triggerCount(); got != triggersBefore {
+		t.Fatalf("rejected global start published trigger: %d -> %d", triggersBefore, got)
+	}
+	sendBefore, sendTriggers := count("agent_conversations"), triggerCount()
+	body := jsonBody(t, map[string]any{"message": "must reject", "context_items": ref})
+	req = mustRequest(env.ctx, t, http.MethodPost, env.base+"/api/v1/agents/chat-sessions/"+globalChatSession.ID.String()+"/messages", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp = mustDo(t, client, req)
+	if resp.StatusCode != http.StatusNotFound {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("global send accepted revoked project history: %d %s", resp.StatusCode, raw)
+	}
+	resp.Body.Close()
+	if got := count("agent_conversations"); got != sendBefore {
+		t.Fatalf("rejected global send changed conversations: %d -> %d", sendBefore, got)
+	}
+	if got := triggerCount(); got != sendTriggers {
+		t.Fatalf("rejected global send published trigger: %d -> %d", sendTriggers, got)
+	}
+}
 
 func TestPrivateRunRejectsInaccessibleContextBeforeEffects(t *testing.T) {
 	env := newE2EEnv(t)
