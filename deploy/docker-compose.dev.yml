@@ -114,6 +114,7 @@ services:
     # air is already installed in the image; no per-start download needed.
     command: air
     environment:
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       # Limit parallel package compilation to avoid OOM kills on memory-constrained
       # Docker Desktop VMs (mirrors the -p=1 flag used in the production Dockerfile).
       GOFLAGS: "-p=1"
@@ -231,6 +232,8 @@ services:
     working_dir: /app
     command: sh -c "bun install && bun run --watch src/index.ts"
     environment:
+      INTERNAL_API_KEY: dev-internal-key-change-in-production
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       PORT: "3001"
       NODE_ENV: development
       # Internal service-to-service URL — the realtime service calls the API
@@ -323,6 +326,7 @@ services:
     # SSH_BASTION_PORT_RANGE_START/_END below for the range those bindings
     # are picked from.
     environment:
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       # Limit parallel package compilation to avoid OOM kills on memory-constrained
       # Docker Desktop VMs (mirrors the -p=1 flag used in the production Dockerfile).
       GOFLAGS: "-p=1"

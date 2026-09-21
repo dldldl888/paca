@@ -108,6 +108,7 @@ func TestLoad_Success(t *testing.T) {
 	t.Setenv("STORAGE_ACCESS_KEY_ID", "access-key")
 	t.Setenv("STORAGE_SECRET_ACCESS_KEY", "secret-key")
 	t.Setenv("AI_AGENT_INTERNAL_KEY", "internal-key")
+	t.Setenv("PACA_INSTANCE_ID", "11111111-2222-4333-8444-555555555555")
 
 	cfg, err := Load()
 	if err != nil {
@@ -274,4 +275,22 @@ func setLoadDefaults(t *testing.T) {
 	t.Setenv("STORAGE_ACCESS_KEY_ID", "access-key")
 	t.Setenv("STORAGE_SECRET_ACCESS_KEY", "secret-key")
 	t.Setenv("AI_AGENT_INTERNAL_KEY", "internal-key")
+	t.Setenv("PACA_INSTANCE_ID", "11111111-2222-4333-8444-555555555555")
+}
+
+func TestLoad_RequiresStableInstanceID(t *testing.T) {
+	for _, value := range []string{"", "not-a-uuid", "00000000-0000-0000-0000-000000000000", "11111111-2222-4333-8444-555555555555"} {
+		t.Run(value, func(t *testing.T) {
+			setLoadDefaults(t)
+			t.Setenv("PACA_INSTANCE_ID", value)
+			cfg, err := Load()
+			if value == "11111111-2222-4333-8444-555555555555" {
+				if err != nil || cfg.InstanceID != value {
+					t.Fatalf("valid stable instance rejected: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "PACA_INSTANCE_ID") {
+				t.Fatalf("invalid instance must fail before startup: %v", err)
+			}
+		})
+	}
 }

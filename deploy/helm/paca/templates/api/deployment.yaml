@@ -27,6 +27,8 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            - name: PACA_INSTANCE_ID
+              value: {{ .Values.instanceId | quote }}
             - name: ENV
               value: "production"
             - name: PORT
@@ -106,12 +108,12 @@ spec:
                   key: AGENT_API_KEY
             - name: AI_AGENT_URL
               value: "http://{{ include "paca.fullname" . }}-agent-runner:8080"
+            {{- end }}
             - name: AI_AGENT_INTERNAL_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "paca.secretName" . }}
                   key: INTERNAL_API_KEY
-            {{- end }}
             # Purely descriptive (see values.yaml's environments.sshBastionHost/
             # environments.portForwardHost doc comments) — GET
             # /environments/config echoes these back to the frontend.

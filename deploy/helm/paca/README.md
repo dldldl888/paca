@@ -27,8 +27,13 @@ This chart is published as an OCI artifact, not a traditional `index.yaml`
 repo — install it directly by reference, no `helm repo add` needed:
 
 ```console
-helm install paca oci://ghcr.io/paca-ai/charts/paca --version <version>
+helm install paca oci://ghcr.io/paca-ai/charts/paca --version <version> -f your-values.yaml
 ```
+
+Set `instanceId` in a persisted values file and pass `-f your-values.yaml` on
+install and every upgrade. Empty, malformed and zero UUIDs fail template
+validation. Do not generate a new ID on each Helm invocation. The same existing
+`INTERNAL_API_KEY` Secret key is consumed by API, runner and realtime.
 
 Every value under `secrets.*` is required for a real deployment (there's
 no auto-generated default) — set them explicitly or point
@@ -42,6 +47,7 @@ them.
 
 | Key | Description | Default |
 |---|---|---|
+| `instanceId` | Required stable nonzero deployment UUID, shared by API, agent-runner and realtime. Generate once with `uuidgen`, save in your values file, and retain across upgrades. Reuse an existing deployment ID. | `""` (rendering fails until set) |
 | `publicUrl` | Externally reachable base URL for this deployment (e.g. `https://paca.example.com`). Leave empty for a ClusterIP/NodePort-only deployment. | `""` |
 | `imagePullSecrets` | Image pull secrets applied to every Pod this chart creates | `[]` |
 
@@ -55,7 +61,7 @@ Generate strong values yourself, e.g. `openssl rand -hex 32`.
 | `secrets.jwtSecret` | JWT signing secret | `""` |
 | `secrets.adminPassword` | Initial admin account password | `""` |
 | `secrets.encryptionKey` | 64-char hex string encrypting plugin secrets and (when `agentRunner.enabled`) LLM API keys at rest | `""` |
-| `secrets.internalApiKey` | Pre-shared key authenticating `api` <-> `agent-runner`'s internal routes (only required when `agentRunner.enabled`) | `""` |
+| `secrets.internalApiKey` | Shared key for API, realtime and runner internal routes; required even with runner disabled | `""` |
 | `secrets.agentApiKey` | Agent API key | `""` |
 | `secrets.postgresPassword` | PostgreSQL password | `""` |
 | `secrets.storageAccessKeyId` | Object storage access key ID | `""` |

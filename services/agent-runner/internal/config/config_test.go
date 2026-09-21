@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidatePortRange(t *testing.T) {
 	cases := []struct {
@@ -23,6 +26,28 @@ func TestValidatePortRange(t *testing.T) {
 			}
 			if !tc.wantErr && err != nil {
 				t.Errorf("validatePortRange(%d, %d) = %v, want nil", tc.start, tc.end, err)
+			}
+		})
+	}
+}
+
+func TestLoad_RequiresStableInstanceID(t *testing.T) {
+	for _, value := range []string{"", "not-a-uuid", "00000000-0000-0000-0000-000000000000", "11111111-2222-4333-8444-555555555555"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("PACA_INSTANCE_ID", value)
+			t.Setenv("INTERNAL_API_KEY", "synthetic-test-key")
+			t.Setenv("DATABASE_URL", "postgres://test")
+			t.Setenv("VALKEY_URL", "redis://localhost:6379")
+			t.Setenv("ENCRYPTION_KEY", strings.Repeat("a", 64))
+			t.Setenv("AGENT_SERVER_IMAGE", "synthetic-test")
+			t.Setenv("AGENT_RUNNER_ALLOWED_AGENT_IDS", "*")
+			cfg, err := Load()
+			if value == "11111111-2222-4333-8444-555555555555" {
+				if err != nil || cfg.InstanceID != value {
+					t.Fatalf("valid stable instance rejected: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "PACA_INSTANCE_ID") {
+				t.Fatalf("invalid instance must fail before startup: %v", err)
 			}
 		})
 	}

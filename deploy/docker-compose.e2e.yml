@@ -43,6 +43,7 @@ services:
       context: ../services/api
     restart: unless-stopped
     environment:
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       ENV: test
       PORT: "8080"
       DATABASE_URL: postgres://paca:e2e-postgres-password@postgres:5432/paca?sslmode=disable
@@ -129,6 +130,8 @@ services:
       context: ../services/realtime
     restart: unless-stopped
     environment:
+      INTERNAL_API_KEY: e2e-internal-api-key
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       PORT: "3001"
       NODE_ENV: test
       API_URL: http://api:8080
@@ -198,6 +201,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       VALKEY_URL: redis://valkey:6379/0
       DATABASE_URL: postgres://paca:e2e-postgres-password@postgres:5432/paca
       INTERNAL_API_KEY: e2e-internal-api-key

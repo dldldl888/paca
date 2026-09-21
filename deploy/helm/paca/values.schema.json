@@ -5,6 +5,12 @@
   "additionalProperties": true,
   "properties": {
     "publicUrl": { "type": "string" },
+    "instanceId": {
+      "description": "Required stable nonzero deployment UUID shared by API, agent-runner and realtime",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "not": { "enum": ["00000000-0000-0000-0000-000000000000"] }
+    },
     "imagePullSecrets": {
       "type": "array",
       "items": {

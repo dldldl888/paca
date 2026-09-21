@@ -13,7 +13,7 @@ This directory contains deployment assets for three distinct use cases:
 | `docker-compose.dev.yml` | Local development stack: PostgreSQL, Valkey, MinIO, and optional app containers |
 | `docker-compose.prod.yml` | Production stack: pulls pre-built images from DockerHub, no source checkout required |
 | `docker-compose.e2e.yml` | End-to-end test stack mirroring production topology with fixed test credentials |
-| `.env.dev.example` | Optional environment file for `docker-compose.dev.yml` (tunnel / custom domain) |
+| `.env.dev.example` | Required instance ID and optional tunnel settings for development |
 | `.env.production.example` | Example environment file for manual production deployments |
 | `caddy/` | Gateway container: `Caddyfile` (stock `caddy:2-alpine` image, no custom build needed) |
 | `helm/` | Kubernetes Helm chart — same stack, deployed via `helm install` instead of `docker compose up` |
@@ -21,6 +21,44 @@ This directory contains deployment assets for three distinct use cases:
 Service container definitions live with each service:
 - [`services/api/Dockerfile`](../services/api/Dockerfile)
 - [`apps/web/Dockerfile`](../apps/web/Dockerfile)
+
+## Stable deployment identity (required before startup or upgrade)
+
+API, agent-runner and realtime must share one nonzero UUID, `PACA_INSTANCE_ID`.
+It identifies the deployment's authorization state; it is not a secret. Save it
+in the deployment's existing env file and retain it across restarts and upgrades.
+If this deployment already has an instance ID (including a local override), reuse
+that value. Do not generate a new ID for an existing identity, generate one per
+service, or put `$(uuidgen)` in a startup command.
+
+For a deployment that has never had an ID, run `uuidgen` once and paste its output
+into `PACA_INSTANCE_ID=` in the saved env file. Dev uses a copy of
+`.env.dev.example`; production uses its existing `.env` or a copy of
+`.env.production.example`. E2E may use a separate persistent `.env.e2e` copied
+from `.env.dev.example`. Different deployments need different IDs. For services
+run outside Docker, put the same ID in their env files too.
+
+Render before starting (from the repository root):
+
+```sh
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml config --quiet
+docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml config --quiet
+docker compose --env-file deploy/.env.e2e -f deploy/docker-compose.e2e.yml config --quiet
+```
+
+Use the same `--env-file` on `up`, build and upgrade commands. Merely adding the
+variable to an unrelated host `.env` does not pass it to Compose. The three
+services now explicitly receive the same value. Missing/empty values fail
+Compose rendering; malformed or zero UUIDs fail API/runner/realtime configuration
+loading before listeners/workers start. Helm validates `instanceId` while
+rendering (see [chart values](helm/paca/README.md)). No nil-gate fallback exists.
+
+For an older installation, persist the ID before running `upgrade.sh`. For the
+installer, use `PACA_START=no` to write configuration first, add the persistent
+ID to its generated `.env`, then start Compose with `--env-file .env`. Existing
+authorization participants/epochs must not be cleared to make an upgrade pass.
+Realtime also needs the existing `INTERNAL_API_KEY`: the supplied Compose/Helm
+configs now pass the same source used by API and runner, not a second key.
 
 ## Production Deployment
 
@@ -33,7 +71,8 @@ generates a `.env` with strong random secrets, and starts the stack.
 
 ```bash
 curl -fsSL https://github.com/Paca-AI/paca/releases/latest/download/install.sh -o install.sh
-bash install.sh
+PACA_START=no bash install.sh
+# Persist PACA_INSTANCE_ID in the generated .env, then start as described above.
 ```
 
 The installer supports:
@@ -52,14 +91,13 @@ The installer supports:
 Set `PACA_YES=1` to skip every prompt. This is **required**, not just convenient,
 for unattended use: without it, the script will eventually hit a `read` and block
 waiting for terminal input — harmless for a human at a keyboard, but a hang for
-anything driving the script programmatically. `PACA_YES=1` alone guarantees a
-complete, silent run: every field not given a value below falls back to a sane
-default, generating fresh random secrets as needed.
+anything driving the script programmatically. `PACA_YES=1` makes configuration generation non-interactive; use
+`PACA_START=no` and persist the instance ID before first startup. Other fields not given a value below use their documented defaults.
 
 ```bash
-PACA_YES=1 bash install.sh
+PACA_YES=1 PACA_START=no bash install.sh
 # or, without a local copy of the script at all:
-PACA_YES=1 bash <(curl -fsSL https://github.com/Paca-AI/paca/releases/latest/download/install.sh)
+PACA_YES=1 PACA_START=no bash <(curl -fsSL https://github.com/Paca-AI/paca/releases/latest/download/install.sh)
 ```
 
 > **AI agents:** prefer this script over hand-rolling `docker-compose.yml` / `.env`
@@ -143,6 +181,8 @@ curl -fsSL https://github.com/Paca-AI/paca/releases/latest/download/docker-compo
 Create a `.env` with the required variables:
 
 ```bash
+# Generate once with uuidgen; retain this value across restarts/upgrades.
+PACA_INSTANCE_ID=<stable-nonzero-uuid>
 # Required: generate with 'openssl rand -hex 32'
 JWT_SECRET=<strong-random-secret>
 ADMIN_PASSWORD=<strong-password>
@@ -462,18 +502,18 @@ choice and may re-enable it on the next upgrade.
 
 Use [`docker-compose.dev.yml`](./docker-compose.dev.yml) for local development and contributor onboarding.
 
-When exposing the stack through a tunnel or reverse proxy, copy the example env file and set the public host:
+Copy the example env file and persist the required instance ID, even for plain localhost. Set the public host only when using a tunnel or reverse proxy:
 
 ```bash
 cp deploy/.env.dev.example deploy/.env.dev
-# Edit PUBLIC_HOST and VITE_ALLOWED_HOST in deploy/.env.dev
+# Set the persistent PACA_INSTANCE_ID; optionally edit PUBLIC_HOST/VITE_ALLOWED_HOST
 docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml up -d
 ```
 
 Start the full local stack in containers (no tunnel, plain localhost):
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml up -d
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml up -d
 ```
 
 Open `http://localhost:3000` once all services are healthy.
@@ -481,7 +521,7 @@ Open `http://localhost:3000` once all services are healthy.
 Start only shared dependencies:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml up -d postgres valkey
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml up -d postgres valkey
 ```
 
 For day-to-day coding, contributors can run the application services directly on the host
@@ -519,7 +559,7 @@ stack and writes dumps to `deploy/backups/`.
 To test it without waiting for the cron schedule, trigger a dump on demand:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml exec db-backup run-backup.sh
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml exec db-backup run-backup.sh
 ls deploy/backups/
 ```
 
@@ -527,9 +567,9 @@ To test retention pruning, backdate a dummy file past the retention window
 and re-run the script:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml exec db-backup \
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml exec db-backup \
   sh -c 'touch -t "$(date -d "@$(($(date +%s)-10*86400))" +%Y%m%d%H%M)" /backups/paca-fake.sql.gz'
-docker compose -f deploy/docker-compose.dev.yml exec db-backup run-backup.sh
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml exec db-backup run-backup.sh
 ls deploy/backups/   # paca-fake.sql.gz should be gone
 ```
 
@@ -538,35 +578,35 @@ To watch the cron schedule itself fire, override `BACKUP_CRON` in
 
 ```bash
 docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml up -d db-backup
-docker compose -f deploy/docker-compose.dev.yml logs -f db-backup
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml logs -f db-backup
 ```
 
 Restore a dump into the local dev database:
 
 ```bash
-gunzip -c deploy/backups/paca-<timestamp>.sql.gz | docker compose -f deploy/docker-compose.dev.yml exec -T postgres psql -U paca -d paca
+gunzip -c deploy/backups/paca-<timestamp>.sql.gz | docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml exec -T postgres psql -U paca -d paca
 ```
 
 Stop the development stack:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml down
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml down
 ```
 
 Remove the Postgres volume as well:
 
 ```bash
-docker compose -f deploy/docker-compose.dev.yml down -v
+docker compose --env-file deploy/.env.dev -f deploy/docker-compose.dev.yml down -v
 ```
 
 ## E2E Compose
 
 Use [`docker-compose.e2e.yml`](./docker-compose.e2e.yml) to spin up a full production-like
-stack with fixed, test-safe credentials for running end-to-end tests:
+stack with fixed, test-safe credentials for running end-to-end tests. First save a separate stable ID in `deploy/.env.e2e` as described above:
 
 ```bash
-docker compose -f deploy/docker-compose.e2e.yml up -d --build --wait
-docker compose -f deploy/docker-compose.e2e.yml down -v
+docker compose --env-file deploy/.env.e2e -f deploy/docker-compose.e2e.yml up -d --build --wait
+docker compose --env-file deploy/.env.e2e -f deploy/docker-compose.e2e.yml down -v
 ```
 
 All secrets are intentionally weak and public — never use them outside a local E2E environment.

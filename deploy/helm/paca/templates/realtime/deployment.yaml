@@ -27,6 +27,13 @@ spec:
             - containerPort: 3001
               name: http
           env:
+            - name: INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "paca.secretName" . }}
+                  key: INTERNAL_API_KEY
+            - name: PACA_INSTANCE_ID
+              value: {{ .Values.instanceId | quote }}
             - name: PORT
               value: "3001"
             - name: NODE_ENV

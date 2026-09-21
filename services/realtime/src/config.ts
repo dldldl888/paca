@@ -5,8 +5,8 @@
 export interface Config {
 	port: number;
 	apiUrl: string;
- internalAPIKey: string;
- instanceID: string;
+	internalAPIKey: string;
+	instanceID: string;
 	valkey: {
 		url: string;
 	};
@@ -23,12 +23,16 @@ function requireEnv(name: string): string {
 }
 
 export function loadConfig(): Config {
+	const instanceID = requireEnv("PACA_INSTANCE_ID");
+	if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(instanceID) || instanceID === "00000000-0000-0000-0000-000000000000") {
+		throw new Error("PACA_INSTANCE_ID must be a stable nonzero UUID shared by API, agent-runner and realtime");
+	}
 	return {
 		port: parseInt(process.env.PORT ?? "3001", 10),
 		// Internal API base URL (service-to-service, not via the public gateway).
 		apiUrl: requireEnv("API_URL"),
- internalAPIKey: requireEnv("INTERNAL_API_KEY"),
- instanceID: requireEnv("PACA_INSTANCE_ID"),
+		internalAPIKey: requireEnv("INTERNAL_API_KEY"),
+		instanceID,
 		valkey: {
 			url: requireEnv("REDIS_URL"),
 		},

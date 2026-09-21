@@ -214,6 +214,7 @@ services:
     image: ${PACA_API_IMAGE:-pacaai/paca-api:latest}
     restart: unless-stopped
     environment:
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       ENV: ${ENVIRONMENT:-production}
       PORT: 8080
       # Defaults to the bundled postgres. Set DATABASE_URL explicitly when using
@@ -300,6 +301,8 @@ services:
     image: ${PACA_REALTIME_IMAGE:-pacaai/paca-realtime:latest}
     restart: unless-stopped
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       PORT: 3001
       NODE_ENV: ${ENVIRONMENT:-production}
       API_URL: http://api:8080
@@ -370,6 +373,7 @@ services:
     # "Port forwarding" comment blocks near the top of this file for the
     # ranges those bindings are picked from.
     environment:
+      PACA_INSTANCE_ID: ${PACA_INSTANCE_ID:?Set a stable nonzero PACA_INSTANCE_ID in your env file; see deploy/README.md}
       VALKEY_URL: ${REDIS_URL:-redis://valkey:6379/0}
       DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-paca}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-paca}?sslmode=disable}
       # Pre-shared key authenticating services/api's calls into this

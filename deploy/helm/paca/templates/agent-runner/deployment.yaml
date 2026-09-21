@@ -37,6 +37,8 @@ spec:
           # internal/sandbox/k8s/environment.go), not templated here or
           # anywhere else in this chart.
           env:
+            - name: PACA_INSTANCE_ID
+              value: {{ .Values.instanceId | quote }}
             - name: VALKEY_URL
               valueFrom:
                 secretKeyRef:

@@ -148,11 +148,9 @@ func Load() (*Config, error) {
 		errs = append(errs, err)
 	}
 
-	if value := os.Getenv("PACA_INSTANCE_ID"); value != "" {
-		id, e := uuid.Parse(value)
-		if e != nil || id == uuid.Nil {
-			errs = append(errs, fmt.Errorf("PACA_INSTANCE_ID must be a nonzero UUID"))
-		}
+	instanceID := os.Getenv("PACA_INSTANCE_ID")
+	if id, e := uuid.Parse(instanceID); e != nil || id == uuid.Nil {
+		errs = append(errs, fmt.Errorf("config: PACA_INSTANCE_ID must be set to a stable nonzero UUID shared by API, agent-runner and realtime"))
 	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -233,7 +231,7 @@ func Load() (*Config, error) {
 		},
 		AIAgentURL:         env("AI_AGENT_URL", "http://ai-agent:8080"),
 		AIAgentInternalKey: aiAgentInternalKey,
-		InstanceID:         os.Getenv("PACA_INSTANCE_ID"),
+		InstanceID:         instanceID,
 		SSHBastionHost:     env("SSH_BASTION_HOST", ""),
 		PortForwardHost:    env("PORT_FORWARD_HOST", ""),
 	}, nil

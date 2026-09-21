@@ -15,6 +15,10 @@
 # sensible for that case.
 publicUrl: ""
 
+# Required: generate once (uuidgen), persist in your values file, and retain
+# across upgrades. API, agent-runner and realtime share this nonzero UUID.
+instanceId: ""
+
 imagePullSecrets: []
 
 # ---------------------------------------------------------------------------
@@ -39,8 +43,8 @@ secrets:
   # 64-char hex string — encrypts plugin secrets and (when agentRunner is
   # enabled) LLM API keys at rest. Must be exactly 64 hex characters.
   encryptionKey: ""
-  # Pre-shared key authenticating services/api <-> agent-runner's
-  # internal-only routes. Only required when agentRunner.enabled.
+  # Shared key for API, realtime and agent-runner internal-only routes.
+  # Required even when agentRunner.enabled is false.
   internalApiKey: ""
   agentApiKey: ""
   postgresPassword: ""
