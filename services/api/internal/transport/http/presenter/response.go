@@ -130,6 +130,8 @@ func statusAndCodeFor(err error) (int, apierr.Code) {
 		return http.StatusConflict, apierr.Code("DRAFT_CONFLICT")
 	case errors.Is(err, draftdom.ErrPending):
 		return http.StatusConflict, apierr.Code("DRAFT_GENERATION_PENDING")
+	case errors.Is(err, draftdom.ErrProvenanceUnknown):
+		return http.StatusConflict, apierr.Code("DRAFT_PROVENANCE_UNKNOWN")
 	case errors.Is(err, domainauth.ErrInvalidCredentials):
 		return http.StatusUnauthorized, apierr.CodeInvalidCredentials
 	case errors.Is(err, domainauth.ErrTokenInvalid):

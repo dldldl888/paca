@@ -281,7 +281,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), docsvc.NewActivityService(docRepo, docRepo, projectRepo, publisher)).WithDeliveryGate(fileGate),
 		Environment:          handler.NewEnvironmentHandler(environmentService, ""),
 		Annotation:           handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery),
-		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher)),
+		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher).WithDeliveryGate(fileGate)).WithDeliveryGate(fileGate),
 		TokenManager:         tm,
 		APIKeyAuth:           apiKeyService,
 		Authorizer:           authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore),

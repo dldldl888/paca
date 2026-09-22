@@ -14,9 +14,16 @@ import (
 	"net/http"
 )
 
-type DraftHandler struct{ svc *draftsvc.Service }
+type DraftHandler struct {
+	svc  *draftsvc.Service
+	gate *delivery.Gate
+}
 
-func NewDraftHandler(svc *draftsvc.Service) *DraftHandler { return &DraftHandler{svc} }
+func NewDraftHandler(svc *draftsvc.Service) *DraftHandler { return &DraftHandler{svc: svc} }
+func (h *DraftHandler) WithDeliveryGate(gate *delivery.Gate) *DraftHandler {
+	h.gate = gate
+	return h
+}
 func draftIDs(r *http.Request) (uuid.UUID, uuid.UUID, error) {
 	pid, e := uuid.Parse(chi.URLParam(r, "projectId"))
 	if e != nil {
@@ -57,7 +64,12 @@ func (h *DraftHandler) List(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, e)
 		return
 	}
-	items, e := h.svc.Repo.List(r.Context(), pid)
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	items, e := h.svc.List(r.Context(), pid)
 	if e != nil {
 		draftError(w, r, e)
 		return
@@ -79,7 +91,12 @@ func (h *DraftHandler) Create(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, apierr.New(apierr.CodeBadRequest, e.Error()))
 		return
 	}
-	d, e := h.svc.Repo.Create(r.Context(), pid, c)
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, e := h.svc.Create(r.Context(), pid, c)
 	if e != nil {
 		draftError(w, r, e)
 		return
@@ -92,7 +109,12 @@ func (h *DraftHandler) Get(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, e)
 		return
 	}
-	d, e := h.svc.Repo.Get(r.Context(), pid, id)
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, e := h.svc.Get(r.Context(), pid, id)
 	if e != nil {
 		draftError(w, r, e)
 		return
@@ -117,7 +139,12 @@ func (h *DraftHandler) Update(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, apierr.New(apierr.CodeBadRequest, e.Error()))
 		return
 	}
-	d, e := h.svc.Repo.Update(r.Context(), pid, id, in.ExpectedVersion, in.Content)
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, e := h.svc.Update(r.Context(), pid, id, in.ExpectedVersion, in.Content)
 	if e != nil {
 		draftError(w, r, e)
 		return
@@ -137,7 +164,12 @@ func (h *DraftHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, e)
 		return
 	}
-	p, e := h.svc.Repo.Preview(r.Context(), pid, id, in.ExpectedVersion)
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	p, e := h.svc.Preview(r.Context(), pid, id, in.ExpectedVersion)
 	if e != nil {
 		draftError(w, r, e)
 		return
@@ -163,6 +195,11 @@ func (h *DraftHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, apierr.New(apierr.CodeBadRequest, "explicit confirmation and publication UUID required"))
 		return
 	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	d, e := h.svc.Publish(r.Context(), pid, id, in.ExpectedVersion, in.PublicationID)
 	if e != nil {
 		draftError(w, r, e)
@@ -184,6 +221,11 @@ func (h *DraftHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, e)
 		return
 	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	d, e := h.svc.Generate(r.Context(), pid, id, in.ExpectedVersion, in.AgentID)
 	if e != nil {
 		draftError(w, r, e)
@@ -205,6 +247,11 @@ func (h *DraftHandler) Import(w http.ResponseWriter, r *http.Request) {
 		draftError(w, r, e)
 		return
 	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
 	d, e := h.svc.Import(r.Context(), pid, id, in.ExpectedVersion, in.GenerationID)
 	if e != nil {
 		draftError(w, r, e)

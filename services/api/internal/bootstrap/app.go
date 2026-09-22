@@ -455,7 +455,7 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	deps := router.Deps{
-		Draft:                handler.NewDraftHandler(draftService),
+		Draft:                handler.NewDraftHandler(draftService).WithDeliveryGate(fileGate),
 		TokenManager:         tokenManager,
 		APIKeyAuth:           apiKeyService,
 		Authorizer:           authorizer,

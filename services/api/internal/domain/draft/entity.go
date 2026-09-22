@@ -12,9 +12,10 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("draft not found")
-	ErrConflict = errors.New("draft version or publication conflict")
-	ErrPending  = errors.New("draft generation is not complete")
+	ErrNotFound          = errors.New("draft not found")
+	ErrConflict          = errors.New("draft version or publication conflict")
+	ErrPending           = errors.New("draft generation is not complete")
+	ErrProvenanceUnknown = errors.New("draft source history is unknown; create a new draft from currently readable sources")
 )
 
 type Item struct {
@@ -48,6 +49,15 @@ type PublishedTask struct {
 	TaskID     uuid.UUID `json:"task_id"`
 	TaskNumber int64     `json:"task_number"`
 }
+type SourceBinding struct {
+	ConversationID uuid.UUID `json:"conversation_id"`
+	AgentID        uuid.UUID `json:"agent_id"`
+	ChatSessionID  uuid.UUID `json:"chat_session_id"`
+}
+type Provenance struct {
+	Version  int             `json:"version"`
+	Bindings []SourceBinding `json:"bindings"`
+}
 type Draft struct {
 	Content
 	ID               uuid.UUID       `json:"id"`
@@ -60,6 +70,7 @@ type Draft struct {
 	PublishedVersion int             `json:"published_version,omitempty"`
 	PublishedTasks   []PublishedTask `json:"published_tasks"`
 	PublishedAt      *time.Time      `json:"published_at,omitempty"`
+	Provenance       *Provenance     `json:"-"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }

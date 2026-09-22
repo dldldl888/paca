@@ -20,6 +20,25 @@ import (
 
 type DraftRepository struct{ db *sqlx.DB }
 
+type storedDraft struct {
+	draftdom.Draft
+	Provenance *draftdom.Provenance `json:"_provenance,omitempty"`
+}
+
+func marshalDraft(d *draftdom.Draft) ([]byte, error) {
+	return json.Marshal(storedDraft{Draft: *d, Provenance: d.Provenance})
+}
+
+func unmarshalDraft(b []byte, d *draftdom.Draft) error {
+	var stored storedDraft
+	if err := json.Unmarshal(b, &stored); err != nil {
+		return err
+	}
+	*d = stored.Draft
+	d.Provenance = stored.Provenance
+	return nil
+}
+
 func NewDraftRepository(db *sqlx.DB) *DraftRepository { return &DraftRepository{db} }
 func draftAuthority(ctx context.Context, tx *sqlx.Tx, pid uuid.UUID) (taskdom.AccessScope, error) {
 	scope, err := lockTaskProjectAccess(ctx, tx, pid)
@@ -40,8 +59,8 @@ func (r *DraftRepository) Create(ctx context.Context, pid uuid.UUID, content dra
 		}
 		now := time.Now()
 		content.Normalize()
-		d = &draftdom.Draft{Content: content, ID: uuid.New(), ProjectID: pid, OwnerUserID: scope.UserID, Version: 1, State: "editable", PublishedTasks: []draftdom.PublishedTask{}, CreatedAt: now, UpdatedAt: now}
-		b, e := json.Marshal(d)
+		d = &draftdom.Draft{Content: content, ID: uuid.New(), ProjectID: pid, OwnerUserID: scope.UserID, Version: 1, State: "editable", PublishedTasks: []draftdom.PublishedTask{}, Provenance: &draftdom.Provenance{Version: 1, Bindings: []draftdom.SourceBinding{}}, CreatedAt: now, UpdatedAt: now}
+		b, e := marshalDraft(d)
 		if e != nil {
 			return e
 		}
@@ -68,7 +87,7 @@ func (r *DraftRepository) Locked(ctx context.Context, pid, id uuid.UUID, fn func
 		if e != nil {
 			return e
 		}
-		if e = json.Unmarshal(b, &d); e != nil {
+		if e = unmarshalDraft(b, &d); e != nil {
 			return e
 		}
 		scope, e := draftAuthority(ctx, tx, pid)
@@ -102,7 +121,7 @@ func (r *DraftRepository) List(ctx context.Context, pid uuid.UUID) ([]*draftdom.
 		}
 		for _, b := range rows {
 			var d draftdom.Draft
-			if e = json.Unmarshal(b, &d); e != nil {
+			if e = unmarshalDraft(b, &d); e != nil {
 				return e
 			}
 			result = append(result, &d)
@@ -113,7 +132,7 @@ func (r *DraftRepository) List(ctx context.Context, pid uuid.UUID) ([]*draftdom.
 }
 func SaveDraft(ctx context.Context, tx *sqlx.Tx, d *draftdom.Draft) error {
 	d.UpdatedAt = time.Now()
-	b, err := json.Marshal(d)
+	b, err := marshalDraft(d)
 	if err != nil {
 		return err
 	}
