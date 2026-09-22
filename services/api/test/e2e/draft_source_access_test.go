@@ -181,204 +181,179 @@ func setupTask4bImportedDraft(t *testing.T) *task4bImportedDraft {
 	return &task4bImportedDraft{f: f, env: env, aid: aid, sourceID: sourceID, sourcePath: sourcePath, draftID: draftID, draftPath: draftPath, sentinel: sentinel}
 }
 
-func TestTask4bDraftHTTPDeliveryFlushesBeforeSourceRevocation(t *testing.T) {
-	fx := setupTask4bImportedDraft(t)
-	f, env := fx.f, fx.env
-	routes := []struct {
-		name, method, path string
-		body               any
-	}{
-		{"get", http.MethodGet, fx.draftPath, nil},
-		{"list", http.MethodGet, f.base, nil},
-		{"preview", http.MethodPost, fx.draftPath + "/preview", map[string]any{"expected_version": 3}},
-	}
-	// Every Draft response entry must hold the delivery lease through the
-	// actual socket Flush. Use independent drafts so each write route has a
-	// valid version/generation and can be held concurrently with the revoke.
-	updatePath, _ := addTask4bImportedDraft(t, fx)
-	routes = append(routes, struct {
-		name, method, path string
-		body               any
-	}{"update", http.MethodPatch, updatePath, func() any {
+type task4bHTTPRoute struct {
+	name, method, path string
+	body               any
+}
+
+func task4bRoute(t *testing.T, fx *task4bImportedDraft, name string) task4bHTTPRoute {
+	t.Helper()
+	f := fx.f
+	switch name {
+	case "get":
+		return task4bHTTPRoute{name: name, method: http.MethodGet, path: fx.draftPath}
+	case "list":
+		return task4bHTTPRoute{name: name, method: http.MethodGet, path: f.base}
+	case "preview":
+		return task4bHTTPRoute{name: name, method: http.MethodPost, path: fx.draftPath + "/preview", body: map[string]any{"expected_version": 3}}
+	case "update":
+		path, _ := addTask4bImportedDraft(t, fx)
 		body := f.content()
 		body["goal"] = fx.sentinel
 		body["expected_version"] = 3
-		return body
-	}()})
-	generatePath, _ := addTask4bImportedDraft(t, fx)
-	routes = append(routes, struct {
-		name, method, path string
-		body               any
-	}{"generate", http.MethodPost, generatePath + "/generate", map[string]any{"expected_version": 3, "agent_id": fx.aid}})
-	importPath, importGeneration := addTask4bGeneratedDraft(t, fx)
-	completeTask4bGeneration(t, f, uuid.MustParse(importGeneration["conversation_id"].(string)), fx.sentinel, fx.sourceID)
-	routes = append(routes, struct {
-		name, method, path string
-		body               any
-	}{"import", http.MethodPost, importPath + "/import", map[string]any{"expected_version": 2, "generation_id": importGeneration["id"]}})
-	publishPath, _ := addTask4bImportedDraft(t, fx)
-	routes = append(routes, struct {
-		name, method, path string
-		body               any
-	}{"publish", http.MethodPost, publishPath + "/publish", map[string]any{"expected_version": 3, "publication_id": uuid.New(), "confirmed": true}})
-	type pending struct {
-		server                                    *httptest.Server
-		headerEntered                             chan int
-		headerRelease, flushEntered, flushRelease chan struct{}
-		headerOnce, flushOnce                     *sync.Once
-		delivered                                 chan struct {
-			status int
-			body   string
-			err    error
-		}
+		return task4bHTTPRoute{name: name, method: http.MethodPatch, path: path, body: body}
+	case "generate":
+		path, _ := addTask4bImportedDraft(t, fx)
+		return task4bHTTPRoute{name: name, method: http.MethodPost, path: path + "/generate", body: map[string]any{"expected_version": 3, "agent_id": fx.aid}}
+	case "import":
+		path, generation := addTask4bGeneratedDraft(t, fx)
+		completeTask4bGeneration(t, f, uuid.MustParse(generation["conversation_id"].(string)), fx.sentinel, fx.sourceID)
+		return task4bHTTPRoute{name: name, method: http.MethodPost, path: path + "/import", body: map[string]any{"expected_version": 2, "generation_id": generation["id"]}}
+	case "publish":
+		path, _ := addTask4bImportedDraft(t, fx)
+		return task4bHTTPRoute{name: name, method: http.MethodPost, path: path + "/publish", body: map[string]any{"expected_version": 3, "publication_id": uuid.New(), "confirmed": true}}
+	default:
+		t.Fatalf("unknown Task4b route %q", name)
+		return task4bHTTPRoute{}
 	}
-	pendingRoutes := make([]pending, 0, len(routes))
-	for _, route := range routes {
-		headerEntered, headerRelease := make(chan int, 1), make(chan struct{})
-		flushEntered, flushRelease := make(chan struct{}), make(chan struct{})
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			env.handler.ServeHTTP(&heldTaskJSON{ResponseWriter: w, headerEntered: headerEntered, headerRelease: headerRelease, flushEntered: flushEntered, flushRelease: flushRelease}, r)
-		}))
-		result := make(chan struct {
-			status int
-			body   string
-			err    error
-		}, 1)
-		request := mustRequest(env.ctx, t, route.method, server.URL+route.path, nil)
-		if route.body != nil {
-			request = mustRequest(env.ctx, t, route.method, server.URL+route.path, jsonBody(t, route.body))
-			request.Header.Set("Content-Type", "application/json")
-		}
-		request.Header.Set("Authorization", "Bearer "+f.token)
-		go func(client *http.Client, req *http.Request) {
-			response, err := client.Do(req)
-			if err != nil {
+}
+
+func TestTask4bDraftHTTPDeliveryFlushesBeforeSourceRevocation(t *testing.T) {
+	for _, name := range []string{"get", "list", "preview", "update", "generate", "import", "publish"} {
+		t.Run(name, func(t *testing.T) {
+			fx := setupTask4bImportedDraft(t)
+			env, f := fx.env, fx.f
+			route := task4bRoute(t, fx, name)
+			headerEntered, headerRelease := make(chan int, 1), make(chan struct{})
+			flushEntered, flushRelease := make(chan struct{}), make(chan struct{})
+			var headerOnce, flushOnce sync.Once
+			releaseHeader := func() { headerOnce.Do(func() { close(headerRelease) }) }
+			releaseFlush := func() { flushOnce.Do(func() { close(flushRelease) }) }
+			defer func() {
+				releaseHeader()
+				releaseFlush()
+			}()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				env.handler.ServeHTTP(&heldTaskJSON{ResponseWriter: w, headerEntered: headerEntered, headerRelease: headerRelease, flushEntered: flushEntered, flushRelease: flushRelease}, r)
+			}))
+			defer server.Close()
+
+			requestBody := (*bytes.Buffer)(nil)
+			if route.body != nil {
+				requestBody = jsonBody(t, route.body)
+			}
+			request := mustRequest(env.ctx, t, route.method, server.URL+route.path, requestBody)
+			request.Header.Set("Authorization", "Bearer "+f.token)
+			if route.body != nil {
+				request.Header.Set("Content-Type", "application/json")
+			}
+			result := make(chan struct {
+				status int
+				body   string
+				err    error
+			}, 1)
+			go func() {
+				response, err := server.Client().Do(request)
+				if err != nil {
+					result <- struct {
+						status int
+						body   string
+						err    error
+					}{err: err}
+					return
+				}
+				body, readErr := io.ReadAll(response.Body)
+				response.Body.Close()
 				result <- struct {
 					status int
 					body   string
 					err    error
-				}{err: err}
-				return
+				}{status: response.StatusCode, body: string(body), err: readErr}
+			}()
+
+			select {
+			case status := <-headerEntered:
+				if status < http.StatusOK || status >= http.StatusMultipleChoices {
+					t.Fatalf("authorized %s status=%d, want 2xx", name, status)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("%s response never reached WriteHeader", name)
 			}
-			body, readErr := io.ReadAll(response.Body)
-			response.Body.Close()
-			result <- struct {
+
+			deleteRequest := mustRequest(env.ctx, t, http.MethodDelete, env.base+fx.sourcePath, nil)
+			deleteRequest.Header.Set("Authorization", "Bearer "+f.token)
+			deleteResult := make(chan struct {
 				status int
 				body   string
 				err    error
-			}{status: response.StatusCode, body: string(body), err: readErr}
-		}(server.Client(), request)
-		pendingRoutes = append(pendingRoutes, pending{server: server, headerEntered: headerEntered, headerRelease: headerRelease, flushEntered: flushEntered, flushRelease: flushRelease, headerOnce: &sync.Once{}, flushOnce: &sync.Once{}, delivered: result})
-	}
-	defer func() {
-		for _, route := range pendingRoutes {
-			route.headerOnce.Do(func() { close(route.headerRelease) })
-			route.flushOnce.Do(func() { close(route.flushRelease) })
-			route.server.Close()
-		}
-	}()
-	for i, route := range pendingRoutes {
-		select {
-		case status := <-route.headerEntered:
-			if status < http.StatusOK || status >= http.StatusMultipleChoices {
-				t.Fatalf("authorized %s status=%d, want 2xx", routes[i].name, status)
+			}, 1)
+			go func() {
+				response, err := f.client.Do(deleteRequest)
+				if err != nil {
+					deleteResult <- struct {
+						status int
+						body   string
+						err    error
+					}{err: err}
+					return
+				}
+				body, readErr := io.ReadAll(response.Body)
+				response.Body.Close()
+				deleteResult <- struct {
+					status int
+					body   string
+					err    error
+				}{status: response.StatusCode, body: string(body), err: readErr}
+			}()
+			deadline := time.After(3 * time.Second)
+			for !env.fileGate.State().Blocked {
+				select {
+				case deleted := <-deleteResult:
+					t.Fatalf("%s source revocation finished before delivery lease: %+v", name, deleted)
+				case <-deadline:
+					t.Fatalf("%s source revocation never entered coordinator barrier", name)
+				case <-time.After(time.Millisecond):
+				}
 			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("draft response never reached WriteHeader")
-		}
-	}
-	deleteResult := make(chan struct {
-		status int
-		body   string
-		err    error
-	}, 1)
-	deleteRequest := mustRequest(env.ctx, t, http.MethodDelete, env.base+fx.sourcePath, nil)
-	deleteRequest.Header.Set("Authorization", "Bearer "+f.token)
-	go func() {
-		response, err := f.client.Do(deleteRequest)
-		if err != nil {
-			deleteResult <- struct {
-				status int
-				body   string
-				err    error
-			}{err: err}
-			return
-		}
-		body, readErr := io.ReadAll(response.Body)
-		response.Body.Close()
-		deleteResult <- struct {
-			status int
-			body   string
-			err    error
-		}{status: response.StatusCode, body: string(body), err: readErr}
-	}()
-	deadline := time.After(3 * time.Second)
-	for !env.fileGate.State().Blocked {
-		select {
-		case result := <-deleteResult:
-			t.Fatalf("source revocation finished before draft delivery lease: %+v", result)
-		case <-deadline:
-			t.Fatal("source revocation never entered coordinator barrier")
-		case <-time.After(time.Millisecond):
-		}
-	}
-	var active bool
-	if err := env.db.Get(&active, "SELECT deleted_at IS NULL FROM documents WHERE id=$1", fx.sourceID); err != nil || !active {
-		t.Fatalf("source changed before draft Flush: active=%v err=%v", active, err)
-	}
-	for _, route := range pendingRoutes {
-		route.headerOnce.Do(func() { close(route.headerRelease) })
-	}
-	for _, route := range pendingRoutes {
-		select {
-		case <-route.flushEntered:
-		case result := <-deleteResult:
-			t.Fatalf("source revocation finished before draft Flush: %+v", result)
-		case <-time.After(3 * time.Second):
-			t.Fatal("draft response never reached actual Flush")
-		}
-	}
-	select {
-	case result := <-deleteResult:
-		t.Fatalf("source revocation committed before all Flush calls: %+v", result)
-	default:
-	}
-	if err := env.db.Get(&active, "SELECT deleted_at IS NULL FROM documents WHERE id=$1", fx.sourceID); err != nil || !active {
-		t.Fatalf("source changed before Flush release: active=%v err=%v", active, err)
-	}
-	for _, route := range pendingRoutes {
-		route.flushOnce.Do(func() { close(route.flushRelease) })
-	}
-	for i, route := range pendingRoutes {
-		select {
-		case result := <-route.delivered:
-			if result.err != nil || result.status < http.StatusOK || result.status >= http.StatusMultipleChoices || !strings.Contains(result.body, fx.sentinel) {
-				t.Fatalf("legal %s response not delivered: %+v", routes[i].name, result)
+			var active bool
+			if err := env.db.Get(&active, "SELECT deleted_at IS NULL FROM documents WHERE id=$1", fx.sourceID); err != nil || !active {
+				t.Fatalf("%s source changed before Flush: active=%v err=%v", name, active, err)
 			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("draft response did not finish after Flush release")
-		}
-	}
-	select {
-	case result := <-deleteResult:
-		if result.err != nil || result.status != http.StatusNoContent {
-			t.Fatalf("source revocation failed after Flush: %+v", result)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("source revocation did not commit after Flush")
-	}
-	waitFileGate(t, env)
-	status, payload := task4bRaw(t, f, http.MethodGet, fx.draftPath, nil)
-	if status == http.StatusOK || strings.Contains(string(payload), fx.sentinel) {
-		t.Fatalf("revoked Get delivered body: %d %s", status, payload)
-	}
-	status, payload = task4bRaw(t, f, http.MethodGet, f.base, nil)
-	if status != http.StatusOK || strings.Contains(string(payload), fx.sentinel) {
-		t.Fatalf("revoked List leaked or failed: %d %s", status, payload)
-	}
-	status, payload = task4bRaw(t, f, http.MethodPost, fx.draftPath+"/preview", map[string]any{"expected_version": 3})
-	if status == http.StatusOK || strings.Contains(string(payload), fx.sentinel) {
-		t.Fatalf("revoked Preview delivered body: %d %s", status, payload)
+			releaseHeader()
+			select {
+			case <-flushEntered:
+			case deleted := <-deleteResult:
+				t.Fatalf("%s source revocation finished before actual Flush: %+v", name, deleted)
+			case <-time.After(3 * time.Second):
+				t.Fatalf("%s response never reached actual Flush", name)
+			}
+			select {
+			case deleted := <-deleteResult:
+				t.Fatalf("%s source revocation finished before Flush release: %+v", name, deleted)
+			default:
+			}
+			if err := env.db.Get(&active, "SELECT deleted_at IS NULL FROM documents WHERE id=$1", fx.sourceID); err != nil || !active {
+				t.Fatalf("%s source changed before Flush release: active=%v err=%v", name, active, err)
+			}
+			releaseFlush()
+			select {
+			case delivered := <-result:
+				if delivered.err != nil || delivered.status < http.StatusOK || delivered.status >= http.StatusMultipleChoices || !strings.Contains(delivered.body, fx.sentinel) {
+					t.Fatalf("legal %s response not delivered: %+v", name, delivered)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("%s response did not finish after Flush release", name)
+			}
+			select {
+			case deleted := <-deleteResult:
+				if deleted.err != nil || deleted.status != http.StatusNoContent {
+					t.Fatalf("%s source revocation failed after Flush: %+v", name, deleted)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("%s source revocation did not commit after Flush", name)
+			}
+			waitFileGate(t, env)
+		})
 	}
 }
 
@@ -787,28 +762,28 @@ func TestTask4bLegacyDraftWithoutProvenanceFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := f.base + "/" + draftID
-	assertDenied := func(method, route string, body any) {
-		t.Helper()
-		req := mustRequest(f.env.ctx, t, method, f.env.base+route, nil)
+	assertDenied := func(tb *testing.T, method, route string, body any) {
+		tb.Helper()
+		req := mustRequest(f.env.ctx, tb, method, f.env.base+route, nil)
 		if body != nil {
-			req = mustRequest(f.env.ctx, t, method, f.env.base+route, jsonBody(t, body))
+			req = mustRequest(f.env.ctx, tb, method, f.env.base+route, jsonBody(tb, body))
 			req.Header.Set("Content-Type", "application/json")
 		}
 		req.Header.Set("Authorization", "Bearer "+f.token)
-		resp := mustDo(t, f.client, req)
+		resp := mustDo(tb, f.client, req)
 		defer resp.Body.Close()
 		payload, err := io.ReadAll(resp.Body)
 		if err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
-		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
-			t.Fatalf("legacy draft was delivered by %s %s: %d %s", method, route, resp.StatusCode, payload)
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			tb.Fatalf("legacy draft was delivered by %s %s: %d %s", method, route, resp.StatusCode, payload)
 		}
 		if strings.Contains(string(payload), "PRIVATE_") {
-			t.Fatalf("legacy draft body leaked from %s %s: %d %s", method, route, resp.StatusCode, payload)
+			tb.Fatalf("legacy draft body leaked from %s %s: %d %s", method, route, resp.StatusCode, payload)
 		}
 	}
-	assertDenied(http.MethodGet, path, nil)
+	assertDenied(t, http.MethodGet, path, nil)
 	// List filters unknown provenance rows instead of returning their bodies.
 	listReq := mustRequest(f.env.ctx, t, http.MethodGet, f.env.base+f.base, nil)
 	listReq.Header.Set("Authorization", "Bearer "+f.token)
@@ -829,15 +804,67 @@ func TestTask4bLegacyDraftWithoutProvenanceFailsClosed(t *testing.T) {
 	if !ok || len(items) != 0 {
 		t.Fatalf("legacy draft was not filtered: %s", listPayload)
 	}
-	assertDenied(http.MethodPost, path+"/preview", map[string]any{"expected_version": 1})
-	assertDenied(http.MethodPatch, path, map[string]any{
+	assertDenied(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1})
+	assertDenied(t, http.MethodPatch, path, map[string]any{
 		"expected_version": 1,
 		"goal":             "PATCH_SHOULD_NOT_UPGRADE",
 		"items":            f.content()["items"],
 		"sources":          []string{},
 		"assumptions":      []string{},
 	})
-	assertDenied(http.MethodPost, path+"/generate", map[string]any{"expected_version": 1, "agent_id": uuid.NewString()})
-	assertDenied(http.MethodPost, path+"/import", map[string]any{"expected_version": 1, "generation_id": uuid.NewString()})
-	assertDenied(http.MethodPost, path+"/publish", map[string]any{"expected_version": 1, "publication_id": uuid.NewString(), "confirmed": true})
+	assertDenied(t, http.MethodPost, path+"/generate", map[string]any{"expected_version": 1, "agent_id": uuid.NewString()})
+	assertDenied(t, http.MethodPost, path+"/import", map[string]any{"expected_version": 1, "generation_id": uuid.NewString()})
+	assertDenied(t, http.MethodPost, path+"/publish", map[string]any{"expected_version": 1, "publication_id": uuid.NewString(), "confirmed": true})
+
+	// Other legacy shapes must also fail closed without rewriting the stored
+	// bytes. These are database states, not client payloads, so each case is
+	// seeded directly and exercised through the production GET route.
+	invalid := []struct {
+		name        string
+		provenance  any
+		removeField bool
+	}{
+		{"unknown-version", map[string]any{"version": 99, "bindings": []any{}}, false},
+		{"nil-bindings", map[string]any{"version": 1, "bindings": nil}, false},
+		{"invalid-binding", map[string]any{"version": 1, "bindings": []any{map[string]any{"conversation_id": uuid.NewString(), "agent_id": uuid.NewString(), "chat_session_id": uuid.NewString()}}}, false},
+		{"missing-provenance", nil, true},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			d := f.request(t, http.MethodPost, f.base, f.content(), http.StatusCreated)
+			id := d["id"].(string)
+			var stored map[string]any
+			var original []byte
+			if err := f.env.db.QueryRow("SELECT content FROM task_drafts WHERE id=$1", id).Scan(&original); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(original, &stored); err != nil {
+				t.Fatal(err)
+			}
+			if tc.removeField {
+				delete(stored, "_provenance")
+			} else {
+				stored["_provenance"] = tc.provenance
+			}
+			mutated, err := json.Marshal(stored)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.env.db.Exec("UPDATE task_drafts SET content=$2 WHERE id=$1", id, mutated); err != nil {
+				t.Fatal(err)
+			}
+			var before []byte
+			if err := f.env.db.QueryRow("SELECT content FROM task_drafts WHERE id=$1", id).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			assertDenied(t, http.MethodGet, f.base+"/"+id, nil)
+			var after []byte
+			if err := f.env.db.QueryRow("SELECT content FROM task_drafts WHERE id=$1", id).Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatalf("rejected legacy row was rewritten: before=%s after=%s", before, after)
+			}
+		})
+	}
 }
