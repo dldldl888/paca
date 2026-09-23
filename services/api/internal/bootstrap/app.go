@@ -487,7 +487,7 @@ func New(cfg *config.Config) (*App, error) {
 			WithDocAvatarService(attachmentService).
 			WithDocNotificationService(notificationService),
 		DocFile:            handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),
-		Notification:       handler.NewNotificationHandler(notificationService, handler.WithNotificationAvatarService(attachmentService)),
+		Notification:       handler.NewNotificationHandler(notificationService, handler.WithNotificationAvatarService(attachmentService)).WithDeliveryGate(fileGate),
 		APIKey:             handler.NewAPIKeyHandler(apiKeyService),
 		Skills:             handler.NewSkillsHandler(pluginService, cfg.Plugins.SkillsDir),
 		Plugin:             pluginHandler,

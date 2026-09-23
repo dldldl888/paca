@@ -10,6 +10,7 @@ import (
 	"github.com/Paca-AI/api/internal/apierr"
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	notificationdom "github.com/Paca-AI/api/internal/domain/notification"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/Paca-AI/api/internal/transport/http/dto"
 	"github.com/Paca-AI/api/internal/transport/http/middleware"
 	"github.com/Paca-AI/api/internal/transport/http/presenter"
@@ -24,6 +25,7 @@ const (
 type NotificationHandler struct {
 	svc       notificationdom.Service
 	avatarSvc attachmentdom.AvatarService
+	gate      *delivery.Gate
 }
 
 // NewNotificationHandler returns a NotificationHandler wired to svc.
@@ -44,6 +46,12 @@ func WithNotificationAvatarService(svc attachmentdom.AvatarService) Notification
 	return func(h *NotificationHandler) {
 		h.avatarSvc = svc
 	}
+}
+
+// WithDeliveryGate shares the authority coordinator's short-response gate.
+func (h *NotificationHandler) WithDeliveryGate(g *delivery.Gate) *NotificationHandler {
+	h.gate = g
+	return h
 }
 
 // toNotificationResponse maps n to a NotificationResponse and, if an
@@ -67,6 +75,12 @@ func (h *NotificationHandler) toNotificationResponse(ctx context.Context, n *not
 //   - page_size=<1-50>    defaults to 20
 //   - cursor=<opaque>     from the previous page's next_cursor; omit for the first page
 func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+
 	userID, ok := middleware.ActorIDFromContext(r.Context())
 	if !ok {
 		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "unauthenticated"))

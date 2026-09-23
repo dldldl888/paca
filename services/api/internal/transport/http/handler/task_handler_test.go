@@ -1176,7 +1176,7 @@ func TestTaskHandler_UpdateTask_NullSprintIDClearsField(t *testing.T) {
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(deadlineRecorder{w}, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())

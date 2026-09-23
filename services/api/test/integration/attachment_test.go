@@ -291,7 +291,7 @@ func buildAttachmentTestRouter(attachRepo *fakeAttachmentRepo, store *fakeStorag
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(&fakeGlobalRoleService{}),
 		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(permStore)),
-		Task:                 handler.NewTaskHandler(taskService, viewService, active),
+		Task:                 handler.NewTaskHandler(taskService, viewService, active).WithDeliveryGate(openTaskGate()),
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
 		Attachment:           handler.NewAttachmentHandler(attachmentService),

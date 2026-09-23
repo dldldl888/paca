@@ -74,7 +74,7 @@ func (m *mockNotificationSvc) MarkAllAsRead(ctx context.Context, userID uuid.UUI
 var _ notificationdom.Service = (*mockNotificationSvc)(nil)
 
 func buildNotificationRouter(svc *mockNotificationSvc) chi.Router {
-	h := handler.NewNotificationHandler(svc)
+	h := handler.NewNotificationHandler(svc).WithDeliveryGate(openTaskDeliveryGate())
 	r := chi.NewRouter()
 	r.Route("/users", func(r chi.Router) {
 		r.Get("/me/notifications", h.List)
@@ -97,7 +97,7 @@ func doNotifRequest(r chi.Router, method, path string, body any) *httptest.Respo
 		req.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(deadlineRecorder{w}, req)
 	return w
 }
 
@@ -114,7 +114,7 @@ func doNotifRequestWithActor(r chi.Router, method, path string, body any, actorI
 		req.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(deadlineRecorder{w}, req)
 	return w
 }
 

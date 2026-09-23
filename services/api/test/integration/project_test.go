@@ -485,7 +485,7 @@ func buildProjectTestRouterWithTaskRepo(repo *fakeProjectRepo, store *projectPer
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(&fakeGlobalRoleService{}),
 		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(store)),
-		Task:                 handler.NewTaskHandler(tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store)), sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil), tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)),
+		Task:                 handler.NewTaskHandler(tasksvc.New(taskRepo, authz.NewTaskAccessPolicy(store)), sprintsvc.NewViewService(newFakeViewRepoIT(), newFakeSprintRepoIT(), taskRepo, nil), tasksvc.NewActivityService(newFakeTaskActivityRepo(), taskRepo, &fakeActivityMemberRepo{}, nil)).WithDeliveryGate(openTaskGate()),
 		Log:                  log,
 	}), taskRepo
 }
@@ -502,9 +502,15 @@ func issueProjectToken(t *testing.T, subject string) string {
 
 func serve(r http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.ServeHTTP(integrationDeadlineWriter{w}, req)
 	return w
 }
+
+type integrationDeadlineWriter struct{ http.ResponseWriter }
+
+func (integrationDeadlineWriter) SetWriteDeadline(time.Time) error { return nil }
+
+func (w integrationDeadlineWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func authedJSONReq(ctx context.Context, method, url, token string, body any) *http.Request {
 	var reader *bytes.Reader

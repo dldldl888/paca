@@ -70,7 +70,7 @@ func buildCachedTaskRouter(t *testing.T, taskRepo *fakeTaskRepo, store *projectP
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(&fakeGlobalRoleService{}),
 		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(store)),
-		Task:                 handler.NewTaskHandler(cachedTaskSvc, viewService, activityService),
+		Task:                 handler.NewTaskHandler(cachedTaskSvc, viewService, activityService).WithDeliveryGate(openTaskGate()),
 		Log:                  log,
 	})
 	return r, cacheStore

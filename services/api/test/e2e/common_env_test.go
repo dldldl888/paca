@@ -295,7 +295,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
 		Attachment:           handler.NewAttachmentHandler(attachmentService).WithFileDelivery(fileDelivery),
-		Notification:         handler.NewNotificationHandler(notificationService),
+		Notification:         handler.NewNotificationHandler(notificationService).WithDeliveryGate(fileGate),
 		APIKey:               handler.NewAPIKeyHandler(apiKeyService),
 		Automation:           handler.NewAutomationHandler(automationService),
 		Agent:                handler.NewAgentHandler(agentService, "", "", "").WithMemberRepo(projectRepo).WithDeliveryGate(fileGate),

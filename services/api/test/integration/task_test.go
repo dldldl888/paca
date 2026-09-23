@@ -750,7 +750,7 @@ func buildTaskTestRouterWithSprints(taskRepo *fakeTaskRepo, sprintRepo *fakeSpri
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(&fakeGlobalRoleService{}),
 		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(store)),
-		Task:                 handler.NewTaskHandler(taskService, viewService, activityService),
+		Task:                 handler.NewTaskHandler(taskService, viewService, activityService).WithDeliveryGate(openTaskGate()),
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
 		Log:                  log,

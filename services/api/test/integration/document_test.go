@@ -345,13 +345,13 @@ func buildDocTestRouter(docRepo *fakeDocRepoIT, store *projectPermStore) http.Ha
 		User:                 handler.NewUserHandler(userService),
 		GlobalRole:           handler.NewGlobalRoleHandler(&fakeGlobalRoleService{}),
 		Project:              handler.NewProjectHandler(projectService, authz.NewAuthorizer(store)),
-		Task:                 handler.NewTaskHandler(taskService, viewService, activityService),
+		Task:                 handler.NewTaskHandler(taskService, viewService, activityService).WithDeliveryGate(openTaskGate()),
 		Sprint:               handler.NewSprintHandler(sprintService, viewService),
 		View:                 handler.NewViewHandler(viewService),
 		Document:             handler.NewDocumentHandler(docService, docActivityService).WithDeliveryGate(openDocGate()),
 		Log:                  log,
 	})
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { engine.ServeHTTP(docDeadlineWriter{w}, r) })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { engine.ServeHTTP(integrationDeadlineWriter{w}, r) })
 }
 
 func issueDocToken(t *testing.T, subject string) string {
@@ -1074,14 +1074,6 @@ func TestIntegrationDocuments_CrossProjectAccessReturns404(t *testing.T) {
 }
 
 func openDocGate() *delivery.Gate { g := delivery.NewGate(); _ = g.Update("0", false); return g }
-
-// In-memory ResponseRecorder has no network deadline; real HTTP deadline and
-// revocation behavior is covered by the testcontainer E2E matrix.
-type docDeadlineWriter struct{ http.ResponseWriter }
-
-func (docDeadlineWriter) SetWriteDeadline(time.Time) error { return nil }
-
-func (w docDeadlineWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // Test fixture's explicit legacy object policy; real scopes are exercised with Postgres.
 func (r *fakeDocRepoIT) CheckDocumentAccess(ctx context.Context, project, id uuid.UUID, _ docdom.AccessAction) (*docdom.Document, error) {

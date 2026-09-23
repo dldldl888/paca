@@ -982,7 +982,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	presenter.Created(w, r, dto.TaskFromEntity(t))
+	h.deliverTask(w, r, projectID, t.ID, true)
 }
 
 // UpdateTask handles PATCH /projects/:projectId/tasks/:taskId.
@@ -1080,7 +1080,25 @@ func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	presenter.OK(w, r, dto.TaskFromEntity(t))
+	h.deliverTask(w, r, projectID, t.ID, false)
+}
+
+func (h *TaskHandler) deliverTask(w http.ResponseWriter, r *http.Request, projectID, taskID uuid.UUID, created bool) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	t, err := h.svc.GetTask(r.Context(), projectID, taskID)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	if created {
+		presenter.Created(w, r, dto.TaskFromEntity(t))
+	} else {
+		presenter.OK(w, r, dto.TaskFromEntity(t))
+	}
 }
 
 // taskChangedFields compares the old task snapshot against the patch request
@@ -1567,7 +1585,7 @@ func (h *TaskHandler) AddComment(w http.ResponseWriter, r *http.Request) {
 		presenter.Error(w, r, err)
 		return
 	}
-	presenter.Created(w, r, h.toActivityResponse(r.Context(), a))
+	h.deliverActivity(w, r, projectID, a, true)
 }
 
 // UpdateComment handles PATCH /projects/:projectId/tasks/:taskId/activities/comments/:commentId.
@@ -1610,7 +1628,36 @@ func (h *TaskHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		presenter.Error(w, r, err)
 		return
 	}
-	presenter.OK(w, r, h.toActivityResponse(r.Context(), a))
+	h.deliverActivity(w, r, projectID, a, false)
+}
+
+func (h *TaskHandler) deliverActivity(w http.ResponseWriter, r *http.Request, projectID uuid.UUID, written *taskdom.Activity, created bool) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	activities, err := h.activitySvc.ListActivities(r.Context(), projectID, written.TaskID)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	var current *taskdom.Activity
+	for _, a := range activities {
+		if a.ID == written.ID {
+			current = a
+			break
+		}
+	}
+	if current == nil {
+		presenter.Error(w, r, taskdom.ErrTaskNotFound)
+		return
+	}
+	if created {
+		presenter.Created(w, r, h.toActivityResponse(r.Context(), current))
+	} else {
+		presenter.OK(w, r, h.toActivityResponse(r.Context(), current))
+	}
 }
 
 // DeleteComment handles DELETE /projects/:projectId/tasks/:taskId/activities/comments/:commentId.
@@ -1745,7 +1792,27 @@ func (h *TaskHandler) CreateTaskLink(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	presenter.Created(w, r, dto.TaskLinkFromEntity(link))
+	h.deliverTaskLink(w, r, projectID, link)
+}
+
+func (h *TaskHandler) deliverTaskLink(w http.ResponseWriter, r *http.Request, projectID uuid.UUID, written *taskdom.TaskLink) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	links, err := h.svc.ListTaskLinks(r.Context(), projectID, written.SourceTaskID)
+	if err != nil {
+		presenter.Error(w, r, err)
+		return
+	}
+	for _, link := range links.Items {
+		if link.ID == written.ID {
+			presenter.Created(w, r, dto.TaskLinkFromEntity(link))
+			return
+		}
+	}
+	presenter.Error(w, r, taskdom.ErrTaskNotFound)
 }
 
 // DeleteTaskLink handles DELETE /projects/:projectId/tasks/:taskId/links/:linkId.
