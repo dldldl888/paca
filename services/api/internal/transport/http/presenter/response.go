@@ -121,6 +121,10 @@ func statusAndCodeFor(err error) (int, apierr.Code) {
 	if errors.As(err, &apiErr) {
 		return httpStatusForCode(apiErr.Code), apiErr.Code
 	}
+	var projectDraftValidation *draftdom.ProjectDraftValidationError
+	if errors.As(err, &projectDraftValidation) {
+		return http.StatusBadRequest, apierr.CodeBadRequest
+	}
 
 	// Map domain sentinel errors to codes.
 	switch {

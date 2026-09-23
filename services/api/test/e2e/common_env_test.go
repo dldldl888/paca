@@ -276,15 +276,16 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	docRepo := pgRepo.NewDocumentRepository(db)
 	environmentService := environmentsvc.New(pgRepo.NewEnvironmentRepository(db), "", "")
 	annotationService := annotationsvc.New(pgRepo.NewAnnotationRepository(db), environmentService, taskService, attachmentRepo, attachmentRepo, fileStore, "paca-attachments-e2e").WithTaskAccess(taskService, taskService)
+	e2eAuthorizer := authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore)
 	engine := router.New(router.Deps{
 		DocFile:              handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),
 		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), docsvc.NewActivityService(docRepo, docRepo, projectRepo, publisher)).WithDeliveryGate(fileGate),
 		Environment:          handler.NewEnvironmentHandler(environmentService, ""),
 		Annotation:           handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery),
-		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithPublisher(publisher).WithDeliveryGate(fileGate)).WithDeliveryGate(fileGate),
+		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithAuthorizer(e2eAuthorizer).WithPublisher(publisher).WithDeliveryGate(fileGate)).WithDeliveryGate(fileGate),
 		TokenManager:         tm,
 		APIKeyAuth:           apiKeyService,
-		Authorizer:           authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore),
+		Authorizer:           e2eAuthorizer,
 		ProjectVisibilitySvc: projectService,
 		Health:               handler.NewHealthHandler(),
 		Auth:                 handler.NewAuthHandler(authService, cookieCfg),

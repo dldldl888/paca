@@ -22,11 +22,12 @@ import (
 )
 
 type Service struct {
-	gate      *delivery.Gate
-	publisher *messaging.Publisher
-	Repo      *pg.DraftRepository
-	agents    *agentsvc.Service
-	members   *pg.ProjectRepository
+	gate       *delivery.Gate
+	publisher  *messaging.Publisher
+	Repo       *pg.DraftRepository
+	agents     *agentsvc.Service
+	members    *pg.ProjectRepository
+	authorizer *authz.Authorizer
 }
 
 func New(repo *pg.DraftRepository, agents *agentsvc.Service, members *pg.ProjectRepository) *Service {
@@ -392,6 +393,9 @@ func (s *Service) CreateProjectDraft(ctx context.Context, content draftdom.Proje
 	if err := content.ValidateStructure(); err != nil {
 		return nil, err
 	}
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
 	user, ok := authz.ActorIDFromContext(ctx)
 	if !ok || user == uuid.Nil {
 		return nil, draftdom.ErrNotFound
@@ -408,6 +412,9 @@ func (s *Service) CreateProjectDraft(ctx context.Context, content draftdom.Proje
 }
 
 func (s *Service) GetProjectDraft(ctx context.Context, id uuid.UUID) (*draftdom.ProjectDraft, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
 	ctx, leave, err := s.enterDelivery(ctx)
 	if err != nil {
 		return nil, err
@@ -417,6 +424,9 @@ func (s *Service) GetProjectDraft(ctx context.Context, id uuid.UUID) (*draftdom.
 }
 
 func (s *Service) ListProjectDrafts(ctx context.Context) ([]*draftdom.ProjectDraft, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
 	ctx, leave, err := s.enterDelivery(ctx)
 	if err != nil {
 		return nil, err
@@ -429,6 +439,9 @@ func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected
 	if err := content.ValidateStructure(); err != nil {
 		return nil, err
 	}
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
 	ctx, leave, err := s.enterDelivery(ctx)
 	if err != nil {
 		return nil, err
@@ -438,6 +451,29 @@ func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected
 }
 
 func (s *Service) WithDeliveryGate(gate *delivery.Gate) *Service { s.gate = gate; return s }
+
+func (s *Service) WithAuthorizer(authorizer *authz.Authorizer) *Service {
+	s.authorizer = authorizer
+	return s
+}
+
+func (s *Service) requireProjectDraftCapability(ctx context.Context) error {
+	if s.authorizer == nil {
+		return nil
+	}
+	user, ok := authz.ActorIDFromContext(ctx)
+	if !ok || user == uuid.Nil {
+		return draftdom.ErrNotFound
+	}
+	allowed, err := s.authorizer.HasPermissions(ctx, user, nil, "", authz.PermissionProjectsCreate)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return taskdom.ErrTaskForbidden
+	}
+	return nil
+}
 
 func (s *Service) WithPublisher(publisher *messaging.Publisher) *Service {
 	s.publisher = publisher

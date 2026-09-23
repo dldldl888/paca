@@ -8,19 +8,30 @@ import (
 )
 
 func validProjectDraftContent() ProjectDraftContent {
+	itemID := "30000000-0000-4000-8000-000000000001"
 	return ProjectDraftContent{
 		Name:          "新项目",
 		Goal:          "完成首轮交付",
 		ManagerUserID: "10000000-0000-4000-8000-000000000001",
+		Items: []ProjectDraftItem{{
+			ID:           itemID,
+			Title:        "首个任务",
+			Requirements: "需求",
+			Criteria:     "标准",
+			Dependencies: []string{},
+		}},
 		Participants: []ProjectDraftParticipant{{
 			UserID: "10000000-0000-4000-8000-000000000002",
 			Role:   "负责人",
 		}},
 		Materials: []ProjectDraftMaterial{{
-			ID:       "20000000-0000-4000-8000-000000000001",
-			Kind:     "document",
-			Purpose:  "背景资料",
-			Required: true,
+			ID:              "20000000-0000-4000-8000-000000000001",
+			Kind:            "document",
+			Purpose:         "背景资料",
+			SourceType:      "internal",
+			ProcessedStatus: "ready",
+			TaskIDs:         []string{itemID},
+			Required:        true,
 		}},
 	}
 }
@@ -38,6 +49,7 @@ func TestProjectDraftContentValidateStructure(t *testing.T) {
 		{name: "participant duplicate", mut: func(c *ProjectDraftContent) {
 			c.Participants = append(c.Participants, c.Participants[0])
 		}, want: "participant"},
+		{name: "task assignee", mut: func(c *ProjectDraftContent) { c.Items[0].AssigneeUserID = "not-a-user" }, want: "assignee_user_id"},
 		{name: "material kind", mut: func(c *ProjectDraftContent) { c.Materials[0].Kind = "copy" }, want: "kind"},
 		{name: "material id", mut: func(c *ProjectDraftContent) { c.Materials[0].ID = uuid.NewString() + "-extra" }, want: "material"},
 	}

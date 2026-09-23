@@ -2564,6 +2564,10 @@ func (s *Service) ValidatePrivateGlobalChatSession(ctx context.Context, sessionI
 	if session.ProjectID != uuid.Nil || session.MemberID != uuid.Nil || session.ActorUserID == nil || *session.ActorUserID != userID {
 		return agentdom.ErrChatSessionNotFound
 	}
+	agent, err := s.repo.FindAgentByID(ctx, session.AgentID)
+	if err != nil || agent.AgentScope != agentdom.AgentScopeGlobal {
+		return agentdom.ErrChatSessionNotFound
+	}
 	return nil
 }
 
