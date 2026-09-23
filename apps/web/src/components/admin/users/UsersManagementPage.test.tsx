@@ -33,7 +33,11 @@ beforeEach(() => {
 			} else if (url === "/admin/global-roles") {
 				data = [];
 			} else if (url === "/admin/users") {
-				const { page, page_size: pageSize } = config?.params ?? {};
+				const { page = 1, page_size: pageSize = 20 } = (config?.params ??
+					{}) as {
+					page?: number;
+					page_size?: number;
+				};
 				if (failSecondPage && page === 2)
 					throw new Error("Network unavailable");
 				data = {
