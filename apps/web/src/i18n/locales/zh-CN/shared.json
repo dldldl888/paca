@@ -60,6 +60,20 @@
 			"tasks": "团队任务 · {{project}}",
 			"feedback": "从任务查看反馈 · {{project}}"
 		},
+		"privateDrafts": {
+			"title": "私人项目草稿",
+			"openChat": "继续在小派中讨论",
+			"empty": "还没有私人项目草稿",
+			"loading": "草稿加载中",
+			"error": "草稿暂时无法加载",
+			"version": "第 {{version}} 版",
+			"status": {
+				"editable": "可编辑",
+				"generating": "生成中",
+				"failed": "需要重试",
+				"imported": "已更新"
+			}
+		},
 		"updateBanner": {
 			"title": "有可用更新",
 			"upstream": "芯鲜派发布了 {{version}}。",

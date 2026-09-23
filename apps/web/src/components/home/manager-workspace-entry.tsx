@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ClipboardList, MessageSquare, Target } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { PrivateProjectDraftsCard } from "@/components/home/private-project-drafts-card";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProjectPermissions } from "@/hooks/use-project-permissions";
 import { type Project, projectsQueryOptions } from "@/lib/project-api";
@@ -58,12 +59,14 @@ export function ManagerWorkspaceEntry() {
 	const { hasPermission } = usePermissions();
 	const { data } = useQuery(projectsQueryOptions());
 	const globalManage = hasPermission("tasks.manage");
+	const canCreateProjects = hasPermission("projects.create");
 	const projects = data?.items ?? [];
 
-	if (projects.length === 0) return null;
+	if (projects.length === 0 && !canCreateProjects) return null;
 
 	return (
 		<div className="space-y-2 px-6 pb-6">
+			{canCreateProjects && <PrivateProjectDraftsCard />}
 			{projects.map((project) => (
 				<ManagerProjectLinks
 					key={project.id}

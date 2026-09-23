@@ -60,6 +60,20 @@
 			"tasks": "Team tasks · {{project}}",
 			"feedback": "View feedback from tasks · {{project}}"
 		},
+		"privateDrafts": {
+			"title": "Private project drafts",
+			"openChat": "Continue in 小派",
+			"empty": "No private project drafts yet",
+			"loading": "Loading drafts",
+			"error": "Drafts are temporarily unavailable",
+			"version": "Version {{version}}",
+			"status": {
+				"editable": "Editable",
+				"generating": "Generating",
+				"failed": "Needs retry",
+				"imported": "Updated"
+			}
+		},
 		"updateBanner": {
 			"title": "Update available",
 			"upstream": "芯鲜派 released {{version}}.",
