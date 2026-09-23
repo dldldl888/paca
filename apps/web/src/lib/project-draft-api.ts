@@ -43,7 +43,7 @@ export interface ProjectDraft {
 	}>;
 	chat_session_id: string;
 	version: number;
-	state: "editable";
+	state: "editable" | "published";
 	publication_id?: string;
 	published_project_id?: string;
 	generation?: ProjectDraftGeneration;
@@ -91,6 +91,7 @@ export interface ProjectDraftPreview {
 	version: number;
 	name: string;
 	goal: string;
+	manager_user_id?: string;
 	items: ProjectDraft["items"];
 	participants: ProjectDraft["participants"];
 	materials: ProjectDraft["materials"];

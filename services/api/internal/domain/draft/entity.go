@@ -121,15 +121,16 @@ type ProjectDraftPreviewIssue struct {
 }
 
 type ProjectDraftPreview struct {
-	ID           uuid.UUID                  `json:"id"`
-	Version      int                        `json:"version"`
-	Name         string                     `json:"name"`
-	Goal         string                     `json:"goal"`
-	Items        []ProjectDraftItem         `json:"items"`
-	Participants []ProjectDraftParticipant  `json:"participants"`
-	Materials    []ProjectDraftMaterial     `json:"materials"`
-	Issues       []ProjectDraftPreviewIssue `json:"issues"`
-	CanPublish   bool                       `json:"can_publish"`
+	ID            uuid.UUID                  `json:"id"`
+	Version       int                        `json:"version"`
+	Name          string                     `json:"name"`
+	Goal          string                     `json:"goal"`
+	ManagerUserID string                     `json:"manager_user_id,omitempty"`
+	Items         []ProjectDraftItem         `json:"items"`
+	Participants  []ProjectDraftParticipant  `json:"participants"`
+	Materials     []ProjectDraftMaterial     `json:"materials"`
+	Issues        []ProjectDraftPreviewIssue `json:"issues"`
+	CanPublish    bool                       `json:"can_publish"`
 }
 
 type ProjectDraftFile struct {
@@ -148,16 +149,17 @@ type ProjectDraftFile struct {
 
 type ProjectDraft struct {
 	ProjectDraftContent
-	ID                 uuid.UUID               `json:"id"`
-	OwnerUserID        uuid.UUID               `json:"owner_user_id"`
-	ChatSessionID      uuid.UUID               `json:"chat_session_id"`
-	Version            int                     `json:"version"`
-	State              string                  `json:"state"`
-	Generation         *ProjectDraftGeneration `json:"generation,omitempty"`
-	CreatedAt          time.Time               `json:"created_at"`
-	UpdatedAt          time.Time               `json:"updated_at"`
-	PublicationID      *uuid.UUID              `json:"publication_id,omitempty"`
-	PublishedProjectID *uuid.UUID              `json:"published_project_id,omitempty"`
+	ID                 uuid.UUID                `json:"id"`
+	OwnerUserID        uuid.UUID                `json:"owner_user_id"`
+	ChatSessionID      uuid.UUID                `json:"chat_session_id"`
+	Version            int                      `json:"version"`
+	State              string                   `json:"state"`
+	Generation         *ProjectDraftGeneration  `json:"generation,omitempty"`
+	CreatedAt          time.Time                `json:"created_at"`
+	UpdatedAt          time.Time                `json:"updated_at"`
+	PublicationID      *uuid.UUID               `json:"publication_id,omitempty"`
+	PublishedProjectID *uuid.UUID               `json:"published_project_id,omitempty"`
+	Publication        *ProjectDraftPublication `json:"publication,omitempty"`
 }
 
 type ProjectDraftPublication struct {
@@ -285,7 +287,7 @@ func (c ProjectDraftContent) ValidateStructure() error {
 
 func (d *ProjectDraft) Preview() *ProjectDraftPreview {
 	p := &ProjectDraftPreview{
-		ID: d.ID, Version: d.Version, Name: d.Name, Goal: d.Goal,
+		ID: d.ID, Version: d.Version, Name: d.Name, Goal: d.Goal, ManagerUserID: d.ManagerUserID,
 		Items: append([]ProjectDraftItem{}, d.Items...), Participants: append([]ProjectDraftParticipant{}, d.Participants...), Materials: append([]ProjectDraftMaterial{}, d.Materials...),
 		Issues: []ProjectDraftPreviewIssue{}, CanPublish: true,
 	}
@@ -294,6 +296,9 @@ func (d *ProjectDraft) Preview() *ProjectDraftPreview {
 	}
 	if err := d.ProjectDraftContent.ValidateStructure(); err != nil {
 		add("draft", err.Error())
+	}
+	if d.State == "published" {
+		add("state", "草稿已发布，不能再次确认")
 	}
 	if strings.TrimSpace(d.Goal) == "" {
 		add("goal", "项目目标不能为空")

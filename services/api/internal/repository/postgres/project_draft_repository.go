@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
@@ -48,6 +49,7 @@ type projectDraftRow struct {
 	UpdatedAt          time.Time  `db:"updated_at"`
 	PublicationID      *uuid.UUID `db:"publication_id"`
 	PublishedProjectID *uuid.UUID `db:"published_project_id"`
+	PublicationReceipt []byte     `db:"publication_receipt"`
 }
 
 func decodeProjectDraft(row projectDraftRow) (*draftdom.ProjectDraft, error) {
@@ -63,7 +65,7 @@ func decodeProjectDraft(row projectDraftRow) (*draftdom.ProjectDraft, error) {
 			return nil, err
 		}
 	}
-	return &draftdom.ProjectDraft{
+	d := &draftdom.ProjectDraft{
 		ProjectDraftContent: content,
 		ID:                  row.ID,
 		OwnerUserID:         row.OwnerUserID,
@@ -75,7 +77,15 @@ func decodeProjectDraft(row projectDraftRow) (*draftdom.ProjectDraft, error) {
 		UpdatedAt:           row.UpdatedAt,
 		PublicationID:       row.PublicationID,
 		PublishedProjectID:  row.PublishedProjectID,
-	}, nil
+	}
+	if len(row.PublicationReceipt) > 0 {
+		var receipt draftdom.ProjectDraftPublication
+		if err := json.Unmarshal(row.PublicationReceipt, &receipt); err != nil {
+			return nil, err
+		}
+		d.Publication = &receipt
+	}
+	return d, nil
 }
 
 func encodeProjectDraftGeneration(g *draftdom.ProjectDraftGeneration) ([]byte, error) {
@@ -85,7 +95,7 @@ func encodeProjectDraftGeneration(g *draftdom.ProjectDraftGeneration) ([]byte, e
 	return json.Marshal(g)
 }
 
-const projectDraftSelect = `SELECT id,owner_user_id,chat_session_id,version,state,content,generation,created_at,updated_at,publication_id,published_project_id FROM project_drafts`
+const projectDraftSelect = `SELECT id,owner_user_id,chat_session_id,version,state,content,generation,created_at,updated_at,publication_id,published_project_id,publication_receipt FROM project_drafts`
 
 func encodeProjectDraft(content draftdom.ProjectDraftContent) ([]byte, error) {
 	content.Normalize()
@@ -183,12 +193,15 @@ func (r *DraftRepository) CreateProjectDraftFile(ctx context.Context, draftID uu
 	now := time.Now()
 	var out *draftdom.ProjectDraftFile
 	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
-		var exists uuid.UUID
-		if err := tx.GetContext(ctx, &exists, `SELECT id FROM project_drafts WHERE id=$1 AND owner_user_id=$2`, draftID, user); err != nil {
+		var state string
+		if err := tx.GetContext(ctx, &state, `SELECT state FROM project_drafts WHERE id=$1 AND owner_user_id=$2`, draftID, user); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return draftdom.ErrNotFound
 			}
 			return err
+		}
+		if state != "editable" {
+			return draftdom.ErrConflict
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO files(id,storage_key,bucket,file_name,content_type,file_size,upload_status,multipart_upload_id,uploaded_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, f.ID, f.StorageKey, f.Bucket, f.FileName, f.ContentType, f.FileSize, f.UploadStatus, f.MultipartUploadID, user, f.CreatedAt, f.UpdatedAt); err != nil {
 			return err
@@ -280,6 +293,9 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			return err
 		}
 		if row.PublicationID != nil {
+			if row.Version != expected {
+				return draftdom.ErrConflict
+			}
 			if *row.PublicationID != publication {
 				return draftdom.ErrConflict
 			}
@@ -290,17 +306,10 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			if err != nil {
 				return err
 			}
-			var persisted []uuid.UUID
-			if err := tx.SelectContext(ctx, &persisted, `SELECT id FROM tasks WHERE project_id=$1 AND deleted_at IS NULL ORDER BY task_number`, *row.PublishedProjectID); err != nil {
-				return err
+			if d.Publication == nil {
+				return draftdom.ErrConflict
 			}
-			taskIDs := make(map[string]uuid.UUID, len(persisted))
-			for i, taskID := range persisted {
-				if i < len(d.Items) {
-					taskIDs[d.Items[i].ID] = taskID
-				}
-			}
-			result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: *row.PublishedProjectID, TaskIDs: taskIDs}
+			result = d.Publication
 			return nil
 		}
 		if row.Version != expected {
@@ -336,18 +345,45 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			}
 		}
 		members := map[uuid.UUID]uuid.UUID{user: uuid.New()}
+		adminUsers := map[uuid.UUID]bool{user: true}
+		if d.ManagerUserID != "" {
+			managerID, err := uuid.Parse(d.ManagerUserID)
+			if err != nil {
+				return &draftdom.ProjectDraftValidationError{Message: "manager user is invalid"}
+			}
+			var active bool
+			if err := tx.GetContext(ctx, &active, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL)`, managerID); err != nil {
+				return err
+			}
+			if !active {
+				return &draftdom.ProjectDraftValidationError{Message: "manager user is no longer active"}
+			}
+			members[managerID] = uuid.New()
+			adminUsers[managerID] = true
+		}
 		for _, participant := range d.Participants {
 			participantID, err := uuid.Parse(participant.UserID)
 			if err != nil {
 				return &draftdom.ProjectDraftValidationError{Message: "participant user is invalid"}
 			}
+			var active bool
+			if err := tx.GetContext(ctx, &active, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL)`, participantID); err != nil {
+				return err
+			}
+			if !active {
+				return &draftdom.ProjectDraftValidationError{Message: "participant user is no longer active"}
+			}
 			if _, exists := members[participantID]; !exists {
 				members[participantID] = uuid.New()
+			}
+			role := strings.ToLower(strings.TrimSpace(participant.Role))
+			if role == "负责人" || role == "项目负责人" || role == "manager" || role == "owner" {
+				adminUsers[participantID] = true
 			}
 		}
 		for memberUser, memberID := range members {
 			roleID := editorRole
-			if memberUser == user {
+			if adminUsers[memberUser] {
 				roleID = adminRole
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type,created_at) VALUES($1,$2,$3,$4,'human',$5)`, memberID, projectID, memberUser, roleID, now); err != nil {
@@ -376,17 +412,27 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 				parsed, _ := time.Parse(time.RFC3339, item.StartDate)
 				start = &parsed
 			}
-			description, _ := json.Marshal(map[string]string{"requirements": item.Requirements, "criteria": item.Criteria})
+			description, _ := json.Marshal([]map[string]any{
+				{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": item.Requirements, "styles": map[string]any{}}}},
+				{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": item.Criteria, "styles": map[string]any{}}}},
+			})
+			customFields, _ := json.Marshal(map[string]string{
+				"draft_due_at":   item.DueDate,
+				"draft_start_at": item.StartDate,
+			})
 			taskID := uuid.New()
 			taskIDs[item.ID] = taskID
 			var number int64
 			if err := tx.GetContext(ctx, &number, `UPDATE task_counters SET last_value=last_value+1 WHERE project_id=$1 RETURNING last_value`, projectID); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,project_id,task_number,task_type_id,status_id,title,description,importance,reporter_id,custom_fields,start_date,due_date,tags,created_at,updated_at,creator_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'{}',$10,$11,'[]',$12,$12,$13)`, taskID, projectID, number, taskTypeID, taskStatusID, item.Title, description, item.Importance, members[user], start, due, now, user); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,project_id,task_number,task_type_id,status_id,title,description,importance,reporter_id,custom_fields,start_date,due_date,tags,created_at,updated_at,creator_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'[]',$13,$13,$14)`, taskID, projectID, number, taskTypeID, taskStatusID, item.Title, description, item.Importance, members[user], customFields, start, due, now, user); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO task_assignees(task_id,member_id) VALUES($1,$2)`, taskID, members[assignee]); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO task_activities(id,task_id,actor_id,activity_type,content,created_at,updated_at) VALUES($1,$2,$3,'task.created','{}',$4,$4)`, uuid.New(), taskID, members[user], now); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO notifications(id,recipient_user_id,actor_member_id,type,task_id,project_id,created_at,source_event_id) VALUES($1,$2,$3,'assigned',$4,$5,$6,$7)`, uuid.New(), assignee, members[user], taskID, projectID, now, publication.String()+":"+taskID.String()); err != nil {
@@ -403,10 +449,14 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 				}
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE project_drafts SET publication_id=$2,published_project_id=$3,updated_at=$4 WHERE id=$1`, id, publication, projectID, now); err != nil {
+		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs}
+		receipt, err := json.Marshal(result)
+		if err != nil {
 			return err
 		}
-		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs}
+		if _, err := tx.ExecContext(ctx, `UPDATE project_drafts SET state='published',publication_id=$2,published_project_id=$3,publication_receipt=$4,updated_at=$5 WHERE id=$1`, id, publication, projectID, receipt, now); err != nil {
+			return err
+		}
 		return nil
 	})
 	return result, err
@@ -420,6 +470,16 @@ func (r *DraftRepository) UpdateProjectDraftFile(ctx context.Context, draftID, f
 	var out *draftdom.ProjectDraftFile
 	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
 		now := time.Now()
+		var state string
+		if err := tx.GetContext(ctx, &state, `SELECT state FROM project_drafts WHERE id=$1 AND owner_user_id=$2`, draftID, user); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return draftdom.ErrNotFound
+			}
+			return err
+		}
+		if state != "editable" {
+			return draftdom.ErrConflict
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE files f SET upload_status=COALESCE(NULLIF($3,''),f.upload_status),multipart_upload_id=NULL,updated_at=$4 FROM project_draft_files p WHERE p.file_id=f.id AND p.draft_id=$1 AND p.file_id=$2 AND p.owner_user_id=$5`, draftID, fileID, uploadStatus, now, user); err != nil {
 			return err
 		}

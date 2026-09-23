@@ -65,11 +65,17 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.preview": "预览",
 				"home.privateDrafts.previewReady": "可以确认",
 				"home.privateDrafts.previewIssues": "需要补充信息",
+				"home.privateDrafts.previewItems": "任务",
+				"home.privateDrafts.previewParticipants": "参与人",
+				"home.privateDrafts.previewMaterials": "资料",
+				"home.privateDrafts.previewManager": "负责人",
 				"home.privateDrafts.publish": "确认并分派",
 				"home.privateDrafts.publishing": "发布中",
 				"home.privateDrafts.published": "已发布",
 				"home.privateDrafts.viewProject": "打开项目",
 				"home.privateDrafts.publishError": "发布失败，可重试",
+				"home.privateDrafts.publishConflict":
+					"草稿已发生变化，请刷新后重新预览。",
 				"home.privateDrafts.publicationPending": "结果待核实，刷新后可恢复",
 			})[key] ?? key,
 	}),
@@ -277,6 +283,11 @@ describe("PrivateProjectDraftsCard", () => {
 			{
 				id: "draft-ready",
 				version: 2,
+				name: "可发布项目",
+				goal: "交付目标",
+				items: [{ id: "item-1", title: "可执行任务" }],
+				participants: [{ user_id: "user-1" }],
+				materials: [],
 				can_publish: true,
 				issues: [],
 			},
@@ -303,5 +314,53 @@ describe("PrivateProjectDraftsCard", () => {
 			"href",
 			"/projects/project-1",
 		);
+	});
+
+	it("shows a deterministic conflict when the draft changed before publish", async () => {
+		const { publishProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(publishProjectDraft).mockRejectedValueOnce({
+			response: { status: 409 },
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(
+			["private-project-drafts"],
+			[
+				{
+					id: "draft-conflict",
+					name: "冲突项目",
+					version: 2,
+					state: "editable",
+				},
+			],
+		);
+		queryClient.setQueryData(
+			["private-project-draft-preview", "draft-conflict", 2],
+			{
+				id: "draft-conflict",
+				version: 2,
+				name: "冲突项目",
+				goal: "目标",
+				items: [],
+				participants: [],
+				materials: [],
+				can_publish: true,
+				issues: [],
+			},
+		);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "预览" }));
+		fireEvent.click(await screen.findByRole("button", { name: "确认并分派" }));
+		expect(
+			await screen.findByText("草稿已发生变化，请刷新后重新预览。"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("结果待核实，刷新后可恢复"),
+		).not.toBeInTheDocument();
 	});
 });

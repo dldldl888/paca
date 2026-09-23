@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DeleteUserDialog } from "@/components/admin/users/DeleteUserDialog";
+import { OrganizationScopeSummary } from "@/components/admin/users/OrganizationScopeSummary";
 import { ResetPasswordDialog } from "@/components/admin/users/ResetPasswordDialog";
 import { UserFormDialog } from "@/components/admin/users/UserFormDialog";
 import { UsersHeader } from "@/components/admin/users/UsersHeader";
@@ -18,6 +19,7 @@ import { UsersTableSkeleton } from "@/components/admin/users/UsersTableSkeleton"
 import { Button } from "@/components/ui/button";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
+	globalRolesQueryOptions,
 	myPermissionsQueryOptions,
 	type User,
 	usersQueryOptions,
@@ -48,6 +50,7 @@ function UsersManagementPage() {
 	const { hasPermission } = usePermissions();
 	const canRead = hasPermission("users.read");
 	const canWrite = hasPermission("users.write");
+	const canReadGlobalRoles = hasPermission("global_roles.read");
 
 	const [page, setPage] = useState(1);
 	const pageSize = 20;
@@ -60,6 +63,10 @@ function UsersManagementPage() {
 	} = useQuery({ ...usersQueryOptions(page, pageSize), enabled: canRead });
 
 	const { data: currentUser } = useQuery(currentUserQueryOptions);
+	const { data: globalRoles = [] } = useQuery({
+		...globalRolesQueryOptions,
+		enabled: canRead && canReadGlobalRoles,
+	});
 
 	const [createOpen, setCreateOpen] = useState(false);
 	const [editUser, setEditUser] = useState<User | null>(null);
@@ -90,6 +97,14 @@ function UsersManagementPage() {
 					mustChangePasswordCount={mustChangePasswordCount}
 				/>
 			)}
+
+			{canRead && !isLoading && !isError ? (
+				<OrganizationScopeSummary
+					users={users}
+					totalUsers={total}
+					roles={globalRoles}
+				/>
+			) : null}
 
 			{!canRead ? (
 				<UsersNoPermissionState />

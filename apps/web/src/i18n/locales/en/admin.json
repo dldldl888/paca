@@ -29,6 +29,17 @@
 			"inSystem": "in system",
 			"mustChangePassword": "must change password"
 		},
+		"organizationScope": {
+			"title": "Organization scope (read-only)",
+			"description": "Global role assignments and their effective permissions for the currently loaded identity list.",
+			"coverage": "{{shown}} of {{total}} users in current list",
+			"assigned_one": "{{count}} user in current list",
+			"assigned_other": "{{count}} users in current list",
+			"noPermissions": "No permissions granted",
+			"departmentsPending": "Formal department bindings are not configured",
+			"departmentsPendingDescription": "Department scope is never inferred from names or role labels. Configure an authoritative roster before applying organization changes.",
+			"projectRolesNote": "Project roles remain managed within each project team."
+		},
 		"empty": {
 			"title": "No users found",
 			"description": "Create your first user to get started.",

@@ -94,11 +94,16 @@
 			"preview": "预览",
 			"previewReady": "可以确认",
 			"previewIssues": "需要补充信息",
+			"previewItems": "任务",
+			"previewParticipants": "参与人",
+			"previewMaterials": "资料",
+			"previewManager": "负责人",
 			"publish": "确认并分派",
 			"publishing": "发布中",
 			"published": "已发布",
 			"viewProject": "打开项目",
 			"publishError": "发布失败，可重试或刷新恢复结果。",
+			"publishConflict": "草稿已发生变化，请刷新后重新预览。",
 			"publicationPending": "结果待核实，请刷新恢复原发布结果。"
 		},
 		"updateBanner": {

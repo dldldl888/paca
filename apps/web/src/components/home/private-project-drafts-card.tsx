@@ -117,9 +117,15 @@ export function PrivateProjectDraftsCard({
 					.queryKey,
 			});
 		},
-		onError: () => {
+		onError: (error) => {
 			setPublicationPendingDraftId(undefined);
-			setPublishError(t("home.privateDrafts.publicationPending"));
+			const status = (error as { response?: { status?: number } })?.response
+				?.status;
+			setPublishError(
+				status == null || status >= 500
+					? t("home.privateDrafts.publicationPending")
+					: t("home.privateDrafts.publishConflict"),
+			);
 			// A lost response may still have committed. Re-read the private list
 			// so a refresh/retry can recover the stable publication result.
 			void qc.invalidateQueries({
@@ -265,19 +271,49 @@ export function PrivateProjectDraftsCard({
 										? t("home.privateDrafts.published")
 										: t("home.privateDrafts.previewReady")}
 								</p>
-								{!publishedDraftId && !previewDraft.published_project_id && (
-									<button
-										type="button"
-										className="rounded-md border px-3 py-1.5 text-sm"
-										disabled={publish.isPending}
-										onClick={() => publish.mutate(previewDraft)}
-									>
-										{publish.isPending &&
-										publicationPendingDraftId === previewDraft.id
-											? t("home.privateDrafts.publishing")
-											: t("home.privateDrafts.publish")}
-									</button>
-								)}
+								<div className="space-y-1 text-xs text-muted-foreground">
+									<p className="font-medium text-foreground">
+										{preview.data.name}
+									</p>
+									<p>{preview.data.goal}</p>
+									{preview.data.manager_user_id && (
+										<p>
+											{t("home.privateDrafts.previewManager")}:{" "}
+											{preview.data.manager_user_id}
+										</p>
+									)}
+									<p>
+										{t("home.privateDrafts.previewItems")}:{" "}
+										{preview.data.items.length}
+									</p>
+									<ul className="list-disc pl-4">
+										{preview.data.items.map((item) => (
+											<li key={item.id}>{item.title}</li>
+										))}
+									</ul>
+									<p>
+										{t("home.privateDrafts.previewParticipants")}:{" "}
+										{preview.data.participants.length}
+									</p>
+									<p>
+										{t("home.privateDrafts.previewMaterials")}:{" "}
+										{preview.data.materials.length}
+									</p>
+								</div>
+								{publishedDraftId !== previewDraft.id &&
+									!previewDraft.published_project_id && (
+										<button
+											type="button"
+											className="rounded-md border px-3 py-1.5 text-sm"
+											disabled={publish.isPending}
+											onClick={() => publish.mutate(previewDraft)}
+										>
+											{publish.isPending &&
+											publicationPendingDraftId === previewDraft.id
+												? t("home.privateDrafts.publishing")
+												: t("home.privateDrafts.publish")}
+										</button>
+									)}
 							</div>
 						) : (
 							<>

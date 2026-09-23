@@ -94,11 +94,16 @@
 			"preview": "Preview",
 			"previewReady": "Ready to confirm",
 			"previewIssues": "More information needed",
+			"previewItems": "Tasks",
+			"previewParticipants": "Participants",
+			"previewMaterials": "Materials",
+			"previewManager": "Manager",
 			"publish": "Confirm and assign",
 			"publishing": "Assigning…",
 			"published": "Assigned",
 			"viewProject": "Open project",
 			"publishError": "Assignment failed. Retry or refresh to recover the result.",
+			"publishConflict": "This draft changed. Refresh and preview it again.",
 			"publicationPending": "Assignment outcome is unconfirmed. Refresh to recover the result."
 		},
 		"updateBanner": {
