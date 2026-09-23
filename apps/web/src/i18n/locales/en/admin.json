@@ -12,6 +12,12 @@
 		}
 	},
 	"users": {
+		"pagination": {
+			"label": "User list pagination",
+			"previous": "Previous page",
+			"next": "Next page",
+			"pageOf": "Page {{page}} of {{totalPages}}"
+		},
 		"header": {
 			"title": "User Management",
 			"description": "View and manage user accounts and their assigned roles.",

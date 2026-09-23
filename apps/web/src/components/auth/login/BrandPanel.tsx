@@ -1,28 +1,27 @@
-import { BookOpen, Bot, Puzzle } from "lucide-react";
+import { Bot, ListTodo, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
 	DEFAULT_LOGO_HREF,
 	resolveBrandLogo,
 	resolveBrandName,
 } from "@/components/app-shell/branding-effects";
-import { GitHubIcon } from "@/components/icons/github-icon";
 import { useBranding } from "@/hooks/use-branding";
 
 const FEATURES = [
 	{
 		icon: Bot,
-		titleKey: "brand.features.sandboxedAgents.title",
-		descKey: "brand.features.sandboxedAgents.desc",
+		titleKey: "brand.features.assistant.title",
+		descKey: "brand.features.assistant.desc",
 	},
 	{
-		icon: BookOpen,
-		titleKey: "brand.features.bddSddHub.title",
-		descKey: "brand.features.bddSddHub.desc",
+		icon: ListTodo,
+		titleKey: "brand.features.tasks.title",
+		descKey: "brand.features.tasks.desc",
 	},
 	{
-		icon: Puzzle,
-		titleKey: "brand.features.pluginMarketplace.title",
-		descKey: "brand.features.pluginMarketplace.desc",
+		icon: Users,
+		titleKey: "brand.features.collaboration.title",
+		descKey: "brand.features.collaboration.desc",
 	},
 ] as const;
 
@@ -33,7 +32,7 @@ export function BrandPanel() {
 	const brandName = resolveBrandName(branding?.brand_name);
 
 	return (
-		<div className="relative hidden flex-col justify-between overflow-hidden rounded-l-xl bg-[#0a0a0a] p-10 lg:flex">
+		<div className="relative hidden flex-col justify-center overflow-hidden rounded-l-xl bg-[#0a0a0a] p-10 lg:flex">
 			{/* Ambient glow — top, tinted with the brand color */}
 			<div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--palm)_8%,transparent),transparent_60%)]" />
 
@@ -60,15 +59,10 @@ export function BrandPanel() {
 							{brandName}
 						</span>
 					)}
-					{branding?.brand_name ? null : (
-						<span className="rounded-full border border-white/20 bg-white/8 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-white/60">
-							{t("brand.ossBadge")}
-						</span>
-					)}
 				</div>
 
 				<h2 className="display-title mb-3 text-3xl font-bold leading-tight text-balance text-white">
-					{t("brand.headingPrefix")}{" "}
+					{t("brand.headingPrefix", { brandName })}{" "}
 					<span className="text-(--palm)">{t("brand.headingHighlight")}</span>
 				</h2>
 				<p className="mb-8 text-sm leading-relaxed text-white/55">
@@ -96,25 +90,6 @@ export function BrandPanel() {
 						</li>
 					))}
 				</ul>
-			</div>
-
-			{/* Footer */}
-			<div className="relative mt-8 pt-6">
-				{/* Gradient separator */}
-				<div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.18),transparent)]" />
-
-				<div className="flex items-center justify-between">
-					<a
-						href="https://github.com/Paca-AI/paca"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/6 px-3.5 py-2 text-xs font-medium text-white! transition-all hover:border-white/25 hover:bg-white/12 hover:text-white!"
-					>
-						<GitHubIcon className="size-3.5" />
-						{t("brand.viewOnGitHub")}
-					</a>
-					<p className="text-xs text-white/30">{t("brand.licenseLine")}</p>
-				</div>
 			</div>
 		</div>
 	);

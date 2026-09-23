@@ -9,32 +9,7 @@ export function LoginFooter() {
 				{t("login.footerCopyright", { year: new Date().getFullYear() })}
 			</span>
 			<span className="opacity-40">·</span>
-			<a
-				href="https://github.com/Paca-AI/paca"
-				target="_blank"
-				rel="noopener noreferrer"
-				className="transition-colors hover:text-(--sea-ink)"
-			>
-				{t("login.footerGitHub")}
-			</a>
-			<span className="opacity-40">·</span>
-			<a
-				href="https://github.com/Paca-AI/paca/tree/HEAD/docs"
-				target="_blank"
-				rel="noopener noreferrer"
-				className="transition-colors hover:text-(--sea-ink)"
-			>
-				{t("login.footerDocs")}
-			</a>
-			<span className="opacity-40">·</span>
-			<a
-				href="https://github.com/Paca-AI/paca/blob/HEAD/LICENSE"
-				target="_blank"
-				rel="noopener noreferrer"
-				className="transition-colors hover:text-(--sea-ink)"
-			>
-				{t("login.footerLicense")}
-			</a>
+			<span>{t("login.footerHelp")}</span>
 		</footer>
 	);
 }

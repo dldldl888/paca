@@ -1,5 +1,11 @@
 {
 	"users": {
+		"pagination": {
+			"label": "사용자 목록 페이지 탐색",
+			"previous": "이전 페이지",
+			"next": "다음 페이지",
+			"pageOf": "{{page}} / {{totalPages}} 페이지"
+		},
 		"header": {
 			"title": "사용자 관리",
 			"description": "사용자 계정과 할당된 역할을 확인하고 관리하세요.",

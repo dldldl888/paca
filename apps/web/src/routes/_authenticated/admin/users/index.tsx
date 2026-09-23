@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { DeleteUserDialog } from "@/components/admin/users/DeleteUserDialog";
 import { ResetPasswordDialog } from "@/components/admin/users/ResetPasswordDialog";
@@ -14,6 +15,7 @@ import {
 import { UsersStats } from "@/components/admin/users/UsersStats";
 import { UsersTable } from "@/components/admin/users/UsersTable";
 import { UsersTableSkeleton } from "@/components/admin/users/UsersTableSkeleton";
+import { Button } from "@/components/ui/button";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
 	myPermissionsQueryOptions,
@@ -42,17 +44,19 @@ export const Route = createFileRoute("/_authenticated/admin/users/")({
 });
 
 function UsersManagementPage() {
+	const { t } = useTranslation("admin");
 	const { hasPermission } = usePermissions();
 	const canRead = hasPermission("users.read");
 	const canWrite = hasPermission("users.write");
 
-	const [page] = useState(1);
+	const [page, setPage] = useState(1);
 	const pageSize = 20;
 
 	const {
 		data: pagedUsers,
 		isLoading,
 		isError,
+		isFetching,
 	} = useQuery({ ...usersQueryOptions(page, pageSize), enabled: canRead });
 
 	const { data: currentUser } = useQuery(currentUserQueryOptions);
@@ -64,6 +68,10 @@ function UsersManagementPage() {
 
 	const users = pagedUsers?.items ?? [];
 	const total = pagedUsers?.total ?? 0;
+	const totalPages = Math.max(1, Math.ceil(total / pageSize));
+	useEffect(() => {
+		if (pagedUsers && !isFetching && page > totalPages) setPage(totalPages);
+	}, [pagedUsers, isFetching, page, totalPages]);
 	const mustChangePasswordCount = users.filter(
 		(u) => u.must_change_password,
 	).length;
@@ -103,6 +111,35 @@ function UsersManagementPage() {
 					onDelete={setDeleteUser}
 					onResetPassword={setResetPasswordUser}
 				/>
+			)}
+
+			{canRead && (total > pageSize || page > 1) && (
+				<nav
+					aria-label={t("users.pagination.label")}
+					className="flex flex-wrap items-center justify-center gap-3"
+				>
+					<Button
+						variant="outline"
+						disabled={page <= 1 || isFetching}
+						onClick={() => setPage((current) => Math.max(1, current - 1))}
+					>
+						{t("users.pagination.previous")}
+					</Button>
+					{pagedUsers && (
+						<span className="text-sm text-muted-foreground" aria-live="polite">
+							{t("users.pagination.pageOf", { page, totalPages })}
+						</span>
+					)}
+					<Button
+						variant="outline"
+						disabled={page >= totalPages || isFetching || isError}
+						onClick={() =>
+							setPage((current) => Math.min(totalPages, current + 1))
+						}
+					>
+						{t("users.pagination.next")}
+					</Button>
+				</nav>
 			)}
 
 			{editUser ? (

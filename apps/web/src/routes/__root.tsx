@@ -1,6 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
-import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { BrandingEffects } from "@/components/app-shell/branding-effects";
 import { RouteErrorComponent } from "@/components/route-error-boundary";
 
@@ -10,7 +9,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 			<>
 				<BrandingEffects />
 				<Outlet />
-				{import.meta.env.DEV && <TanStackRouterDevtools />}
 			</>
 		),
 		// Global safety net: without this, any uncaught loader or render error

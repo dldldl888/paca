@@ -1,5 +1,11 @@
 {
 	"users": {
+		"pagination": {
+			"label": "Pagination des utilisateurs",
+			"previous": "Page précédente",
+			"next": "Page suivante",
+			"pageOf": "Page {{page}} sur {{totalPages}}"
+		},
 		"header": {
 			"title": "Gestion des utilisateurs",
 			"description": "Consultez et gérez les comptes utilisateurs et leurs rôles attribués.",

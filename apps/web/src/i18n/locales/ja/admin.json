@@ -1,5 +1,11 @@
 {
 	"users": {
+		"pagination": {
+			"label": "ユーザー一覧のページ切り替え",
+			"previous": "前のページ",
+			"next": "次のページ",
+			"pageOf": "{{page}} / {{totalPages}} ページ"
+		},
 		"header": {
 			"title": "ユーザー管理",
 			"description": "ユーザーアカウントと割り当てられたロールを確認・管理します。",

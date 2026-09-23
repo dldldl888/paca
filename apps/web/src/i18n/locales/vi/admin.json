@@ -1,5 +1,11 @@
 {
 	"users": {
+		"pagination": {
+			"label": "Phân trang danh sách người dùng",
+			"previous": "Trang trước",
+			"next": "Trang sau",
+			"pageOf": "Trang {{page}} / {{totalPages}}"
+		},
 		"header": {
 			"title": "Quản lý người dùng",
 			"description": "Xem và quản lý tài khoản người dùng cùng vai trò được gán cho họ.",
