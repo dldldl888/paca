@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FilePenLine } from "lucide-react";
 import { useState } from "react";
@@ -14,8 +14,23 @@ import {
 	projectDraftPreviewQueryOptions,
 	projectDraftsQueryOptions,
 	projectDraftWebSearchQueryOptions,
+	publishProjectDraft,
 	uploadProjectDraftFile,
 } from "@/lib/project-draft-api";
+
+function publicationStorageKey(draftId: string, version: number) {
+	return `private-project-draft-publication:${draftId}:${version}`;
+}
+
+function stablePublicationID(draft: ProjectDraft) {
+	if (draft.publication_id) return draft.publication_id;
+	const key = publicationStorageKey(draft.id, draft.version);
+	const stored = window.localStorage.getItem(key);
+	if (stored) return stored;
+	const created = crypto.randomUUID();
+	window.localStorage.setItem(key, created);
+	return created;
+}
 
 function statusKey(draft: ProjectDraft) {
 	switch (draft.generation?.status) {
@@ -50,6 +65,10 @@ export function PrivateProjectDraftsCard({
 	const [previewDraftId, setPreviewDraftId] = useState<string>();
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
 	const [uploadError, setUploadError] = useState("");
+	const [publishedDraftId, setPublishedDraftId] = useState<string>();
+	const [publicationPendingDraftId, setPublicationPendingDraftId] =
+		useState<string>();
+	const [publishError, setPublishError] = useState("");
 	const materials = useQuery({
 		...projectDraftMaterialsQueryOptions(submittedSearch),
 		enabled: allowed && materialsOpen,
@@ -72,6 +91,34 @@ export function PrivateProjectDraftsCard({
 			previewDraft?.version ?? 0,
 		),
 		enabled: allowed && !!previewDraft,
+	});
+	const publish = useMutation({
+		mutationFn: async (draft: ProjectDraft) =>
+			publishProjectDraft(draft.id, draft.version, stablePublicationID(draft)),
+		onMutate: (draft) => {
+			setPublishError("");
+			setPublicationPendingDraftId(draft.id);
+		},
+		onSuccess: (_result, draft) => {
+			setPublishedDraftId(draft.id);
+			setPublicationPendingDraftId(undefined);
+			void qc.invalidateQueries({
+				queryKey: projectDraftsQueryOptions.queryKey,
+			});
+			void qc.invalidateQueries({
+				queryKey: projectDraftPreviewQueryOptions(draft.id, draft.version)
+					.queryKey,
+			});
+		},
+		onError: () => {
+			setPublicationPendingDraftId(undefined);
+			setPublishError(t("home.privateDrafts.publicationPending"));
+			// A lost response may still have committed. Re-read the private list
+			// so a refresh/retry can recover the stable publication result.
+			void qc.invalidateQueries({
+				queryKey: projectDraftsQueryOptions.queryKey,
+			});
+		},
 	});
 
 	if (!allowed) return null;
@@ -170,7 +217,9 @@ export function PrivateProjectDraftsCard({
 									</button>
 								</div>
 								<Badge variant="outline" className="shrink-0">
-									{t(`home.privateDrafts.status.${statusKey(draft)}`)}
+									{draft.published_project_id || publishedDraftId === draft.id
+										? t("home.privateDrafts.published")
+										: t(`home.privateDrafts.status.${statusKey(draft)}`)}
 								</Badge>
 							</li>
 						))}
@@ -187,9 +236,27 @@ export function PrivateProjectDraftsCard({
 								{t("home.privateDrafts.materialError")}
 							</p>
 						) : preview.data?.can_publish ? (
-							<p className="text-green-600">
-								{t("home.privateDrafts.previewReady")}
-							</p>
+							<div className="space-y-2">
+								<p className="text-green-600">
+									{publishedDraftId === previewDraft.id ||
+									previewDraft.published_project_id
+										? t("home.privateDrafts.published")
+										: t("home.privateDrafts.previewReady")}
+								</p>
+								{!publishedDraftId && !previewDraft.published_project_id && (
+									<button
+										type="button"
+										className="rounded-md border px-3 py-1.5 text-sm"
+										disabled={publish.isPending}
+										onClick={() => publish.mutate(previewDraft)}
+									>
+										{publish.isPending &&
+										publicationPendingDraftId === previewDraft.id
+											? t("home.privateDrafts.publishing")
+											: t("home.privateDrafts.publish")}
+									</button>
+								)}
+							</div>
 						) : (
 							<>
 								<p className="text-destructive">
@@ -208,6 +275,9 @@ export function PrivateProjectDraftsCard({
 				)}
 				{uploadError && (
 					<p className="mt-2 text-xs text-destructive">{uploadError}</p>
+				)}
+				{publishError && (
+					<p className="mt-2 text-xs text-destructive">{publishError}</p>
 				)}
 				<div className="mt-4 border-t border-border/50 pt-3">
 					<button

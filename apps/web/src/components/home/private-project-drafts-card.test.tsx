@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -16,6 +16,15 @@ vi.mock("@tanstack/react-router", () => ({
 		<a href={to}>{children}</a>
 	),
 }));
+vi.mock("@/lib/project-draft-api", async () => {
+	const actual = await vi.importActual<
+		typeof import("@/lib/project-draft-api")
+	>("@/lib/project-draft-api");
+	return {
+		...actual,
+		publishProjectDraft: vi.fn(),
+	};
+});
 vi.mock("react-i18next", () => ({
 	useTranslation: () => ({
 		t: (key: string, values?: { count?: number; version?: number }) =>
@@ -48,6 +57,11 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.preview": "预览",
 				"home.privateDrafts.previewReady": "可以确认",
 				"home.privateDrafts.previewIssues": "需要补充信息",
+				"home.privateDrafts.publish": "确认并分派",
+				"home.privateDrafts.publishing": "发布中",
+				"home.privateDrafts.published": "已发布",
+				"home.privateDrafts.publishError": "发布失败，可重试",
+				"home.privateDrafts.publicationPending": "结果待核实，刷新后可恢复",
 			})[key] ?? key,
 	}),
 }));
@@ -225,5 +239,56 @@ describe("PrivateProjectDraftsCard", () => {
 		expect(await screen.findByText("至少添加一项任务")).toBeInTheDocument();
 		expect(screen.getByText("需要补充信息")).toBeInTheDocument();
 		expect(screen.queryByText("确认并分派")).not.toBeInTheDocument();
+	});
+
+	it("confirms a ready preview with a stable publication id", async () => {
+		const { publishProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(publishProjectDraft).mockResolvedValue({
+			publication_id: "pub-1",
+			project_id: "project-1",
+			task_ids: { "item-1": "task-1" },
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(
+			["private-project-drafts"],
+			[
+				{
+					id: "draft-ready",
+					name: "可发布项目",
+					version: 2,
+					state: "editable",
+					items: [{ id: "item-1" }],
+				},
+			],
+		);
+		queryClient.setQueryData(
+			["private-project-draft-preview", "draft-ready", 2],
+			{
+				id: "draft-ready",
+				version: 2,
+				can_publish: true,
+				issues: [],
+			},
+		);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "预览" }));
+		const publish = await screen.findByRole("button", { name: "确认并分派" });
+		fireEvent.click(publish);
+		await waitFor(() =>
+			expect(publishProjectDraft).toHaveBeenCalledWith(
+				"draft-ready",
+				2,
+				expect.any(String),
+			),
+		);
+		expect(
+			(await screen.findAllByText("已发布")).length,
+		).toBeGreaterThanOrEqual(1);
 	});
 });

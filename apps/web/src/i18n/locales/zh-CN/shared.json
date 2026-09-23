@@ -93,7 +93,12 @@
 			"webSearchEmpty": "没有找到公开结果",
 			"preview": "预览",
 			"previewReady": "可以确认",
-			"previewIssues": "需要补充信息"
+			"previewIssues": "需要补充信息",
+			"publish": "确认并分派",
+			"publishing": "发布中",
+			"published": "已发布",
+			"publishError": "发布失败，可重试或刷新恢复结果。",
+			"publicationPending": "结果待核实，请刷新恢复原发布结果。"
 		},
 		"updateBanner": {
 			"title": "有可用更新",

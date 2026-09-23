@@ -44,6 +44,8 @@ export interface ProjectDraft {
 	chat_session_id: string;
 	version: number;
 	state: "editable";
+	publication_id?: string;
+	published_project_id?: string;
 	generation?: ProjectDraftGeneration;
 	created_at: string;
 	updated_at: string;
@@ -94,6 +96,12 @@ export interface ProjectDraftPreview {
 	materials: ProjectDraft["materials"];
 	issues: Array<{ field: string; message: string }>;
 	can_publish: boolean;
+}
+
+export interface ProjectDraftPublication {
+	publication_id: string;
+	project_id: string;
+	task_ids: Record<string, string>;
 }
 
 export const projectDraftsQueryOptions = queryOptions({
@@ -157,6 +165,22 @@ export const projectDraftPreviewQueryOptions = (
 				)
 			).data.data,
 	});
+
+export async function publishProjectDraft(
+	draftId: string,
+	expectedVersion: number,
+	publicationId: string,
+): Promise<ProjectDraftPublication> {
+	return (
+		await apiClient.instance.post<SuccessEnvelope<ProjectDraftPublication>>(
+			`/project-drafts/${draftId}/publish`,
+			{
+				expected_version: expectedVersion,
+				publication_id: publicationId,
+			},
+		)
+	).data.data;
+}
 
 export async function uploadProjectDraftFile(draftId: string, file: File) {
 	const session = (
