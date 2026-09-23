@@ -20,6 +20,12 @@ export interface DocFolderListResult {
 	items: DocFolder[];
 }
 
+export type DocumentVisibility =
+	| "private"
+	| "project"
+	| "task"
+	| "legacy_project";
+
 export interface Document {
 	id: string;
 	project_id?: string | null;
@@ -31,7 +37,26 @@ export interface Document {
 	updated_by?: string | null;
 	created_at: string;
 	updated_at: string;
+	visibility: DocumentVisibility;
+	owner_user_id?: string | null;
+	source_document_id?: string | null;
+	source_title?: string | null;
+	source_project_id?: string | null;
+	source_updated_at?: string | null;
+	access_version: number;
+	task_ids: string[];
 }
+
+export interface UpdateDocumentAccessInput {
+	expected_access_version: number;
+	visibility: Exclude<DocumentVisibility, "legacy_project">;
+	task_ids: string[];
+}
+
+export type DocumentAccessResult = Pick<
+	Document,
+	"id" | "visibility" | "access_version" | "task_ids"
+>;
 
 export interface DocumentListResult {
 	items: Document[];
@@ -317,6 +342,17 @@ export async function deleteDocument(
 	docId: string,
 ): Promise<void> {
 	await apiClient.instance.delete(`/projects/${projectId}/docs/${docId}`);
+}
+
+export async function updateDocumentAccess(
+	projectId: string,
+	docId: string,
+	payload: UpdateDocumentAccessInput,
+): Promise<DocumentAccessResult> {
+	const { data } = await apiClient.instance.patch<
+		SuccessEnvelope<DocumentAccessResult>
+	>(`/projects/${projectId}/docs/${docId}/access`, payload);
+	return data.data;
 }
 
 // ── Snapshot API ──────────────────────────────────────────────────────────────

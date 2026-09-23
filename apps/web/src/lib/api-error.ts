@@ -57,6 +57,7 @@ export const ApiErrorCode = {
 	DraftNotFound: "DRAFT_NOT_FOUND",
 	DraftConflict: "DRAFT_CONFLICT",
 	DraftGenerationPending: "DRAFT_GENERATION_PENDING",
+	DocumentAccessConflict: "DOCUMENT_ACCESS_CONFLICT",
 
 	// Custom field domain errors.
 	CustomFieldNotFound: "CUSTOM_FIELD_NOT_FOUND",

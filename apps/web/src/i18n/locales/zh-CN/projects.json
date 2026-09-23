@@ -618,6 +618,47 @@
 		}
 	},
 	"docs": {
+		"access": {
+			"title": "资料可见范围",
+			"current": "当前范围：{{scope}}",
+			"manage": "管理范围",
+			"visibility": "可见范围",
+			"scopes": {
+				"private": "私有",
+				"project": "项目共享",
+				"task": "指定任务",
+				"legacy_project": "沿用既有项目范围"
+			},
+			"hints": {
+				"private": "原资料所有者及获准管理员可读；不会将所有权转给当前编辑者。",
+				"project": "拥有资料读取权限的项目成员可读。",
+				"task": "只有能访问所选任务且同时能访问源资料的读者可读。"
+			},
+			"source": "出处",
+			"openSource": "打开源资料",
+			"sourceUnavailable": "暂无出处信息",
+			"sourceUpdated": "原文更新时间：{{date}}",
+			"sourceHint": "此处为资料引用，请通过出处链接编辑原文。共享引用不会扩大源资料的可见范围。",
+			"taskUnavailable": "任务暂不可访问",
+			"removeTask": "移除 {{title}}",
+			"remove": "移除",
+			"noOwner": "此资料没有可信的原始所有者，无法转为私有。",
+			"tasks": "关联任务",
+			"search": "搜索任务（至少 2 个字符）",
+			"loading": "加载中…",
+			"noTasks": "没有匹配的任务，请尝试其他搜索词。",
+			"loadMore": "加载更多",
+			"selectTask": "请至少选择一个任务；若要移除所有任务访问，请改为私有。",
+			"save": "保存范围",
+			"saving": "正在保存…",
+			"cancel": "取消",
+			"refresh": "刷新并核对",
+			"saved": "可见范围已保存。",
+			"conflict": "其他会话已更改范围。你的选择已保留，请刷新并核对当前范围后再保存。",
+			"recheck": "已刷新当前范围。请与保留的选择核对，再主动保存。",
+			"forbidden": "你已无法更改此范围，或无法管理所选任务。请刷新并核对权限。",
+			"failed": "无法加载或保存范围，请检查网络后重试。"
+		},
 		"editorPage": {
 			"notFound": {
 				"title": "未找到文档",

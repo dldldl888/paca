@@ -9,9 +9,11 @@ import {
 	DocEditor,
 	type DocEditorHandle,
 } from "@/components/projects/docs/doc-editor";
+import { DocumentAccessPanel } from "@/components/projects/docs/document-access-panel";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectPermissions } from "@/hooks/use-project-permissions";
+import { currentUserQueryOptions } from "@/lib/auth-api";
 import {
 	docFoldersQueryOptions,
 	docQueryKeys,
@@ -37,6 +39,12 @@ function DocEditorPage() {
 	const qc = useQueryClient();
 
 	const { data: doc, isError } = useQuery(docQueryOptions(projectId, docId));
+	const { data: user } = useQuery(currentUserQueryOptions);
+	const canManageAccess =
+		canWrite &&
+		hasProjectPermission("tasks.manage") &&
+		!!user &&
+		(doc?.visibility !== "private" || doc.owner_user_id === user.id);
 	const { data: allFolders = [] } = useQuery(docFoldersQueryOptions(projectId));
 
 	// Register this doc as "currently on screen" for the chat composer's
@@ -85,10 +93,11 @@ function DocEditorPage() {
 
 	const handleContentSave = useCallback(
 		(blocks: unknown[] | null) => {
+			if (!canWrite || doc?.source_document_id) return;
 			setDirty(false);
 			updateMutation.mutate({ content: blocks });
 		},
-		[updateMutation],
+		[updateMutation, canWrite, doc?.source_document_id],
 	);
 
 	const handleEditorDirtyChange = useCallback((isDirty: boolean) => {
@@ -192,12 +201,20 @@ function DocEditorPage() {
 			<div className="flex flex-1 min-h-0 overflow-hidden">
 				{/* Editor area */}
 				<div className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-					<div className="max-w-7xl mx-auto px-8 py-7">
+					<div className="max-w-7xl mx-auto px-4 py-7 sm:px-8">
+						{doc && (
+							<DocumentAccessPanel
+								key={doc.id}
+								projectId={projectId}
+								document={doc}
+								canManage={canManageAccess}
+							/>
+						)}
 						{doc && (
 							<DocEditor
 								ref={editorRef}
 								content={doc.content}
-								editable={canWrite}
+								editable={canWrite && !doc.source_document_id}
 								onSave={handleContentSave}
 								onDirtyChange={handleEditorDirtyChange}
 								projectId={projectId}
@@ -236,7 +253,7 @@ function DocEditorPage() {
 						<DocActivityPane
 							projectId={projectId}
 							docId={docId}
-							canEdit={canWrite}
+							canEdit={canWrite && !doc.source_document_id}
 						/>
 					</div>
 				)}

@@ -618,6 +618,47 @@
 		}
 	},
 	"docs": {
+		"access": {
+			"title": "Document access",
+			"current": "Current visibility: {{scope}}",
+			"manage": "Manage access",
+			"visibility": "Visibility",
+			"scopes": {
+				"private": "Private",
+				"project": "Project",
+				"task": "Selected tasks",
+				"legacy_project": "Inherited project access"
+			},
+			"hints": {
+				"private": "Access remains with the original owner and permitted administrators. This does not transfer ownership to you.",
+				"project": "Project members with document access can read this material.",
+				"task": "Only readers with access to a selected task and the source material can read it."
+			},
+			"source": "Source",
+			"openSource": "Open source document",
+			"sourceUnavailable": "Source details unavailable",
+			"sourceUpdated": "Source updated: {{date}}",
+			"sourceHint": "This is a reference. Edit the original through its source link. Sharing this reference does not expand access to the source.",
+			"taskUnavailable": "Task unavailable",
+			"removeTask": "Remove {{title}}",
+			"remove": "Remove",
+			"noOwner": "Private access is unavailable because this material has no verified original owner.",
+			"tasks": "Associated tasks",
+			"search": "Search tasks (at least 2 characters)",
+			"loading": "Loading…",
+			"noTasks": "No matching tasks. Try another search.",
+			"loadMore": "Load more",
+			"selectTask": "Select at least one task, or choose Private to remove all task access.",
+			"save": "Save access",
+			"saving": "Saving…",
+			"cancel": "Cancel",
+			"refresh": "Refresh and review",
+			"saved": "Access saved.",
+			"conflict": "Access changed in another session. Your selection is preserved. Refresh and review the current scope before saving again.",
+			"recheck": "Current access refreshed. Review it against your preserved selection, then save explicitly.",
+			"forbidden": "You can no longer change this scope or access a selected task. Refresh and check your permissions.",
+			"failed": "Could not load or save access. Check your connection and try again."
+		},
 		"editorPage": {
 			"notFound": {
 				"title": "Documento não encontrado",

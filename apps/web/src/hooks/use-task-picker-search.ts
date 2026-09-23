@@ -23,6 +23,8 @@ interface UseTaskPickerSearchResult {
 	/** True while a debounce or in-flight initial fetch means `results` may
 	 *  be stale/incomplete — callers should show a full-list loading state. */
 	isLoading: boolean;
+	/** True when the server search failed for the current debounced query. */
+	isError: boolean;
 	/** Load-more state for the search results, in the same shape as the
 	 *  picker's normal (non-search) pagination prop, so callers can swap
 	 *  between the two without branching on structure. */
@@ -62,26 +64,32 @@ export function useTaskPickerSearch(
 
 	const isSearching = search.trim().length >= MIN_SEARCH_LENGTH;
 
-	const { data, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage } =
-		useInfiniteQuery({
-			queryKey: [
-				"projects",
-				projectId,
-				"tasks",
-				"picker",
-				"search",
-				debouncedSearch,
-			],
-			queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-				searchTasksForPicker(projectId ?? "", debouncedSearch, {
-					cursor: pageParam,
-				}),
-			initialPageParam: undefined as string | undefined,
-			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-			enabled:
-				enabled && !!projectId && debouncedSearch.length >= MIN_SEARCH_LENGTH,
-			staleTime: 15_000,
-		});
+	const {
+		data,
+		isError,
+		isFetching,
+		isFetchingNextPage,
+		hasNextPage,
+		fetchNextPage,
+	} = useInfiniteQuery({
+		queryKey: [
+			"projects",
+			projectId,
+			"tasks",
+			"picker",
+			"search",
+			debouncedSearch,
+		],
+		queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+			searchTasksForPicker(projectId ?? "", debouncedSearch, {
+				cursor: pageParam,
+			}),
+		initialPageParam: undefined as string | undefined,
+		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+		enabled:
+			enabled && !!projectId && debouncedSearch.length >= MIN_SEARCH_LENGTH,
+		staleTime: 15_000,
+	});
 
 	// Debounce is still pending (input ahead of what's been queried) or the
 	// initial page for this query text hasn't landed yet — as opposed to
@@ -98,6 +106,7 @@ export function useTaskPickerSearch(
 			? (data?.pages.flatMap((page) => page.items) ?? [])
 			: [],
 		isLoading: isSearching && (debouncePending || isInitialFetch),
+		isError: isSearching && isError,
 		pagination: {
 			hasMore: isSearching && !!hasNextPage,
 			isLoadingMore: isFetchingNextPage,
