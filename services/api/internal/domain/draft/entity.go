@@ -103,6 +103,18 @@ type ProjectDraftMaterialCandidate struct {
 	Visibility      string    `json:"visibility"`
 }
 
+// ProjectDraftWebCandidate is public-web metadata returned to a private draft.
+// The page is unverified until a later preview/material step explicitly adds it.
+type ProjectDraftWebCandidate struct {
+	Title           string    `json:"title"`
+	URL             string    `json:"url"`
+	Snippet         string    `json:"snippet,omitempty"`
+	SourceType      string    `json:"source_type"`
+	AccessedAt      time.Time `json:"accessed_at"`
+	ReadStatus      string    `json:"read_status"`
+	ProcessedStatus string    `json:"processed_status"`
+}
+
 type ProjectDraftFile struct {
 	ID               uuid.UUID `json:"id"`
 	DraftID          uuid.UUID `json:"draft_id"`

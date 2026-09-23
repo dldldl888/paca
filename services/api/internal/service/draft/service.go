@@ -35,6 +35,7 @@ type Service struct {
 	documents  docdom.DocumentService
 	store      storage.Client
 	bucket     string
+	webSearch  *PublicWebSearchClient
 	authorizer *authz.Authorizer
 }
 

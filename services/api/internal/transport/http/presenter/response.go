@@ -507,6 +507,8 @@ func statusAndCodeFor(err error) (int, apierr.Code) {
 // httpStatusForCode maps an apierr.Code to its conventional HTTP status code.
 func httpStatusForCode(code apierr.Code) int {
 	switch code {
+	case apierr.CodeServiceUnavailable:
+		return http.StatusServiceUnavailable
 	case apierr.CodeInvalidCredentials,
 		apierr.CodeMissingToken,
 		apierr.CodeTokenInvalid,

@@ -264,7 +264,7 @@ func New(cfg *config.Config) (*App, error) {
 		}
 	}
 	agentService.WithPrivateRuns(instanceID, agentRepo, docService, annotationService, automationService)
-	draftService := draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithDocuments(docService).WithFileStorage(storageClient, cfg.Storage.Bucket).WithAuthorizer(authorizer).WithPublisher(publisher)
+	draftService := draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithDocuments(docService).WithFileStorage(storageClient, cfg.Storage.Bucket).WithPublicWebSearch(draftsvc.NewPublicWebSearchClient(cfg.PublicSearchURL)).WithAuthorizer(authorizer).WithPublisher(publisher)
 	var fileGate *delivery.Gate
 	var coordinator *pgRepo.AuthorizationDelivery
 	var deliveryStop func(context.Context) error

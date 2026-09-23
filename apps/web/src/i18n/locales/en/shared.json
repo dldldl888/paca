@@ -83,7 +83,14 @@
 			"materialEmpty": "No readable internal materials found",
 			"upload": "Upload file",
 			"uploading": "Uploading…",
-			"uploadError": "Upload or parsing failed. Try again."
+			"uploadError": "Upload or parsing failed. Try again.",
+			"showWebSearch": "Search public web",
+			"hideWebSearch": "Hide public web",
+			"webSearch": "Search public web",
+			"webSearchPlaceholder": "Enter a public query…",
+			"webSearchLoading": "Searching public web",
+			"webSearchError": "Public web search is temporarily unavailable",
+			"webSearchEmpty": "No public results found"
 		},
 		"updateBanner": {
 			"title": "Update available",

@@ -74,6 +74,16 @@ export interface ProjectDraftFile {
 	updated_at: string;
 }
 
+export interface ProjectDraftWebCandidate {
+	title: string;
+	url: string;
+	snippet?: string;
+	source_type: "web";
+	accessed_at: string;
+	read_status: "unverified";
+	processed_status: "unverified";
+}
+
 export const projectDraftsQueryOptions = queryOptions({
 	queryKey: ["private-project-drafts"],
 	queryFn: async () =>
@@ -107,6 +117,17 @@ export const projectDraftFilesQueryOptions = (draftId: string) =>
 				await apiClient.instance.get<
 					SuccessEnvelope<{ items: ProjectDraftFile[] }>
 				>(`/project-drafts/${draftId}/files`)
+			).data.data.items,
+	});
+
+export const projectDraftWebSearchQueryOptions = (query: string) =>
+	queryOptions({
+		queryKey: ["private-project-draft-web-search", query],
+		queryFn: async () =>
+			(
+				await apiClient.instance.get<
+					SuccessEnvelope<{ items: ProjectDraftWebCandidate[] }>
+				>("/project-drafts/web-search", { params: { q: query, limit: 20 } })
 			).data.data.items,
 	});
 

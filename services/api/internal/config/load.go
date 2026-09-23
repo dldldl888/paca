@@ -232,6 +232,7 @@ func Load() (*Config, error) {
 			Timeout:      releaseTimeout,
 		},
 		AIAgentURL:         env("AI_AGENT_URL", "http://ai-agent:8080"),
+		PublicSearchURL:    env("PACA_PUBLIC_SEARCH_URL", ""),
 		AIAgentInternalKey: aiAgentInternalKey,
 		InstanceID:         instanceID,
 		SSHBastionHost:     env("SSH_BASTION_HOST", ""),

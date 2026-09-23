@@ -16,6 +16,9 @@ type Config struct {
 	Plugins    PluginsConfig
 	Release    ReleaseConfig
 	AIAgentURL string // base URL of the ai-agent service, e.g. http://ai-agent:8080
+	// PublicSearchURL is an optional SearXNG-compatible endpoint for public web
+	// search. Empty means the feature is explicitly unavailable.
+	PublicSearchURL string
 	// AIAgentInternalKey authenticates server-to-server calls into ai-agent's
 	// internal-only routes (see services/ai-agent's _require_internal_key) —
 	// must match ai-agent's own INTERNAL_API_KEY.

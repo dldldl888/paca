@@ -12,6 +12,7 @@ import {
 	projectDraftFilesQueryOptions,
 	projectDraftMaterialsQueryOptions,
 	projectDraftsQueryOptions,
+	projectDraftWebSearchQueryOptions,
 	uploadProjectDraftFile,
 } from "@/lib/project-draft-api";
 
@@ -42,11 +43,18 @@ export function PrivateProjectDraftsCard({
 	const [materialsOpen, setMaterialsOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const [submittedSearch, setSubmittedSearch] = useState("");
+	const [webSearchOpen, setWebSearchOpen] = useState(false);
+	const [webSearch, setWebSearch] = useState("");
+	const [submittedWebSearch, setSubmittedWebSearch] = useState("");
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
 	const [uploadError, setUploadError] = useState("");
 	const materials = useQuery({
 		...projectDraftMaterialsQueryOptions(submittedSearch),
 		enabled: allowed && materialsOpen,
+	});
+	const webResults = useQuery({
+		...projectDraftWebSearchQueryOptions(submittedWebSearch),
+		enabled: allowed && webSearchOpen && submittedWebSearch.length > 0,
 	});
 
 	if (!allowed) return null;
@@ -210,6 +218,83 @@ export function PrivateProjectDraftsCard({
 							) : (
 								<p className="text-sm text-muted-foreground">
 									{t("home.privateDrafts.materialEmpty")}
+								</p>
+							)}
+						</div>
+					)}
+				</div>
+				<div className="mt-3 border-t border-border/50 pt-3">
+					<button
+						type="button"
+						className="text-sm text-primary underline-offset-4 hover:underline"
+						onClick={() => setWebSearchOpen((open) => !open)}
+					>
+						{t(
+							webSearchOpen
+								? "home.privateDrafts.hideWebSearch"
+								: "home.privateDrafts.showWebSearch",
+						)}
+					</button>
+					{webSearchOpen && (
+						<div className="mt-3 space-y-2">
+							<form
+								className="flex gap-2"
+								onSubmit={(event) => {
+									event.preventDefault();
+									setSubmittedWebSearch(webSearch.trim());
+								}}
+							>
+								<input
+									className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+									value={webSearch}
+									placeholder={t("home.privateDrafts.webSearchPlaceholder")}
+									aria-label={t("home.privateDrafts.webSearch")}
+									onChange={(event) => setWebSearch(event.target.value)}
+								/>
+								<button
+									type="submit"
+									className="rounded-md border px-3 text-sm"
+								>
+									{t("home.privateDrafts.webSearch")}
+								</button>
+							</form>
+							{webResults.isPending ? (
+								<p className="text-sm text-muted-foreground">
+									{t("home.privateDrafts.webSearchLoading")}
+								</p>
+							) : webResults.isError ? (
+								<p className="text-sm text-muted-foreground">
+									{t("home.privateDrafts.webSearchError")}
+								</p>
+							) : webResults.data?.length ? (
+								<ul className="space-y-2 text-sm">
+									{webResults.data.map((result) => (
+										<li
+											key={result.url}
+											className="rounded-md border border-border/40 px-2 py-1.5"
+										>
+											<a
+												href={result.url}
+												target="_blank"
+												rel="noreferrer"
+												className="font-medium text-primary underline-offset-4 hover:underline"
+											>
+												{result.title || result.url}
+											</a>
+											{result.snippet && (
+												<p className="mt-1 text-xs text-muted-foreground">
+													{result.snippet}
+												</p>
+											)}
+											<p className="mt-1 text-xs text-muted-foreground">
+												{result.read_status} · {result.accessed_at}
+											</p>
+										</li>
+									))}
+								</ul>
+							) : (
+								<p className="text-sm text-muted-foreground">
+									{t("home.privateDrafts.webSearchEmpty")}
 								</p>
 							)}
 						</div>

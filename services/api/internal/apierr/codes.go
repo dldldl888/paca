@@ -39,6 +39,8 @@ const (
 	CodeBadRequest Code = "BAD_REQUEST"
 	// CodeInternalError represents an internal server error.
 	CodeInternalError Code = "INTERNAL_ERROR"
+	// CodeServiceUnavailable represents a configured dependency that is unavailable.
+	CodeServiceUnavailable Code = "SERVICE_UNAVAILABLE"
 	// CodePasswordChangeRequired indicates the user must change their password
 	// before accessing any other endpoint.
 	CodePasswordChangeRequired Code = "AUTH_PASSWORD_CHANGE_REQUIRED"

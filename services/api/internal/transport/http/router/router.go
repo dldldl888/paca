@@ -297,6 +297,7 @@ func New(deps Deps) http.Handler {
 					r.Get("/", deps.Draft.ProjectList)
 					r.Post("/", deps.Draft.ProjectCreate)
 					r.Get("/materials", deps.Draft.ProjectMaterials)
+					r.Get("/web-search", deps.Draft.ProjectWebSearch)
 					r.Get("/{draftId}/files", deps.Draft.ProjectFileList)
 					r.Post("/{draftId}/files/initiate-upload", deps.Draft.ProjectFileInitiate)
 					r.Post("/{draftId}/files/complete-upload", deps.Draft.ProjectFileComplete)

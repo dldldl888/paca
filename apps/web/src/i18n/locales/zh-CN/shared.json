@@ -83,7 +83,14 @@
 			"materialEmpty": "没有找到当前可读取的内部资料",
 			"upload": "上传文件",
 			"uploading": "上传中…",
-			"uploadError": "上传或解析失败，请重试。"
+			"uploadError": "上传或解析失败，请重试。",
+			"showWebSearch": "搜索公开网页",
+			"hideWebSearch": "收起公开网页",
+			"webSearch": "搜索公开网页",
+			"webSearchPlaceholder": "输入公开查询…",
+			"webSearchLoading": "公开检索中",
+			"webSearchError": "公开检索暂时不可用",
+			"webSearchEmpty": "没有找到公开结果"
 		},
 		"updateBanner": {
 			"title": "有可用更新",

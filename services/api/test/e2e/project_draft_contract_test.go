@@ -56,6 +56,14 @@ func TestPrivateProjectDraftMaterialSearchOnlyReturnsReadableDocuments(t *testin
 	}
 }
 
+func TestPrivateProjectDraftWebSearchReportsUnavailableProvider(t *testing.T) {
+	f, _, _, _ := newProjectDraftFixture(t)
+	result := f.request(t, http.MethodGet, f.base+"/web-search?q=public", nil, http.StatusServiceUnavailable)
+	if result["error_code"] != "SERVICE_UNAVAILABLE" {
+		t.Fatalf("expected explicit provider failure, got %#v", result)
+	}
+}
+
 func TestPrivateProjectDraftFileUploadTracksParsingAndOwnerIsolation(t *testing.T) {
 	f, _, session, _ := newProjectDraftFixture(t)
 	d := f.request(t, http.MethodPost, f.base, map[string]any{

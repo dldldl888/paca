@@ -38,6 +38,13 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.materialLoading": "资料加载中",
 				"home.privateDrafts.materialError": "资料暂时无法加载",
 				"home.privateDrafts.materialEmpty": "没有找到当前可读取的内部资料",
+				"home.privateDrafts.showWebSearch": "搜索公开网页",
+				"home.privateDrafts.hideWebSearch": "收起公开网页",
+				"home.privateDrafts.webSearch": "搜索公开网页",
+				"home.privateDrafts.webSearchPlaceholder": "输入公开查询…",
+				"home.privateDrafts.webSearchLoading": "公开检索中",
+				"home.privateDrafts.webSearchError": "公开检索暂时不可用",
+				"home.privateDrafts.webSearchEmpty": "没有找到公开结果",
 			})[key] ?? key,
 	}),
 }));
@@ -144,5 +151,41 @@ describe("PrivateProjectDraftsCard", () => {
 		expect(await screen.findByText("可读路线图")).toBeInTheDocument();
 		expect(screen.getByText("ready")).toBeInTheDocument();
 		rerender.unmount();
+	});
+
+	it("shows public web candidates with unverified status", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(["private-project-drafts"], []);
+		queryClient.setQueryData(
+			["private-project-draft-web-search", "公开"],
+			[
+				{
+					title: "公开页面",
+					url: "https://example.com/page",
+					snippet: "公开摘要",
+					read_status: "unverified",
+					processed_status: "unverified",
+					accessed_at: "2026-09-23T00:00:00Z",
+				},
+			],
+		);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		fireEvent.change(screen.getByRole("textbox", { name: "搜索公开网页" }), {
+			target: { value: "公开" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		expect(await screen.findByText("公开页面")).toBeInTheDocument();
+		expect(screen.getByText(/unverified/)).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "公开页面" })).toHaveAttribute(
+			"href",
+			"https://example.com/page",
+		);
 	});
 });
