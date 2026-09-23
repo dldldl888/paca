@@ -311,6 +311,83 @@ func (h *DraftHandler) ProjectMaterials(w http.ResponseWriter, r *http.Request) 
 	presenter.OK(w, r, map[string]any{"items": items, "coverage": map[string]any{"scope": "accessible_projects", "limit": limit}})
 }
 
+func (h *DraftHandler) ProjectFileList(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	items, err := h.svc.ListProjectDraftFiles(r.Context(), id)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, map[string]any{"items": items})
+}
+
+func (h *DraftHandler) ProjectFileInitiate(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		FileName    string `json:"file_name"`
+		ContentType string `json:"content_type"`
+		FileSize    int64  `json:"file_size"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	session, err := h.svc.InitiateProjectDraftFile(r.Context(), id, in.FileName, in.ContentType, in.FileSize)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.Created(w, r, session)
+}
+
+func (h *DraftHandler) ProjectFileComplete(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		FileID uuid.UUID `json:"file_id"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	if in.FileID == uuid.Nil {
+		draftError(w, r, apierr.New(apierr.CodeBadRequest, "file_id is required"))
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	file, err := h.svc.CompleteProjectDraftFile(r.Context(), id, in.FileID)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, file)
+}
+
 func (h *DraftHandler) ProjectCreate(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		draftdom.ProjectDraftContent

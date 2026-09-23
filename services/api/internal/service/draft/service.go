@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
+	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
@@ -14,11 +15,13 @@ import (
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/Paca-AI/api/internal/platform/messaging"
+	"github.com/Paca-AI/api/internal/platform/storage"
 	pg "github.com/Paca-AI/api/internal/repository/postgres"
 	agentsvc "github.com/Paca-AI/api/internal/service/agent"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"io"
+	"path"
 	"strings"
 	"time"
 )
@@ -30,6 +33,8 @@ type Service struct {
 	agents     *agentsvc.Service
 	members    *pg.ProjectRepository
 	documents  docdom.DocumentService
+	store      storage.Client
+	bucket     string
 	authorizer *authz.Authorizer
 }
 
@@ -563,6 +568,102 @@ func (s *Service) SearchProjectDraftMaterials(ctx context.Context, query string,
 	return items, nil
 }
 
+func draftFileName(name string) string {
+	name = path.Base(strings.TrimSpace(name))
+	if name == "." || name == "/" || name == "" {
+		return "upload"
+	}
+	return name
+}
+
+func draftFileParseable(contentType string) bool {
+	return contentType == "text/plain" || contentType == "text/markdown"
+}
+
+func (s *Service) InitiateProjectDraftFile(ctx context.Context, draftID uuid.UUID, fileName, contentType string, fileSize int64) (*attachmentdom.UploadSession, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	if s.store == nil || s.bucket == "" {
+		return nil, errors.New("project draft file storage unavailable")
+	}
+	if fileSize <= 0 || fileSize > 2<<20 {
+		return nil, &draftdom.ProjectDraftValidationError{Message: "file size must be between 1 byte and 2 MiB"}
+	}
+	if strings.TrimSpace(fileName) == "" || strings.TrimSpace(contentType) == "" {
+		return nil, &draftdom.ProjectDraftValidationError{Message: "file name and content type are required"}
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	if _, err = s.Repo.GetProjectDraft(ctx, draftID); err != nil {
+		return nil, err
+	}
+	fileID := uuid.New()
+	key := fmt.Sprintf("project-drafts/%s/%s/%s", draftID, fileID, draftFileName(fileName))
+	now := time.Now()
+	file := &attachmentdom.File{ID: fileID, StorageKey: key, Bucket: s.bucket, FileName: fileName, ContentType: contentType, FileSize: fileSize, UploadStatus: attachmentdom.UploadStatusPending, CreatedAt: now, UpdatedAt: now}
+	if _, err = s.Repo.CreateProjectDraftFile(ctx, draftID, file); err != nil {
+		return nil, err
+	}
+	url, err := s.store.PresignPutObject(ctx, s.bucket, key, contentType, time.Hour)
+	if err != nil {
+		_, _ = s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusFailed), "failed", "无法创建上传地址", nil)
+		return nil, err
+	}
+	return &attachmentdom.UploadSession{FileID: fileID, UploadURL: url}, nil
+}
+
+func (s *Service) CompleteProjectDraftFile(ctx context.Context, draftID, fileID uuid.UUID) (*draftdom.ProjectDraftFile, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	if s.store == nil || s.bucket == "" {
+		return nil, errors.New("project draft file storage unavailable")
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	file, err := s.Repo.GetProjectDraftFileRecord(ctx, draftID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if file.UploadStatus != attachmentdom.UploadStatusPending {
+		return nil, attachmentdom.ErrUploadNotPending
+	}
+	if !draftFileParseable(file.ContentType) {
+		return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusUploaded), "failed", "当前环境不支持解析此文件格式；可保留为未解析附件或重新上传纯文本/Markdown", nil)
+	}
+	data, err := s.store.GetObject(ctx, s.bucket, file.StorageKey, 2<<20+1)
+	if err != nil {
+		return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusFailed), "failed", "上传对象读取失败，请重试", nil)
+	}
+	if len(data) > 2<<20 {
+		return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusFailed), "failed", "文件解析内容超过 2 MiB 限制", nil)
+	}
+	text := string(data)
+	return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusUploaded), "ready", "", &text)
+}
+
+func (s *Service) ListProjectDraftFiles(ctx context.Context, draftID uuid.UUID) ([]*draftdom.ProjectDraftFile, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	if _, err = s.Repo.GetProjectDraft(ctx, draftID); err != nil {
+		return nil, err
+	}
+	return s.Repo.ListProjectDraftFiles(ctx, draftID)
+}
+
 func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected int, content draftdom.ProjectDraftContent) (*draftdom.ProjectDraft, error) {
 	if err := content.ValidateStructure(); err != nil {
 		return nil, err
@@ -706,6 +807,11 @@ func (s *Service) WithAuthorizer(authorizer *authz.Authorizer) *Service {
 
 func (s *Service) WithDocuments(documents docdom.DocumentService) *Service {
 	s.documents = documents
+	return s
+}
+
+func (s *Service) WithFileStorage(store storage.Client, bucket string) *Service {
+	s.store, s.bucket = store, bucket
 	return s
 }
 

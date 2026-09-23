@@ -283,7 +283,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		Document:             handler.NewDocumentHandler(docService, docsvc.NewActivityService(docRepo, docRepo, projectRepo, publisher)).WithDeliveryGate(fileGate),
 		Environment:          handler.NewEnvironmentHandler(environmentService, ""),
 		Annotation:           handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery),
-		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithDocuments(docService).WithAuthorizer(e2eAuthorizer).WithPublisher(publisher).WithDeliveryGate(fileGate)).WithDeliveryGate(fileGate),
+		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithDocuments(docService).WithFileStorage(fileStore, "paca-attachments-e2e").WithAuthorizer(e2eAuthorizer).WithPublisher(publisher).WithDeliveryGate(fileGate)).WithDeliveryGate(fileGate),
 		TokenManager:         tm,
 		APIKeyAuth:           apiKeyService,
 		Authorizer:           e2eAuthorizer,

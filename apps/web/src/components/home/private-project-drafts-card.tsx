@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FilePenLine } from "lucide-react";
 import { useState } from "react";
@@ -9,8 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
 	type ProjectDraft,
+	projectDraftFilesQueryOptions,
 	projectDraftMaterialsQueryOptions,
 	projectDraftsQueryOptions,
+	uploadProjectDraftFile,
 } from "@/lib/project-draft-api";
 
 function statusKey(draft: ProjectDraft) {
@@ -34,11 +36,14 @@ export function PrivateProjectDraftsCard({
 } = {}) {
 	const { t } = useTranslation("shared");
 	const { hasPermission } = usePermissions();
+	const qc = useQueryClient();
 	const allowed = hasPermission("projects.create");
 	const drafts = useQuery({ ...projectDraftsQueryOptions, enabled: allowed });
 	const [materialsOpen, setMaterialsOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const [submittedSearch, setSubmittedSearch] = useState("");
+	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
+	const [uploadError, setUploadError] = useState("");
 	const materials = useQuery({
 		...projectDraftMaterialsQueryOptions(submittedSearch),
 		enabled: allowed && materialsOpen,
@@ -49,7 +54,7 @@ export function PrivateProjectDraftsCard({
 		? (drafts.data ?? []).filter(
 				(draft) => draft.chat_session_id === chatSessionId,
 			)
-		: drafts.data;
+		: (drafts.data ?? []);
 	if (
 		!drafts.isPending &&
 		!drafts.isError &&
@@ -104,6 +109,34 @@ export function PrivateProjectDraftsCard({
 											version: draft.version,
 										})}
 									</p>
+									<label className="mt-2 inline-flex cursor-pointer text-xs text-primary underline-offset-4 hover:underline">
+										{uploadingDraftId === draft.id
+											? t("home.privateDrafts.uploading")
+											: t("home.privateDrafts.upload")}
+										<input
+											type="file"
+											className="sr-only"
+											disabled={!!uploadingDraftId}
+											onChange={async (event) => {
+												const file = event.target.files?.[0];
+												if (!file) return;
+												setUploadError("");
+												setUploadingDraftId(draft.id);
+												try {
+													await uploadProjectDraftFile(draft.id, file);
+													await qc.invalidateQueries({
+														queryKey: projectDraftFilesQueryOptions(draft.id)
+															.queryKey,
+													});
+												} catch {
+													setUploadError(t("home.privateDrafts.uploadError"));
+												} finally {
+													setUploadingDraftId(undefined);
+													event.currentTarget.value = "";
+												}
+											}}
+										/>
+									</label>
 								</div>
 								<Badge variant="outline" className="shrink-0">
 									{t(`home.privateDrafts.status.${statusKey(draft)}`)}
@@ -111,6 +144,9 @@ export function PrivateProjectDraftsCard({
 							</li>
 						))}
 					</ul>
+				)}
+				{uploadError && (
+					<p className="mt-2 text-xs text-destructive">{uploadError}</p>
 				)}
 				<div className="mt-4 border-t border-border/50 pt-3">
 					<button

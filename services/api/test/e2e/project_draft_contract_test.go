@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
@@ -53,6 +54,57 @@ func TestPrivateProjectDraftMaterialSearchOnlyReturnsReadableDocuments(t *testin
 	if items[0].(map[string]any)["project_id"] != projectID || items[0].(map[string]any)["source_type"] != "internal" {
 		t.Fatalf("material metadata missing: %#v", items[0])
 	}
+}
+
+func TestPrivateProjectDraftFileUploadTracksParsingAndOwnerIsolation(t *testing.T) {
+	f, _, session, _ := newProjectDraftFixture(t)
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "上传资料", "goal": "验证文件状态", "chat_session_id": session,
+	}, http.StatusCreated)
+	path := f.base + "/" + d["id"].(string)
+	start := f.request(t, http.MethodPost, path+"/files/initiate-upload", map[string]any{
+		"file_name": "notes.txt", "content_type": "text/plain", "file_size": 11,
+	}, http.StatusCreated)
+	if start["upload_url"] == nil || start["file_id"] == nil {
+		t.Fatalf("missing upload session: %#v", start)
+	}
+	uploadReq, err := http.NewRequest(http.MethodPut, start["upload_url"].(string), strings.NewReader("hello world"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadReq.Header.Set("Content-Type", "text/plain")
+	uploadResp, err := f.client.Do(uploadReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadResp.Body.Close()
+	assertStatus(t, uploadResp, http.StatusOK)
+	completed := f.request(t, http.MethodPost, path+"/files/complete-upload", map[string]any{
+		"file_id": start["file_id"],
+	}, http.StatusOK)
+	if completed["processing_status"] != "ready" || completed["upload_status"] != "uploaded" {
+		t.Fatalf("text file was not parsed: %#v", completed)
+	}
+	unsupported := f.request(t, http.MethodPost, path+"/files/initiate-upload", map[string]any{
+		"file_name": "binary.bin", "content_type": "application/x-binary", "file_size": 4,
+	}, http.StatusCreated)
+	failed := f.request(t, http.MethodPost, path+"/files/complete-upload", map[string]any{
+		"file_id": unsupported["file_id"],
+	}, http.StatusOK)
+	if failed["processing_status"] != "failed" || failed["processing_error"] == nil {
+		t.Fatalf("unsupported file was marked usable: %#v", failed)
+	}
+	listed := f.request(t, http.MethodGet, path+"/files", nil, http.StatusOK)
+	if len(listed["items"].([]any)) != 2 {
+		t.Fatalf("file list did not survive refresh: %#v", listed)
+	}
+	seedProjectAdminUser(t, f.env, "draft-file-other", "password1")
+	otherClient, otherToken := projectAdminLogin(t, f.env, "draft-file-other", "password1")
+	req := mustRequest(f.env.ctx, t, http.MethodGet, f.env.base+path+"/files", nil)
+	req.Header.Set("Authorization", "Bearer "+otherToken)
+	resp := mustDo(t, otherClient, req)
+	resp.Body.Close()
+	assertStatus(t, resp, http.StatusNotFound)
 }
 
 func newProjectDraftFixture(t *testing.T) (*draftFixture, uuid.UUID, uuid.UUID, uuid.UUID) {

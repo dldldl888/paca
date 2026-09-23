@@ -80,7 +80,10 @@
 			"search": "Search",
 			"materialLoading": "Loading materials",
 			"materialError": "Materials are temporarily unavailable",
-			"materialEmpty": "No readable internal materials found"
+			"materialEmpty": "No readable internal materials found",
+			"upload": "Upload file",
+			"uploading": "Uploading…",
+			"uploadError": "Upload or parsing failed. Try again."
 		},
 		"updateBanner": {
 			"title": "Update available",

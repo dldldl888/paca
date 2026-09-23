@@ -60,6 +60,20 @@ export interface ProjectDraftMaterialCandidate {
 	visibility: string;
 }
 
+export interface ProjectDraftFile {
+	id: string;
+	draft_id: string;
+	file_id: string;
+	file_name: string;
+	content_type: string;
+	file_size: number;
+	upload_status: "pending" | "uploaded" | "failed";
+	processing_status: "pending" | "ready" | "failed" | "unverified";
+	processing_error?: string;
+	created_at: string;
+	updated_at: string;
+}
+
 export const projectDraftsQueryOptions = queryOptions({
 	queryKey: ["private-project-drafts"],
 	queryFn: async () =>
@@ -84,3 +98,38 @@ export const projectDraftMaterialsQueryOptions = (search: string) =>
 				})
 			).data.data.items,
 	});
+
+export const projectDraftFilesQueryOptions = (draftId: string) =>
+	queryOptions({
+		queryKey: ["private-project-draft-files", draftId],
+		queryFn: async () =>
+			(
+				await apiClient.instance.get<
+					SuccessEnvelope<{ items: ProjectDraftFile[] }>
+				>(`/project-drafts/${draftId}/files`)
+			).data.data.items,
+	});
+
+export async function uploadProjectDraftFile(draftId: string, file: File) {
+	const session = (
+		await apiClient.instance.post<
+			SuccessEnvelope<{ file_id: string; upload_url: string }>
+		>(`/project-drafts/${draftId}/files/initiate-upload`, {
+			file_name: file.name,
+			content_type: file.type || "application/octet-stream",
+			file_size: file.size,
+		})
+	).data.data;
+	const uploaded = await fetch(session.upload_url, {
+		method: "PUT",
+		headers: { "Content-Type": file.type || "application/octet-stream" },
+		body: file,
+	});
+	if (!uploaded.ok) throw new Error("upload failed");
+	return (
+		await apiClient.instance.post<SuccessEnvelope<ProjectDraftFile>>(
+			`/project-drafts/${draftId}/files/complete-upload`,
+			{ file_id: session.file_id },
+		)
+	).data.data;
+}

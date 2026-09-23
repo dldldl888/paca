@@ -103,6 +103,20 @@ type ProjectDraftMaterialCandidate struct {
 	Visibility      string    `json:"visibility"`
 }
 
+type ProjectDraftFile struct {
+	ID               uuid.UUID `json:"id"`
+	DraftID          uuid.UUID `json:"draft_id"`
+	FileID           uuid.UUID `json:"file_id"`
+	FileName         string    `json:"file_name"`
+	ContentType      string    `json:"content_type"`
+	FileSize         int64     `json:"file_size"`
+	UploadStatus     string    `json:"upload_status"`
+	ProcessingStatus string    `json:"processing_status"`
+	ProcessingError  string    `json:"processing_error,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 type ProjectDraft struct {
 	ProjectDraftContent
 	ID            uuid.UUID               `json:"id"`

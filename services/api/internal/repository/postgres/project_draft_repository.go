@@ -7,11 +7,34 @@ import (
 	"errors"
 	"time"
 
+	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
+
+type projectDraftFileRow struct {
+	ID               uuid.UUID `db:"id"`
+	DraftID          uuid.UUID `db:"draft_id"`
+	FileID           uuid.UUID `db:"file_id"`
+	FileName         string    `db:"file_name"`
+	ContentType      string    `db:"content_type"`
+	FileSize         int64     `db:"file_size"`
+	UploadStatus     string    `db:"upload_status"`
+	ProcessingStatus string    `db:"processing_status"`
+	ProcessingError  *string   `db:"processing_error"`
+	CreatedAt        time.Time `db:"created_at"`
+	UpdatedAt        time.Time `db:"updated_at"`
+}
+
+func projectDraftFileFromRow(r projectDraftFileRow) *draftdom.ProjectDraftFile {
+	f := &draftdom.ProjectDraftFile{ID: r.ID, DraftID: r.DraftID, FileID: r.FileID, FileName: r.FileName, ContentType: r.ContentType, FileSize: r.FileSize, UploadStatus: r.UploadStatus, ProcessingStatus: r.ProcessingStatus, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+	if r.ProcessingError != nil {
+		f.ProcessingError = *r.ProcessingError
+	}
+	return f
+}
 
 type projectDraftRow struct {
 	ID            uuid.UUID `db:"id"`
@@ -146,6 +169,117 @@ func (r *DraftRepository) ListProjectDrafts(ctx context.Context) ([]*draftdom.Pr
 		result = append(result, d)
 	}
 	return result, nil
+}
+
+func (r *DraftRepository) CreateProjectDraftFile(ctx context.Context, draftID uuid.UUID, f *attachmentdom.File) (*draftdom.ProjectDraftFile, error) {
+	user, err := projectDraftActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	var out *draftdom.ProjectDraftFile
+	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		var exists uuid.UUID
+		if err := tx.GetContext(ctx, &exists, `SELECT id FROM project_drafts WHERE id=$1 AND owner_user_id=$2`, draftID, user); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return draftdom.ErrNotFound
+			}
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO files(id,storage_key,bucket,file_name,content_type,file_size,upload_status,multipart_upload_id,uploaded_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, f.ID, f.StorageKey, f.Bucket, f.FileName, f.ContentType, f.FileSize, f.UploadStatus, f.MultipartUploadID, user, f.CreatedAt, f.UpdatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_draft_files(id,draft_id,file_id,owner_user_id,processing_status,created_at,updated_at) VALUES($1,$2,$3,$4,'pending',$5,$6)`, uuid.New(), draftID, f.ID, user, now, now); err != nil {
+			return err
+		}
+		out = &draftdom.ProjectDraftFile{DraftID: draftID, FileID: f.ID, FileName: f.FileName, ContentType: f.ContentType, FileSize: f.FileSize, UploadStatus: string(f.UploadStatus), ProcessingStatus: "pending", CreatedAt: now, UpdatedAt: now}
+		return nil
+	})
+	return out, err
+}
+
+const projectDraftFileSelect = `SELECT p.id,p.draft_id,p.file_id,f.file_name,f.content_type,f.file_size,f.upload_status,p.processing_status,p.processing_error,p.created_at,p.updated_at FROM project_draft_files p JOIN files f ON f.id=p.file_id`
+
+func (r *DraftRepository) GetProjectDraftFile(ctx context.Context, draftID, fileID uuid.UUID) (*draftdom.ProjectDraftFile, error) {
+	user, err := projectDraftActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var row projectDraftFileRow
+	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		return tx.GetContext(ctx, &row, projectDraftFileSelect+` WHERE p.draft_id=$1 AND p.file_id=$2 AND p.owner_user_id=$3`, draftID, fileID, user)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, draftdom.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return projectDraftFileFromRow(row), nil
+}
+
+func (r *DraftRepository) GetProjectDraftFileRecord(ctx context.Context, draftID, fileID uuid.UUID) (*attachmentdom.File, error) {
+	user, err := projectDraftActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var row fileRecord
+	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		return tx.GetContext(ctx, &row, `SELECT f.id,f.storage_key,f.bucket,f.file_name,f.content_type,f.file_size,f.upload_status,f.multipart_upload_id,f.uploaded_by,f.created_at,f.updated_at FROM files f JOIN project_draft_files p ON p.file_id=f.id WHERE p.draft_id=$1 AND p.file_id=$2 AND p.owner_user_id=$3`, draftID, fileID, user)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, draftdom.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return fileRecordToEntity(&row), nil
+}
+
+func (r *DraftRepository) ListProjectDraftFiles(ctx context.Context, draftID uuid.UUID) ([]*draftdom.ProjectDraftFile, error) {
+	user, err := projectDraftActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var rows []projectDraftFileRow
+	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		return tx.SelectContext(ctx, &rows, projectDraftFileSelect+` WHERE p.draft_id=$1 AND p.owner_user_id=$2 ORDER BY p.created_at ASC,p.id ASC`, draftID, user)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*draftdom.ProjectDraftFile, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, projectDraftFileFromRow(row))
+	}
+	return out, nil
+}
+
+func (r *DraftRepository) UpdateProjectDraftFile(ctx context.Context, draftID, fileID uuid.UUID, uploadStatus, processingStatus, processingError string, extractedText *string) (*draftdom.ProjectDraftFile, error) {
+	user, err := projectDraftActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out *draftdom.ProjectDraftFile
+	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		if _, err := tx.ExecContext(ctx, `UPDATE files f SET upload_status=COALESCE(NULLIF($3,''),f.upload_status),multipart_upload_id=NULL,updated_at=$4 FROM project_draft_files p WHERE p.file_id=f.id AND p.draft_id=$1 AND p.file_id=$2 AND p.owner_user_id=$5`, draftID, fileID, uploadStatus, now, user); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE project_draft_files SET processing_status=$3,processing_error=NULLIF($4,''),extracted_text=$5,updated_at=$6 WHERE draft_id=$1 AND file_id=$2 AND owner_user_id=$7`, draftID, fileID, processingStatus, processingError, extractedText, now, user); err != nil {
+			return err
+		}
+		var row projectDraftFileRow
+		if err := tx.GetContext(ctx, &row, projectDraftFileSelect+` WHERE p.draft_id=$1 AND p.file_id=$2 AND p.owner_user_id=$3`, draftID, fileID, user); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return draftdom.ErrNotFound
+			}
+			return err
+		}
+		out = projectDraftFileFromRow(row)
+		return nil
+	})
+	return out, err
 }
 
 func (r *DraftRepository) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected int, content draftdom.ProjectDraftContent) (*draftdom.ProjectDraft, error) {
