@@ -95,6 +95,46 @@ func TestPrivateProjectDraftPreviewBindsVersionAndReportsIssues(t *testing.T) {
 	f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusConflict)
 }
 
+func TestPrivateProjectDraftPublishIsAtomicAndIdempotent(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	itemID := uuid.NewString()
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "正式发布项目", "goal": "验证发布事务", "chat_session_id": session,
+		"items": []any{map[string]any{
+			"id": itemID, "title": "执行任务", "requirements": "完成交付", "criteria": "通过验收",
+			"assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials":    []any{},
+	}, http.StatusCreated)
+	before := projectBusinessCounts(t, f.env)
+	publication := uuid.NewString()
+	path := f.base + "/" + d["id"].(string) + "/publish"
+	first := f.request(t, http.MethodPost, path, map[string]any{
+		"expected_version": 1, "publication_id": publication,
+	}, http.StatusOK)
+	if first["project_id"] == nil || len(first["task_ids"].(map[string]any)) != 1 {
+		t.Fatalf("publish result missing stable ids: %#v", first)
+	}
+	after := projectBusinessCounts(t, f.env)
+	if after[0] != before[0]+1 || after[2] != before[2]+1 || after[5] != before[5]+1 {
+		t.Fatalf("publish did not create one project/task/notification: before=%v after=%v", before, after)
+	}
+	second := f.request(t, http.MethodPost, path, map[string]any{
+		"expected_version": 1, "publication_id": publication,
+	}, http.StatusOK)
+	if second["project_id"] != first["project_id"] || len(second["task_ids"].(map[string]any)) != 1 {
+		t.Fatalf("replay created a different publication: first=%#v second=%#v", first, second)
+	}
+	if got := projectBusinessCounts(t, f.env); !reflect.DeepEqual(got, after) {
+		t.Fatalf("replay changed business counts: after=%v replay=%v", after, got)
+	}
+	f.request(t, http.MethodPost, path, map[string]any{
+		"expected_version": 1, "publication_id": uuid.NewString(),
+	}, http.StatusConflict)
+}
+
 func TestPrivateProjectDraftFileUploadTracksParsingAndOwnerIsolation(t *testing.T) {
 	f, _, session, _ := newProjectDraftFixture(t)
 	d := f.request(t, http.MethodPost, f.base, map[string]any{

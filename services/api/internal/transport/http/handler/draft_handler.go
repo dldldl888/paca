@@ -370,6 +370,37 @@ func (h *DraftHandler) ProjectPreview(w http.ResponseWriter, r *http.Request) {
 	presenter.OK(w, r, preview)
 }
 
+func (h *DraftHandler) ProjectPublish(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		ExpectedVersion int       `json:"expected_version"`
+		PublicationID   uuid.UUID `json:"publication_id"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	if in.ExpectedVersion < 1 || in.PublicationID == uuid.Nil {
+		draftError(w, r, apierr.New(apierr.CodeBadRequest, "expected_version and publication_id are required"))
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	publication, err := h.svc.PublishProjectDraft(r.Context(), id, in.ExpectedVersion, in.PublicationID)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, publication)
+}
+
 func (h *DraftHandler) ProjectFileList(w http.ResponseWriter, r *http.Request) {
 	id, err := projectDraftID(r)
 	if err != nil {

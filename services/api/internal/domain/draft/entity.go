@@ -148,14 +148,22 @@ type ProjectDraftFile struct {
 
 type ProjectDraft struct {
 	ProjectDraftContent
-	ID            uuid.UUID               `json:"id"`
-	OwnerUserID   uuid.UUID               `json:"owner_user_id"`
-	ChatSessionID uuid.UUID               `json:"chat_session_id"`
-	Version       int                     `json:"version"`
-	State         string                  `json:"state"`
-	Generation    *ProjectDraftGeneration `json:"generation,omitempty"`
-	CreatedAt     time.Time               `json:"created_at"`
-	UpdatedAt     time.Time               `json:"updated_at"`
+	ID                 uuid.UUID               `json:"id"`
+	OwnerUserID        uuid.UUID               `json:"owner_user_id"`
+	ChatSessionID      uuid.UUID               `json:"chat_session_id"`
+	Version            int                     `json:"version"`
+	State              string                  `json:"state"`
+	Generation         *ProjectDraftGeneration `json:"generation,omitempty"`
+	CreatedAt          time.Time               `json:"created_at"`
+	UpdatedAt          time.Time               `json:"updated_at"`
+	PublicationID      *uuid.UUID              `json:"publication_id,omitempty"`
+	PublishedProjectID *uuid.UUID              `json:"published_project_id,omitempty"`
+}
+
+type ProjectDraftPublication struct {
+	PublicationID uuid.UUID            `json:"publication_id"`
+	ProjectID     uuid.UUID            `json:"project_id"`
+	TaskIDs       map[string]uuid.UUID `json:"task_ids"`
 }
 
 // ProjectDraftGeneration records the one Hermes turn currently associated

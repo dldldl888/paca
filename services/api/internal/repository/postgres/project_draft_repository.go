@@ -37,15 +37,17 @@ func projectDraftFileFromRow(r projectDraftFileRow) *draftdom.ProjectDraftFile {
 }
 
 type projectDraftRow struct {
-	ID            uuid.UUID `db:"id"`
-	OwnerUserID   uuid.UUID `db:"owner_user_id"`
-	ChatSessionID uuid.UUID `db:"chat_session_id"`
-	Version       int       `db:"version"`
-	State         string    `db:"state"`
-	Content       []byte    `db:"content"`
-	Generation    []byte    `db:"generation"`
-	CreatedAt     time.Time `db:"created_at"`
-	UpdatedAt     time.Time `db:"updated_at"`
+	ID                 uuid.UUID  `db:"id"`
+	OwnerUserID        uuid.UUID  `db:"owner_user_id"`
+	ChatSessionID      uuid.UUID  `db:"chat_session_id"`
+	Version            int        `db:"version"`
+	State              string     `db:"state"`
+	Content            []byte     `db:"content"`
+	Generation         []byte     `db:"generation"`
+	CreatedAt          time.Time  `db:"created_at"`
+	UpdatedAt          time.Time  `db:"updated_at"`
+	PublicationID      *uuid.UUID `db:"publication_id"`
+	PublishedProjectID *uuid.UUID `db:"published_project_id"`
 }
 
 func decodeProjectDraft(row projectDraftRow) (*draftdom.ProjectDraft, error) {
@@ -71,6 +73,8 @@ func decodeProjectDraft(row projectDraftRow) (*draftdom.ProjectDraft, error) {
 		Generation:          generation,
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
+		PublicationID:       row.PublicationID,
+		PublishedProjectID:  row.PublishedProjectID,
 	}, nil
 }
 
@@ -81,7 +85,7 @@ func encodeProjectDraftGeneration(g *draftdom.ProjectDraftGeneration) ([]byte, e
 	return json.Marshal(g)
 }
 
-const projectDraftSelect = `SELECT id,owner_user_id,chat_session_id,version,state,content,generation,created_at,updated_at FROM project_drafts`
+const projectDraftSelect = `SELECT id,owner_user_id,chat_session_id,version,state,content,generation,created_at,updated_at,publication_id,published_project_id FROM project_drafts`
 
 func encodeProjectDraft(content draftdom.ProjectDraftContent) ([]byte, error) {
 	content.Normalize()
@@ -253,6 +257,159 @@ func (r *DraftRepository) ListProjectDraftFiles(ctx context.Context, draftID uui
 		out = append(out, projectDraftFileFromRow(row))
 	}
 	return out, nil
+}
+
+// PublishProjectDraft materializes the validated private draft in one database
+// transaction. Materials are intentionally blocked until their source-sharing
+// checks are implemented; silently dropping them would publish an incomplete plan.
+func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID, expected int, publication uuid.UUID) (*draftdom.ProjectDraftPublication, error) {
+	user, err := projectDraftActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if publication == uuid.Nil {
+		return nil, draftdom.ErrConflict
+	}
+	var result *draftdom.ProjectDraftPublication
+	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		var row projectDraftRow
+		if err := tx.GetContext(ctx, &row, projectDraftSelect+` WHERE id=$1 AND owner_user_id=$2 FOR UPDATE`, id, user); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return draftdom.ErrNotFound
+			}
+			return err
+		}
+		if row.PublicationID != nil {
+			if *row.PublicationID != publication {
+				return draftdom.ErrConflict
+			}
+			if row.PublishedProjectID == nil {
+				return draftdom.ErrConflict
+			}
+			d, err := decodeProjectDraft(row)
+			if err != nil {
+				return err
+			}
+			var persisted []uuid.UUID
+			if err := tx.SelectContext(ctx, &persisted, `SELECT id FROM tasks WHERE project_id=$1 AND deleted_at IS NULL ORDER BY task_number`, *row.PublishedProjectID); err != nil {
+				return err
+			}
+			taskIDs := make(map[string]uuid.UUID, len(persisted))
+			for i, taskID := range persisted {
+				if i < len(d.Items) {
+					taskIDs[d.Items[i].ID] = taskID
+				}
+			}
+			result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: *row.PublishedProjectID, TaskIDs: taskIDs}
+			return nil
+		}
+		if row.Version != expected {
+			return draftdom.ErrConflict
+		}
+		d, err := decodeProjectDraft(row)
+		if err != nil {
+			return err
+		}
+		preview := d.Preview()
+		if !preview.CanPublish {
+			return &draftdom.ProjectDraftValidationError{Message: "draft preview contains unresolved issues"}
+		}
+		if len(d.Materials) > 0 {
+			return &draftdom.ProjectDraftValidationError{Message: "materials must be verified before publication"}
+		}
+		now := time.Now()
+		projectID := uuid.New()
+		settings, _ := json.Marshal(map[string]any{})
+		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,name,description,task_id_prefix,is_public,settings,created_by,created_at) VALUES($1,$2,$3,$4,false,$5,$6,$7)`, projectID, d.Name, d.Goal, "PRJ", settings, user, now); err != nil {
+			return err
+		}
+		adminRole, editorRole := uuid.New(), uuid.New()
+		adminPerms, _ := json.Marshal(map[string]bool{"*": true})
+		editorPerms, _ := json.Marshal(map[string]bool{"projects.read": true, "tasks.read": true, "tasks.write": true, "docs.read": true})
+		for _, role := range []struct {
+			id          uuid.UUID
+			name        string
+			permissions []byte
+		}{{adminRole, "Admin", adminPerms}, {editorRole, "Editor", editorPerms}} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_roles(id,project_id,role_name,permissions,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)`, role.id, projectID, role.name, role.permissions, now); err != nil {
+				return err
+			}
+		}
+		members := map[uuid.UUID]uuid.UUID{user: uuid.New()}
+		for _, participant := range d.Participants {
+			participantID, err := uuid.Parse(participant.UserID)
+			if err != nil {
+				return &draftdom.ProjectDraftValidationError{Message: "participant user is invalid"}
+			}
+			if _, exists := members[participantID]; !exists {
+				members[participantID] = uuid.New()
+			}
+		}
+		for memberUser, memberID := range members {
+			roleID := editorRole
+			if memberUser == user {
+				roleID = adminRole
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type,created_at) VALUES($1,$2,$3,$4,'human',$5)`, memberID, projectID, memberUser, roleID, now); err != nil {
+				return err
+			}
+		}
+		taskTypeID, taskStatusID := uuid.New(), uuid.New()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_types(id,project_id,name,is_default,is_system,created_at,updated_at) VALUES($1,$2,'Task',true,false,$3,$3)`, taskTypeID, projectID, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_statuses(id,project_id,name,position,category,is_default,created_at,updated_at) VALUES($1,$2,'Backlog',1,'backlog',true,$3,$3)`, taskStatusID, projectID, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_counters(project_id,last_value) VALUES($1,0)`, projectID); err != nil {
+			return err
+		}
+		taskIDs := make(map[string]uuid.UUID, len(d.Items))
+		for _, item := range d.Items {
+			assignee, err := uuid.Parse(item.AssigneeUserID)
+			if err != nil || members[assignee] == uuid.Nil {
+				return &draftdom.ProjectDraftValidationError{Message: "task assignee must be a selected participant"}
+			}
+			due, _ := time.Parse(time.RFC3339, item.DueDate)
+			var start *time.Time
+			if item.StartDate != "" {
+				parsed, _ := time.Parse(time.RFC3339, item.StartDate)
+				start = &parsed
+			}
+			description, _ := json.Marshal(map[string]string{"requirements": item.Requirements, "criteria": item.Criteria})
+			taskID := uuid.New()
+			taskIDs[item.ID] = taskID
+			var number int64
+			if err := tx.GetContext(ctx, &number, `UPDATE task_counters SET last_value=last_value+1 WHERE project_id=$1 RETURNING last_value`, projectID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,project_id,task_number,task_type_id,status_id,title,description,importance,reporter_id,custom_fields,start_date,due_date,tags,created_at,updated_at,creator_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'{}',$10,$11,'[]',$12,$12,$13)`, taskID, projectID, number, taskTypeID, taskStatusID, item.Title, description, item.Importance, members[user], start, due, now, user); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO task_assignees(task_id,member_id) VALUES($1,$2)`, taskID, members[assignee]); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO notifications(id,recipient_user_id,actor_member_id,type,task_id,project_id,created_at,source_event_id) VALUES($1,$2,$3,'assigned',$4,$5,$6,$7)`, uuid.New(), assignee, members[user], taskID, projectID, now, publication.String()+":"+taskID.String()); err != nil {
+				return err
+			}
+		}
+		for _, item := range d.Items {
+			target := taskIDs[item.ID]
+			for _, dependency := range item.Dependencies {
+				if source := taskIDs[dependency]; source != uuid.Nil {
+					if _, err := tx.ExecContext(ctx, `INSERT INTO task_links(id,source_task_id,target_task_id,link_type,created_by,created_at) VALUES($1,$2,$3,'blocks',$4,$5)`, uuid.New(), source, target, user, now); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE project_drafts SET publication_id=$2,published_project_id=$3,updated_at=$4 WHERE id=$1`, id, publication, projectID, now); err != nil {
+			return err
+		}
+		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs}
+		return nil
+	})
+	return result, err
 }
 
 func (r *DraftRepository) UpdateProjectDraftFile(ctx context.Context, draftID, fileID uuid.UUID, uploadStatus, processingStatus, processingError string, extractedText *string) (*draftdom.ProjectDraftFile, error) {

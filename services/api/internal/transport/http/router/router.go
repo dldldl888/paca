@@ -302,6 +302,7 @@ func New(deps Deps) http.Handler {
 					r.Post("/{draftId}/files/initiate-upload", deps.Draft.ProjectFileInitiate)
 					r.Post("/{draftId}/files/complete-upload", deps.Draft.ProjectFileComplete)
 					r.Post("/{draftId}/preview", deps.Draft.ProjectPreview)
+					r.Post("/{draftId}/publish", deps.Draft.ProjectPublish)
 					r.Get("/{draftId}", deps.Draft.ProjectGet)
 					r.Patch("/{draftId}", deps.Draft.ProjectUpdate)
 					r.Post("/{draftId}/generate", deps.Draft.ProjectGenerate)
