@@ -25,13 +25,30 @@ function statusKey(draft: ProjectDraft) {
 	}
 }
 
-export function PrivateProjectDraftsCard() {
+export function PrivateProjectDraftsCard({
+	chatSessionId,
+}: {
+	chatSessionId?: string;
+} = {}) {
 	const { t } = useTranslation("shared");
 	const { hasPermission } = usePermissions();
 	const allowed = hasPermission("projects.create");
 	const drafts = useQuery({ ...projectDraftsQueryOptions, enabled: allowed });
 
 	if (!allowed) return null;
+	const visibleDrafts = chatSessionId
+		? (drafts.data ?? []).filter(
+				(draft) => draft.chat_session_id === chatSessionId,
+			)
+		: drafts.data;
+	if (
+		!drafts.isPending &&
+		!drafts.isError &&
+		chatSessionId &&
+		visibleDrafts.length === 0
+	) {
+		return null;
+	}
 
 	return (
 		<Card
@@ -48,7 +65,7 @@ export function PrivateProjectDraftsCard() {
 					to="/conversations"
 					className="text-sm text-primary underline-offset-4 hover:underline"
 				>
-					{t("home.privateDrafts.openChat")}
+					{!chatSessionId && t("home.privateDrafts.openChat")}
 				</Link>
 			</CardHeader>
 			<CardContent className="pt-0">
@@ -60,13 +77,13 @@ export function PrivateProjectDraftsCard() {
 					<p className="text-sm text-muted-foreground">
 						{t("home.privateDrafts.error")}
 					</p>
-				) : drafts.data.length === 0 ? (
+				) : visibleDrafts.length === 0 ? (
 					<p className="text-sm text-muted-foreground">
 						{t("home.privateDrafts.empty")}
 					</p>
 				) : (
 					<ul className="grid gap-2 sm:grid-cols-2">
-						{drafts.data.map((draft) => (
+						{visibleDrafts.map((draft) => (
 							<li
 								key={draft.id}
 								className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2"

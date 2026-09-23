@@ -36,14 +36,14 @@ vi.mock("react-i18next", () => ({
 
 import { PrivateProjectDraftsCard } from "./private-project-drafts-card";
 
-function renderCard(items: unknown[]) {
+function renderCard(items: unknown[], chatSessionId?: string) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
 	queryClient.setQueryData(["private-project-drafts"], items);
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<PrivateProjectDraftsCard />
+			<PrivateProjectDraftsCard chatSessionId={chatSessionId} />
 		</QueryClientProvider>,
 	);
 }
@@ -77,5 +77,29 @@ describe("PrivateProjectDraftsCard", () => {
 		]);
 		expect(screen.queryByText("不可见")).not.toBeInTheDocument();
 		mocks.canCreate = true;
+	});
+
+	it("filters the card to the active private chat session", async () => {
+		renderCard(
+			[
+				{
+					id: "draft-1",
+					name: "当前会话草稿",
+					chat_session_id: "session-current",
+					version: 1,
+					state: "editable",
+				},
+				{
+					id: "draft-2",
+					name: "别的会话",
+					chat_session_id: "session-other",
+					version: 1,
+					state: "editable",
+				},
+			],
+			"session-current",
+		);
+		expect(screen.getByText("当前会话草稿")).toBeInTheDocument();
+		expect(screen.queryByText("别的会话")).not.toBeInTheDocument();
 	});
 });

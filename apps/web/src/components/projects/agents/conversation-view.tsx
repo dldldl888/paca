@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Thread } from "@/components/assistant-ui/thread";
+import { PrivateProjectDraftsCard } from "@/components/home/private-project-drafts-card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -540,6 +541,13 @@ export function ConversationView({
 			</div>
 
 			{/* Thread */}
+			{!projectId && conversation.chat_session_id && (
+				<div className="shrink-0 px-4 pt-3">
+					<PrivateProjectDraftsCard
+						chatSessionId={conversation.chat_session_id}
+					/>
+				</div>
+			)}
 			<div className="flex-1 min-h-0">
 				<AssistantRuntimeProvider runtime={runtime}>
 					<Thread
