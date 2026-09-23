@@ -97,6 +97,7 @@
 			"publish": "确认并分派",
 			"publishing": "发布中",
 			"published": "已发布",
+			"viewProject": "打开项目",
 			"publishError": "发布失败，可重试或刷新恢复结果。",
 			"publicationPending": "结果待核实，请刷新恢复原发布结果。"
 		},

@@ -66,6 +66,9 @@ export function PrivateProjectDraftsCard({
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
 	const [uploadError, setUploadError] = useState("");
 	const [publishedDraftId, setPublishedDraftId] = useState<string>();
+	const [publishedProjectIDs, setPublishedProjectIDs] = useState<
+		Record<string, string>
+	>({});
 	const [publicationPendingDraftId, setPublicationPendingDraftId] =
 		useState<string>();
 	const [publishError, setPublishError] = useState("");
@@ -99,8 +102,12 @@ export function PrivateProjectDraftsCard({
 			setPublishError("");
 			setPublicationPendingDraftId(draft.id);
 		},
-		onSuccess: (_result, draft) => {
+		onSuccess: (result, draft) => {
 			setPublishedDraftId(draft.id);
+			setPublishedProjectIDs((current) => ({
+				...current,
+				[draft.id]: result.project_id,
+			}));
 			setPublicationPendingDraftId(undefined);
 			void qc.invalidateQueries({
 				queryKey: projectDraftsQueryOptions.queryKey,
@@ -176,6 +183,21 @@ export function PrivateProjectDraftsCard({
 											version: draft.version,
 										})}
 									</p>
+									{(draft.published_project_id ||
+										publishedProjectIDs[draft.id]) && (
+										<Link
+											to="/projects/$projectId"
+											params={{
+												projectId:
+													draft.published_project_id ||
+													publishedProjectIDs[draft.id] ||
+													"",
+											}}
+											className="mt-1 block text-xs text-primary underline-offset-4 hover:underline"
+										>
+											{t("home.privateDrafts.viewProject")}
+										</Link>
+									)}
 									<label className="mt-2 inline-flex cursor-pointer text-xs text-primary underline-offset-4 hover:underline">
 										{uploadingDraftId === draft.id
 											? t("home.privateDrafts.uploading")

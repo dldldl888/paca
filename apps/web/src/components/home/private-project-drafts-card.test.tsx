@@ -12,8 +12,16 @@ vi.mock("@/hooks/use-permissions", () => ({
 	}),
 }));
 vi.mock("@tanstack/react-router", () => ({
-	Link: ({ children, to }: { children: ReactNode; to: string }) => (
-		<a href={to}>{children}</a>
+	Link: ({
+		children,
+		to,
+		params,
+	}: {
+		children: ReactNode;
+		to: string;
+		params?: { projectId?: string };
+	}) => (
+		<a href={to.replace("$projectId", params?.projectId ?? "")}>{children}</a>
 	),
 }));
 vi.mock("@/lib/project-draft-api", async () => {
@@ -60,6 +68,7 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.publish": "确认并分派",
 				"home.privateDrafts.publishing": "发布中",
 				"home.privateDrafts.published": "已发布",
+				"home.privateDrafts.viewProject": "打开项目",
 				"home.privateDrafts.publishError": "发布失败，可重试",
 				"home.privateDrafts.publicationPending": "结果待核实，刷新后可恢复",
 			})[key] ?? key,
@@ -290,5 +299,9 @@ describe("PrivateProjectDraftsCard", () => {
 		expect(
 			(await screen.findAllByText("已发布")).length,
 		).toBeGreaterThanOrEqual(1);
+		expect(screen.getByRole("link", { name: "打开项目" })).toHaveAttribute(
+			"href",
+			"/projects/project-1",
+		);
 	});
 });

@@ -97,6 +97,7 @@
 			"publish": "Confirm and assign",
 			"publishing": "Assigning…",
 			"published": "Assigned",
+			"viewProject": "Open project",
 			"publishError": "Assignment failed. Retry or refresh to recover the result.",
 			"publicationPending": "Assignment outcome is unconfirmed. Refresh to recover the result."
 		},
