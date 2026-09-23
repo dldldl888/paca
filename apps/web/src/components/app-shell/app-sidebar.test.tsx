@@ -6,7 +6,7 @@ import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { loadLanguage } from "@/i18n/config";
-import { currentUserQueryOptions } from "@/lib/auth-api";
+import { currentUserQueryOptions, type User } from "@/lib/auth-api";
 import { projectsQueryOptions } from "@/lib/project-api";
 import { AppSidebar, canShowProjectNavItem } from "./app-sidebar";
 import { BrandingEffects } from "./branding-effects";
@@ -46,14 +46,15 @@ function wrapper({ children }: { children: React.ReactNode }) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
-	client.setQueryData(currentUserQueryOptions.queryKey, {
+	const user: User = {
 		id: "employee",
 		full_name: "员工甲",
 		username: "employee",
 		role: "user",
 		must_change_password: false,
 		created_at: "2026-09-18T00:00:00Z",
-	});
+	};
+	client.setQueryData<User | null>(currentUserQueryOptions.queryKey, user);
 	client.setQueryData(projectsQueryOptions().queryKey, {
 		items: [],
 		total: 0,

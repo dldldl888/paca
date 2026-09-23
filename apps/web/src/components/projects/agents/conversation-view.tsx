@@ -14,7 +14,7 @@ import {
 	Loader2,
 	Square,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Thread } from "@/components/assistant-ui/thread";
 import { PrivateProjectDraftsCard } from "@/components/home/private-project-drafts-card";
@@ -167,8 +167,12 @@ export function ConversationView({
 	// modal state) needing to know. Resyncs if the caller points us at a
 	// genuinely different conversation (e.g. navigating to another permalink).
 	const [conversationId, setConversationId] = useState(routeConversationId);
+	const [cancelRequested, setCancelRequested] = useState(false);
+	const cancelPendingRef = useRef(false);
 	useEffect(() => {
 		setConversationId(routeConversationId);
+		setCancelRequested(false);
+		cancelPendingRef.current = false;
 	}, [routeConversationId]);
 
 	const {
@@ -202,16 +206,19 @@ export function ConversationView({
 	// ai-chat-float-global.tsx) and finds the agent by id client-side.
 	const { data: projectAgent } = useQuery({
 		...agentQueryOptions(projectId ?? "", conversation?.agent_id ?? ""),
-		enabled: !!projectId && !!conversation?.agent_id,
+		enabled:
+			!!projectId && !!conversation?.agent_id && !conversation?.agent_type,
 	});
 	const { data: chattableAgents = [] } = useQuery({
 		...chattableAgentsQueryOptions,
-		enabled: !projectId && !!conversation?.agent_id,
+		enabled:
+			!projectId && !!conversation?.agent_id && !conversation?.agent_type,
 	});
 	const agent = projectId
 		? projectAgent
 		: chattableAgents.find((a) => a.id === conversation?.agent_id);
-	const isACP = agent?.agent_type === "acp";
+	const isACP =
+		conversation?.agent_type === "acp" || agent?.agent_type === "acp";
 	// ACP conversations never spin up a sandbox (the local bridge daemon runs
 	// entirely on the user's own machine — see internal/acpbridge/dispatch.go's
 	// doc comment), so there's no "setting up your environment" phase for
@@ -220,6 +227,12 @@ export function ConversationView({
 
 	const isRunning =
 		conversation?.status === "queued" || conversation?.status === "running";
+	useEffect(() => {
+		if (!isRunning && !cancelPendingRef.current) {
+			setCancelRequested(false);
+			cancelPendingRef.current = false;
+		}
+	}, [isRunning]);
 	const isTerminal =
 		conversation?.status === "finished" ||
 		conversation?.status === "failed" ||
@@ -241,129 +254,171 @@ export function ConversationView({
 		[events, isRunning],
 	);
 
-	const invalidate = (id: string = conversationId) => {
-		if (projectId) {
-			qc.invalidateQueries({
-				queryKey: ["projects", projectId, "conversations", id],
-			});
-			qc.invalidateQueries({
-				queryKey: ["projects", projectId, "conversations"],
-			});
-		} else {
-			qc.invalidateQueries({
-				queryKey: ["global-chat", "conversations", id],
-			});
-			qc.invalidateQueries({ queryKey: ["global-chat", "conversations"] });
-		}
-	};
+	const invalidate = useCallback(
+		(id: string = conversationId) => {
+			if (projectId) {
+				qc.invalidateQueries({
+					queryKey: ["projects", projectId, "conversations", id],
+				});
+				qc.invalidateQueries({
+					queryKey: ["projects", projectId, "conversations"],
+				});
+			} else {
+				qc.invalidateQueries({
+					queryKey: ["global-chat", "conversations", id],
+				});
+				qc.invalidateQueries({ queryKey: ["global-chat", "conversations"] });
+			}
+		},
+		[conversationId, projectId, qc],
+	);
 
-	const onNew = async (message: AppendMessage) => {
-		if (!conversation) {
-			throw new Error(t("agents.conversationView.conversationEnded"));
-		}
-		const text = extractTextOnlyContent(message);
-		if (text === null) {
-			throw new Error(t("agents.conversationView.textOnlyMessage"));
-		}
-		// Snapshot now (not read again after any await) so a badge staged
-		// mid-send can't sneak into this message or get cleared under it.
-		const contextItems = useContextInjectionStore.getState().items;
+	const onNew = useCallback(
+		async (message: AppendMessage) => {
+			if (!conversation) {
+				throw new Error(t("agents.conversationView.conversationEnded"));
+			}
+			cancelPendingRef.current = false;
+			setCancelRequested(false);
+			const text = extractTextOnlyContent(message);
+			if (text === null) {
+				throw new Error(t("agents.conversationView.textOnlyMessage"));
+			}
+			// Snapshot now (not read again after any await) so a badge staged
+			// mid-send can't sneak into this message or get cleared under it.
+			const contextItems = useContextInjectionStore.getState().items;
 
-		if (!conversation.chat_session_id) {
-			// A conversation of a non-chat trigger type (task_assigned,
-			// comment_mention, etc.) — either ACP, or an LLM conversation
-			// attached to a static environment (see canReply's own doc
-			// comment) — reply in place on the same conversation_id rather
-			// than through a chat session. Routed through the same busy
-			// prompt as the chat-session branch below: the server enforces
-			// the exact same parallelism/folder capacity check on this
-			// resume path (see services/api's resumeConversationMessage).
-			await sendWithBusyPrompt((onBusy) =>
+			if (!conversation.chat_session_id) {
+				// A conversation of a non-chat trigger type (task_assigned,
+				// comment_mention, etc.) — either ACP, or an LLM conversation
+				// attached to a static environment (see canReply's own doc
+				// comment) — reply in place on the same conversation_id rather
+				// than through a chat session. Routed through the same busy
+				// prompt as the chat-session branch below: the server enforces
+				// the exact same parallelism/folder capacity check on this
+				// resume path (see services/api's resumeConversationMessage).
+				await sendWithBusyPrompt((onBusy) =>
+					projectId
+						? sendConversationMessage(
+								projectId,
+								conversation.id,
+								text,
+								contextItems,
+								onBusy,
+							)
+						: sendGlobalConversationMessage(
+								conversation.id,
+								text,
+								contextItems,
+								onBusy,
+							),
+				);
+				useContextInjectionStore.getState().clear();
+				invalidate();
+				return;
+			}
+
+			const chatSessionId = conversation.chat_session_id;
+			const result = await sendWithBusyPrompt((onBusy) =>
 				projectId
-					? sendConversationMessage(
-							projectId,
-							conversation.id,
-							text,
+					? sendChatMessage(projectId, conversation.agent_id, chatSessionId, {
+							message: text,
 							contextItems,
-							onBusy,
-						)
-					: sendGlobalConversationMessage(
-							conversation.id,
-							text,
+							on_busy: onBusy,
+						})
+					: sendGlobalChatMessage(chatSessionId, {
+							message: text,
 							contextItems,
-							onBusy,
-						),
+							on_busy: onBusy,
+						}),
 			);
 			useContextInjectionStore.getState().clear();
-			invalidate();
-			return;
-		}
+			// The previous conversation may have already ended (explicitly
+			// stopped, or reaped after 3 minutes with no heartbeat) — replying
+			// then silently starts a fresh conversation server-side. Follow it,
+			// otherwise this view keeps polling the old (now terminal)
+			// conversation and the reply appears to vanish.
+			if (result.id !== conversationId) {
+				qc.setQueryData(
+					(projectId
+						? conversationQueryOptions(projectId, result.id)
+						: globalConversationQueryOptions(result.id)
+					).queryKey,
+					result,
+				);
+				setConversationId(result.id);
+			}
+			invalidate(result.id);
+		},
+		[
+			conversation,
+			conversationId,
+			invalidate,
+			projectId,
+			qc,
+			sendWithBusyPrompt,
+			t,
+		],
+	);
 
-		const chatSessionId = conversation.chat_session_id;
-		const result = await sendWithBusyPrompt((onBusy) =>
-			projectId
-				? sendChatMessage(projectId, conversation.agent_id, chatSessionId, {
-						message: text,
-						contextItems,
-						on_busy: onBusy,
-					})
-				: sendGlobalChatMessage(chatSessionId, {
-						message: text,
-						contextItems,
-						on_busy: onBusy,
-					}),
-		);
-		useContextInjectionStore.getState().clear();
-		// The previous conversation may have already ended (explicitly
-		// stopped, or reaped after 3 minutes with no heartbeat) — replying
-		// then silently starts a fresh conversation server-side. Follow it,
-		// otherwise this view keeps polling the old (now terminal)
-		// conversation and the reply appears to vanish.
-		if (result.id !== conversationId) {
-			qc.setQueryData(
+	const onCancel = useCallback(async () => {
+		if (!conversation || cancelPendingRef.current) return;
+		cancelPendingRef.current = true;
+		setCancelRequested(true);
+		try {
+			const agentType =
+				conversation.agent_type ??
+				agent?.agent_type ??
 				(projectId
-					? conversationQueryOptions(projectId, result.id)
-					: globalConversationQueryOptions(result.id)
-				).queryKey,
-				result,
+					? (
+							await qc.ensureQueryData(
+								agentQueryOptions(projectId, conversation.agent_id),
+							)
+						).agent_type
+					: (await qc.ensureQueryData(chattableAgentsQueryOptions)).find(
+							(a) => a.id === conversation.agent_id,
+						)?.agent_type);
+			if (!agentType) throw new Error(t("aiChat.noAgentsAvailable"));
+			if (projectId) {
+				await (agentType === "acp" ? stopConversation : pauseConversation)(
+					projectId,
+					conversation.id,
+				);
+			} else {
+				await (agentType === "acp"
+					? stopGlobalConversation
+					: pauseGlobalConversation)(conversation.id);
+			}
+			// Hide the control immediately, but keep the cancel lock until a
+			// later send or route change. Pause is asynchronous and a refetch can
+			// briefly report running again before the worker writes its status.
+			const nextStatus = agentType === "acp" ? "stopped" : "paused";
+			const conversationKey = projectId
+				? conversationQueryOptions(projectId, conversation.id).queryKey
+				: globalConversationQueryOptions(conversation.id).queryKey;
+			qc.setQueryData<AgentConversation>(conversationKey, (current) =>
+				current ? { ...current, status: nextStatus } : current,
 			);
-			setConversationId(result.id);
+			invalidate();
+		} catch (error) {
+			setCancelRequested(false);
+			cancelPendingRef.current = false;
+			throw error;
 		}
-		invalidate(result.id);
-	};
+	}, [agent, conversation, invalidate, projectId, qc, t]);
 
-	const onCancel = async () => {
-		if (!conversation) return;
-		const cancelAgent =
-			agent ??
-			(projectId
-				? await qc.ensureQueryData(
-						agentQueryOptions(projectId, conversation.agent_id),
-					)
-				: (await qc.ensureQueryData(chattableAgentsQueryOptions)).find(
-						(a) => a.id === conversation.agent_id,
-					));
-		if (!cancelAgent) throw new Error(t("aiChat.noAgentsAvailable"));
-		if (projectId) {
-			await (cancelAgent.agent_type === "acp"
-				? stopConversation
-				: pauseConversation)(projectId, conversation.id);
-		} else {
-			await (cancelAgent.agent_type === "acp"
-				? stopGlobalConversation
-				: pauseGlobalConversation)(conversation.id);
-		}
-		invalidate();
-	};
-
-	const runtime = useExternalStoreRuntime({
-		messages,
-		isRunning,
-		convertMessage: (m) => m,
-		onNew,
-		onCancel,
-		isDisabled: !canReply,
-	});
+	const runtimeStore = useMemo(
+		() => ({
+			messages,
+			isRunning: isRunning && !cancelRequested,
+			convertMessage: (m: (typeof messages)[number]) => m,
+			onNew,
+			onCancel,
+			isDisabled: !canReply,
+		}),
+		[messages, isRunning, cancelRequested, onCancel, onNew, canReply],
+	);
+	const runtime = useExternalStoreRuntime(runtimeStore);
 
 	// Pings the agent-runner service every ~30s while this chat conversation is
 	// loaded, so its sandbox's idle timer never trips as long as this view

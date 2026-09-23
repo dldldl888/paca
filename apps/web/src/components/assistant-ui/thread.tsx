@@ -37,6 +37,7 @@ import {
 	type ReactNode,
 	useContext,
 	useMemo,
+	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/components/assistant-ui/attachment";
@@ -360,6 +361,10 @@ function handleComposerPaste(
 
 const Composer: FC = () => {
 	const { t } = useTranslation("projects");
+	// assistant-ui/tap does not notify ComposerAction when its input changes
+	// under an external-store runtime; this tiny local subscription keeps the
+	// send/stop controls in sync without introducing another composer store.
+	const [, setInputText] = useState("");
 	return (
 		<ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
 			{/* No AttachmentDropzone/ComposerAttachments here — onNew only
@@ -379,6 +384,7 @@ const Composer: FC = () => {
 					autoFocus
 					enterKeyHint="send"
 					aria-label={t("agents.thread.messageInputAriaLabel")}
+					onChange={(event) => setInputText(event.target.value)}
 					onPaste={handleComposerPaste}
 				/>
 				<ComposerAction />

@@ -51,14 +51,19 @@ export function NewConversationThread({
 	const { t } = useTranslation("projects");
 	const qc = useQueryClient();
 	const navigate = useNavigate();
+	const [isSubmitting, setIsSubmitting] = useState(false);
 
 	// Both hooks are always called (never conditionally, per the rules of
 	// hooks) — each internally no-ops its query when disabled, so only the
 	// one matching the current scope actually fetches.
 	const projectPicker = useAgentPicker(projectId ?? "", {
 		enabled: !!projectId,
+		disabled: isSubmitting,
 	});
-	const globalPicker = useGlobalAgentPicker({ enabled: !projectId });
+	const globalPicker = useGlobalAgentPicker({
+		enabled: !projectId,
+		disabled: isSubmitting,
+	});
 	const { agentId, pickerState } = projectId ? projectPicker : globalPicker;
 
 	// Environments are project-scoped only — this hook internally no-ops
@@ -71,9 +76,8 @@ export function NewConversationThread({
 		pickerState: environmentPickerState,
 	} = useEnvironmentPicker(projectId ?? "", agentId, {
 		enabled: !!projectId,
+		disabled: isSubmitting,
 	});
-
-	const [isSubmitting, setIsSubmitting] = useState(false);
 
 	// Global chat (no projectId) is deliberately open to any authenticated
 	// user (see router.go's global chat-session routes); only gate starting a

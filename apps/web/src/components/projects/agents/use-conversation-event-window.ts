@@ -27,6 +27,8 @@ export type UseConversationEventWindow = {
 	jumpToLatest: () => void;
 };
 
+const EMPTY_EVENTS: AgentConversationEvent[] = [];
+
 /**
  * Reads a conversation's events as a window anchored at the newest page,
  * extending upwards on demand, with newly-arrived events merged in live
@@ -75,7 +77,7 @@ export function useConversationEventWindow({
 		conversationEventsTailQueryOptions(conversationId),
 	);
 	const tailIndex = tail?.index ?? null;
-	const liveEvents = tail?.events ?? [];
+	const liveEvents = tail?.events ?? EMPTY_EVENTS;
 
 	const {
 		data,

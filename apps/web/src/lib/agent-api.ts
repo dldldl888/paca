@@ -239,6 +239,7 @@ export type ConversationTriggerType =
 export interface AgentConversation {
 	id: string;
 	agent_id: string;
+	agent_type?: AgentType;
 	// Null for a global-chat conversation (with a global agent from the
 	// home/admin pages) — actor_user_id identifies the human instead.
 	project_id?: string | null;

@@ -5,7 +5,7 @@ import {
 } from "@assistant-ui/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bot, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
@@ -44,6 +44,8 @@ interface AIChatFloatProps {
 // Floating chatbox is a compact overlay — no room for (and no need for) the
 // full-page welcome heading, so suppress it here; the conversation page's
 // blank composer still shows it via Thread's default.
+const EMPTY_EVENTS: never[] = [];
+
 const THREAD_COMPONENTS = {
 	ComposerStart: AgentPickerInline,
 	Welcome: () => null,
@@ -81,32 +83,41 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 	const { t } = useTranslation("projects");
 	const [open, setOpen] = useState(false);
 	const [conversationId, setConversationId] = useState<string | null>(null);
+	const [cancelRequested, setCancelRequested] = useState(false);
+	const cancelPendingRef = useRef(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const qc = useQueryClient();
 
 	// Locked once a conversation exists — the agent is fixed for its
 	// lifetime; switching it here would silently do nothing useful.
 	const { agentId, pickerState } = useAgentPicker(projectId, {
-		disabled: !!conversationId,
+		disabled: !!conversationId || isSubmitting,
 	});
 
 	const { data: conversation } = useQuery({
 		...conversationQueryOptions(projectId, conversationId ?? ""),
 		enabled: !!conversationId,
 	});
-	const { data: events = [] } = useQuery({
+	const { data: events = EMPTY_EVENTS } = useQuery({
 		...conversationEventsQueryOptions(projectId, conversationId ?? ""),
 		enabled: !!conversationId,
 	});
 	const { data: agent } = useQuery({
 		...agentQueryOptions(projectId, conversation?.agent_id ?? ""),
-		enabled: !!conversation?.agent_id,
+		enabled: !!conversation?.agent_id && !conversation?.agent_type,
 	});
-	const isACP = agent?.agent_type === "acp";
+	const isACP =
+		conversation?.agent_type === "acp" || agent?.agent_type === "acp";
 	const environmentReady = isEnvironmentReady(isACP, events);
 
 	const isRunning =
 		conversation?.status === "queued" || conversation?.status === "running";
+	useEffect(() => {
+		if (!isRunning && !cancelPendingRef.current) {
+			setCancelRequested(false);
+			cancelPendingRef.current = false;
+		}
+	}, [isRunning]);
 	const isTerminal =
 		conversation?.status === "finished" ||
 		conversation?.status === "failed" ||
@@ -117,105 +128,136 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 		[events, isRunning, conversationId],
 	);
 
-	const invalidate = (id: string | null = conversationId) => {
-		if (id) {
+	const invalidate = useCallback(
+		(id: string | null = conversationId) => {
+			if (id) {
+				qc.invalidateQueries({
+					queryKey: ["projects", projectId, "conversations", id],
+				});
+			}
 			qc.invalidateQueries({
-				queryKey: ["projects", projectId, "conversations", id],
+				queryKey: ["projects", projectId, "conversations"],
 			});
-		}
-		qc.invalidateQueries({
-			queryKey: ["projects", projectId, "conversations"],
-		});
-	};
+		},
+		[conversationId, projectId, qc],
+	);
 
-	const onNew = async (message: AppendMessage) => {
-		const text = extractTextOnlyContent(message);
-		if (text === null) {
-			throw new Error(t("agents.conversationView.textOnlyMessage"));
-		}
-		// Snapshot now (not read again after any await) so a badge staged
-		// mid-send can't sneak into this message or get cleared under it.
-		const contextItems = useContextInjectionStore.getState().items;
-
-		// Guards against a fast double-Enter firing two requests (e.g. two
-		// chat sessions) before the first one resolves and flips isRunning.
-		setIsSubmitting(true);
-		try {
-			if (!conversationId) {
-				if (!agentId) throw new Error(t("aiChat.selectAgentFirst"));
-				const result = await startChatSession(projectId, agentId, {
-					message: text,
-					contextItems,
-				});
-				useContextInjectionStore.getState().clear();
-				// Seed the cache before flipping conversationId so the Thread
-				// doesn't flash a "can't reply" state while the query resolves.
-				qc.setQueryData(
-					conversationQueryOptions(projectId, result.conversation.id).queryKey,
-					result.conversation,
-				);
-				setConversationId(result.conversation.id);
-				void qc.invalidateQueries({
-					queryKey: ["projects", projectId, "conversations"],
-				});
-				return;
+	const onNew = useCallback(
+		async (message: AppendMessage) => {
+			const text = extractTextOnlyContent(message);
+			if (text === null) {
+				throw new Error(t("agents.conversationView.textOnlyMessage"));
 			}
+			cancelPendingRef.current = false;
+			setCancelRequested(false);
+			// Snapshot now (not read again after any await) so a badge staged
+			// mid-send can't sneak into this message or get cleared under it.
+			const contextItems = useContextInjectionStore.getState().items;
 
-			if (!conversation) {
-				throw new Error(t("agents.conversationView.conversationEnded"));
-			}
-			if (!conversation.chat_session_id) {
-				// ACP, or an LLM conversation attached to a static environment
-				// (see canReplyToConversation's own doc comment) — reply in
-				// place on the same conversation_id rather than through a chat
-				// session.
-				await sendConversationMessage(
+			// Guards against a fast double-Enter firing two requests (e.g. two
+			// chat sessions) before the first one resolves and flips isRunning.
+			setIsSubmitting(true);
+			try {
+				if (!conversationId) {
+					const selectedAgentId = agentId;
+					if (!selectedAgentId) throw new Error(t("aiChat.selectAgentFirst"));
+					const result = await startChatSession(projectId, selectedAgentId, {
+						message: text,
+						contextItems,
+					});
+					useContextInjectionStore.getState().clear();
+					// Seed the cache before flipping conversationId so the Thread
+					// doesn't flash a "can't reply" state while the query resolves.
+					qc.setQueryData(
+						conversationQueryOptions(projectId, result.conversation.id)
+							.queryKey,
+						result.conversation,
+					);
+					setConversationId(result.conversation.id);
+					void qc.invalidateQueries({
+						queryKey: ["projects", projectId, "conversations"],
+					});
+					return;
+				}
+
+				if (!conversation) {
+					throw new Error(t("agents.conversationView.conversationEnded"));
+				}
+				if (!conversation.chat_session_id) {
+					// ACP, or an LLM conversation attached to a static environment
+					// (see canReplyToConversation's own doc comment) — reply in
+					// place on the same conversation_id rather than through a chat
+					// session.
+					await sendConversationMessage(
+						projectId,
+						conversation.id,
+						text,
+						contextItems,
+					);
+					useContextInjectionStore.getState().clear();
+					invalidate();
+					return;
+				}
+				const result = await sendChatMessage(
 					projectId,
-					conversation.id,
-					text,
-					contextItems,
+					conversation.agent_id,
+					conversation.chat_session_id,
+					{ message: text, contextItems },
 				);
 				useContextInjectionStore.getState().clear();
-				invalidate();
-				return;
+				// The previous conversation may have already ended (explicitly
+				// stopped, or reaped after 3 minutes with no heartbeat) — replying
+				// then silently starts a fresh conversation server-side. Follow it,
+				// otherwise the UI keeps polling the old (now terminal) conversation
+				// and the reply appears to vanish.
+				if (result.id !== conversationId) {
+					qc.setQueryData(
+						conversationQueryOptions(projectId, result.id).queryKey,
+						result,
+					);
+					setConversationId(result.id);
+				}
+				invalidate(result.id);
+			} finally {
+				setIsSubmitting(false);
 			}
-			const result = await sendChatMessage(
-				projectId,
-				conversation.agent_id,
-				conversation.chat_session_id,
-				{ message: text, contextItems },
-			);
-			useContextInjectionStore.getState().clear();
-			// The previous conversation may have already ended (explicitly
-			// stopped, or reaped after 3 minutes with no heartbeat) — replying
-			// then silently starts a fresh conversation server-side. Follow it,
-			// otherwise the UI keeps polling the old (now terminal) conversation
-			// and the reply appears to vanish.
-			if (result.id !== conversationId) {
-				qc.setQueryData(
-					conversationQueryOptions(projectId, result.id).queryKey,
-					result,
-				);
-				setConversationId(result.id);
-			}
-			invalidate(result.id);
-		} finally {
-			setIsSubmitting(false);
-		}
-	};
+		},
+		[agentId, conversation, conversationId, invalidate, projectId, qc, t],
+	);
 
-	const onCancel = async () => {
-		if (!conversationId || !conversation) return;
-		const cancelAgent =
-			agent ??
-			(await qc.ensureQueryData(
-				agentQueryOptions(projectId, conversation.agent_id),
-			));
-		await (cancelAgent.agent_type === "acp"
-			? stopConversation
-			: pauseConversation)(projectId, conversationId);
-		invalidate();
-	};
+	const onCancel = useCallback(async () => {
+		if (!conversationId || !conversation || cancelPendingRef.current) return;
+		cancelPendingRef.current = true;
+		setCancelRequested(true);
+		try {
+			const agentType =
+				conversation.agent_type ??
+				agent?.agent_type ??
+				(
+					await qc.ensureQueryData(
+						agentQueryOptions(projectId, conversation.agent_id),
+					)
+				).agent_type;
+			if (!agentType) throw new Error(t("aiChat.noAgentsAvailable"));
+			await (agentType === "acp" ? stopConversation : pauseConversation)(
+				projectId,
+				conversationId,
+			);
+			// Hide the control immediately, but keep the cancel lock until a
+			// later send or conversation change. Pause is asynchronous and a
+			// refetch can briefly report running again.
+			const nextStatus = agentType === "acp" ? "stopped" : "paused";
+			qc.setQueryData<AgentConversation>(
+				conversationQueryOptions(projectId, conversationId).queryKey,
+				(current) => (current ? { ...current, status: nextStatus } : current),
+			);
+			invalidate();
+		} catch (error) {
+			setCancelRequested(false);
+			cancelPendingRef.current = false;
+			throw error;
+		}
+	}, [agent, conversation, conversationId, invalidate, projectId, qc, t]);
 
 	// !conversationId: no conversation yet, so there's nothing to be blocked
 	// on — the composer is for starting a brand new one. See
@@ -230,15 +272,29 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 		messages.length === 0 &&
 		!canReply;
 
-	const runtime = useExternalStoreRuntime({
-		messages,
-		isRunning,
-		convertMessage: (m) => m,
-		onNew,
-		onCancel,
-		isDisabled: !canReply,
-		isSendDisabled: (!conversationId && !agentId) || isSubmitting,
-	});
+	const runtimeStore = useMemo(
+		() => ({
+			messages,
+			isRunning: isRunning && !cancelRequested,
+			convertMessage: (m: (typeof messages)[number]) => m,
+			onNew,
+			onCancel,
+			isDisabled: !canReply,
+			isSendDisabled: isSubmitting || (!conversationId && !agentId),
+		}),
+		[
+			messages,
+			isRunning,
+			cancelRequested,
+			onCancel,
+			onNew,
+			canReply,
+			conversationId,
+			isSubmitting,
+			agentId,
+		],
+	);
+	const runtime = useExternalStoreRuntime(runtimeStore);
 
 	// Chat sandboxes are kept alive between replies (see conversation-view's
 	// composer) — starting a new conversation in this window should
@@ -354,7 +410,10 @@ export function AIChatFloat({ projectId }: AIChatFloatProps) {
 							<FloatingChatFailedBanner />
 						) : (
 							<AgentPickerContext.Provider value={pickerState}>
-								<AssistantRuntimeProvider runtime={runtime}>
+								<AssistantRuntimeProvider
+									key={conversationId ?? "new"}
+									runtime={runtime}
+								>
 									<Thread
 										components={THREAD_COMPONENTS}
 										environmentReady={environmentReady}

@@ -5,7 +5,7 @@ import {
 } from "@assistant-ui/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bot, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
@@ -50,6 +50,8 @@ import {
 // the agent picker's empty state). See lib/agent-api.ts's global-* functions
 // and hooks/use-global-agent-realtime.ts for the underlying plumbing.
 
+const EMPTY_EVENTS: never[] = [];
+
 const THREAD_COMPONENTS = {
 	ComposerStart: AgentPickerInline,
 	Welcome: () => null,
@@ -78,20 +80,22 @@ export function GlobalAIChatFloat() {
 	const { t } = useTranslation("projects");
 	const [open, setOpen] = useState(false);
 	const [conversationId, setConversationId] = useState<string | null>(null);
+	const [cancelRequested, setCancelRequested] = useState(false);
+	const cancelPendingRef = useRef(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const qc = useQueryClient();
 
 	useGlobalAgentRealtime();
 
 	const { agentId, pickerState } = useGlobalAgentPicker({
-		disabled: !!conversationId,
+		disabled: !!conversationId || isSubmitting,
 	});
 
 	const { data: conversation } = useQuery({
 		...globalConversationQueryOptions(conversationId ?? ""),
 		enabled: !!conversationId,
 	});
-	const { data: events = [] } = useQuery({
+	const { data: events = EMPTY_EVENTS } = useQuery({
 		...globalConversationEventsQueryOptions(conversationId ?? ""),
 		enabled: !!conversationId,
 	});
@@ -101,11 +105,18 @@ export function GlobalAIChatFloat() {
 	// lib/agent-api.ts's listChattableAgents).
 	const { data: agents = [] } = useQuery(chattableAgentsQueryOptions);
 	const agent = agents.find((a) => a.id === conversation?.agent_id);
-	const isACP = agent?.agent_type === "acp";
+	const isACP =
+		conversation?.agent_type === "acp" || agent?.agent_type === "acp";
 	const environmentReady = isEnvironmentReady(isACP, events);
 
 	const isRunning =
 		conversation?.status === "queued" || conversation?.status === "running";
+	useEffect(() => {
+		if (!isRunning && !cancelPendingRef.current) {
+			setCancelRequested(false);
+			cancelPendingRef.current = false;
+		}
+	}, [isRunning]);
 	const isTerminal =
 		conversation?.status === "finished" ||
 		conversation?.status === "failed" ||
@@ -116,93 +127,122 @@ export function GlobalAIChatFloat() {
 		[events, isRunning, conversationId],
 	);
 
-	const invalidate = (id: string | null = conversationId) => {
-		if (id) {
+	const invalidate = useCallback(
+		(id: string | null = conversationId) => {
+			if (id) {
+				qc.invalidateQueries({
+					queryKey: ["global-chat", "conversations", id],
+				});
+			}
 			qc.invalidateQueries({
-				queryKey: ["global-chat", "conversations", id],
+				queryKey: ["global-chat", "conversations"],
 			});
-		}
-		qc.invalidateQueries({
-			queryKey: ["global-chat", "conversations"],
-		});
-	};
+		},
+		[conversationId, qc],
+	);
 
-	const onNew = async (message: AppendMessage) => {
-		const text = extractTextOnlyContent(message);
-		if (text === null) {
-			throw new Error(t("agents.conversationView.textOnlyMessage"));
-		}
-		// Snapshot now (not read again after any await) so a badge staged
-		// mid-send can't sneak into this message or get cleared under it.
-		const contextItems = useContextInjectionStore.getState().items;
+	const onNew = useCallback(
+		async (message: AppendMessage) => {
+			const text = extractTextOnlyContent(message);
+			if (text === null) {
+				throw new Error(t("agents.conversationView.textOnlyMessage"));
+			}
+			cancelPendingRef.current = false;
+			setCancelRequested(false);
+			// Snapshot now (not read again after any await) so a badge staged
+			// mid-send can't sneak into this message or get cleared under it.
+			const contextItems = useContextInjectionStore.getState().items;
 
-		setIsSubmitting(true);
+			setIsSubmitting(true);
+			try {
+				if (!conversationId) {
+					const selectedAgentId = agentId;
+					if (!selectedAgentId) throw new Error(t("aiChat.selectAgentFirst"));
+					const result = await startGlobalChatSession(selectedAgentId, {
+						message: text,
+						contextItems,
+					});
+					useContextInjectionStore.getState().clear();
+					qc.setQueryData(
+						globalConversationQueryOptions(result.conversation.id).queryKey,
+						result.conversation,
+					);
+					setConversationId(result.conversation.id);
+					void qc.invalidateQueries({
+						queryKey: ["global-chat", "conversations"],
+					});
+					return;
+				}
+
+				if (!conversation) {
+					throw new Error(t("agents.conversationView.conversationEnded"));
+				}
+				if (!conversation.chat_session_id) {
+					// ACP (see canReplyToConversation's own doc comment) — reply in
+					// place on the same conversation_id rather than through a chat
+					// session.
+					await sendGlobalConversationMessage(
+						conversation.id,
+						text,
+						contextItems,
+					);
+					useContextInjectionStore.getState().clear();
+					invalidate();
+					return;
+				}
+				const result = await sendGlobalChatMessage(
+					conversation.chat_session_id,
+					{
+						message: text,
+						contextItems,
+					},
+				);
+				useContextInjectionStore.getState().clear();
+				if (result.id !== conversationId) {
+					qc.setQueryData(
+						globalConversationQueryOptions(result.id).queryKey,
+						result,
+					);
+					setConversationId(result.id);
+				}
+				invalidate(result.id);
+			} finally {
+				setIsSubmitting(false);
+			}
+		},
+		[agentId, conversation, conversationId, invalidate, qc, t],
+	);
+
+	const onCancel = useCallback(async () => {
+		if (!conversationId || !conversation || cancelPendingRef.current) return;
+		cancelPendingRef.current = true;
+		setCancelRequested(true);
 		try {
-			if (!conversationId) {
-				if (!agentId) throw new Error(t("aiChat.selectAgentFirst"));
-				const result = await startGlobalChatSession(agentId, {
-					message: text,
-					contextItems,
-				});
-				useContextInjectionStore.getState().clear();
-				qc.setQueryData(
-					globalConversationQueryOptions(result.conversation.id).queryKey,
-					result.conversation,
-				);
-				setConversationId(result.conversation.id);
-				void qc.invalidateQueries({
-					queryKey: ["global-chat", "conversations"],
-				});
-				return;
-			}
-
-			if (!conversation) {
-				throw new Error(t("agents.conversationView.conversationEnded"));
-			}
-			if (!conversation.chat_session_id) {
-				// ACP (see canReplyToConversation's own doc comment) — reply in
-				// place on the same conversation_id rather than through a chat
-				// session.
-				await sendGlobalConversationMessage(
-					conversation.id,
-					text,
-					contextItems,
-				);
-				useContextInjectionStore.getState().clear();
-				invalidate();
-				return;
-			}
-			const result = await sendGlobalChatMessage(conversation.chat_session_id, {
-				message: text,
-				contextItems,
-			});
-			useContextInjectionStore.getState().clear();
-			if (result.id !== conversationId) {
-				qc.setQueryData(
-					globalConversationQueryOptions(result.id).queryKey,
-					result,
-				);
-				setConversationId(result.id);
-			}
-			invalidate(result.id);
-		} finally {
-			setIsSubmitting(false);
-		}
-	};
-
-	const onCancel = async () => {
-		if (!conversationId || !conversation) return;
-		const cancelAgent =
-			agent ??
-			(await qc.ensureQueryData(chattableAgentsQueryOptions)).find(
-				(a) => a.id === conversation.agent_id,
+			const agentType =
+				conversation.agent_type ??
+				agent?.agent_type ??
+				(await qc.ensureQueryData(chattableAgentsQueryOptions)).find(
+					(a) => a.id === conversation.agent_id,
+				)?.agent_type;
+			if (!agentType) throw new Error(t("aiChat.noAgentsAvailable"));
+			await (agentType === "acp"
+				? stopGlobalConversation
+				: pauseGlobalConversation)(conversationId);
+			// Hide the control immediately, but keep the cancel lock until a
+			// later send or conversation change. Pause is asynchronous and a
+			// refetch can briefly report running again.
+			const nextStatus = agentType === "acp" ? "stopped" : "paused";
+			qc.setQueryData<AgentConversation>(
+				globalConversationQueryOptions(conversationId).queryKey,
+				(current) => (current ? { ...current, status: nextStatus } : current),
 			);
-		if (!cancelAgent) throw new Error(t("aiChat.noAgentsAvailable"));
-		await (cancelAgent.agent_type === "acp"
-			? stopGlobalConversation
-			: pauseGlobalConversation)(conversationId);
-		invalidate();
-	};
+			invalidate();
+		} catch (error) {
+			setCancelRequested(false);
+			cancelPendingRef.current = false;
+			throw error;
+		}
+	}, [agent, conversation, conversationId, invalidate, qc, t]);
 
 	// !conversationId: no conversation yet, so there's nothing to be blocked
 	// on — the composer is for starting a brand new one. See
@@ -217,15 +257,29 @@ export function GlobalAIChatFloat() {
 		messages.length === 0 &&
 		!canReply;
 
-	const runtime = useExternalStoreRuntime({
-		messages,
-		isRunning,
-		convertMessage: (m) => m,
-		onNew,
-		onCancel,
-		isDisabled: !canReply,
-		isSendDisabled: (!conversationId && !agentId) || isSubmitting,
-	});
+	const runtimeStore = useMemo(
+		() => ({
+			messages,
+			isRunning: isRunning && !cancelRequested,
+			convertMessage: (m: (typeof messages)[number]) => m,
+			onNew,
+			onCancel,
+			isDisabled: !canReply,
+			isSendDisabled: isSubmitting || (!conversationId && !agentId),
+		}),
+		[
+			messages,
+			isRunning,
+			cancelRequested,
+			onCancel,
+			onNew,
+			canReply,
+			conversationId,
+			isSubmitting,
+			agentId,
+		],
+	);
+	const runtime = useExternalStoreRuntime(runtimeStore);
 
 	const endConversation = useCallback(
 		(id: string) => {
@@ -312,7 +366,10 @@ export function GlobalAIChatFloat() {
 							<FloatingChatFailedBanner />
 						) : (
 							<AgentPickerContext.Provider value={pickerState}>
-								<AssistantRuntimeProvider runtime={runtime}>
+								<AssistantRuntimeProvider
+									key={conversationId ?? "new"}
+									runtime={runtime}
+								>
 									<Thread
 										components={THREAD_COMPONENTS}
 										environmentReady={environmentReady}

@@ -84,6 +84,8 @@ export interface AgentPickerState {
 	} | null;
 }
 
+const EMPTY_AGENTS: Agent[] = [];
+
 export const AgentPickerContext = createContext<AgentPickerState | null>(null);
 
 // Fetches the project's agents and owns the selected-agent state that feeds
@@ -95,7 +97,7 @@ export function useAgentPicker(
 	projectId: string,
 	options?: { disabled?: boolean; enabled?: boolean },
 ) {
-	const { data: agents = [], isLoading: agentsLoading } = useQuery({
+	const { data: agents = EMPTY_AGENTS, isLoading: agentsLoading } = useQuery({
 		...agentsQueryOptions(projectId),
 		enabled: options?.enabled ?? true,
 	});
@@ -141,7 +143,7 @@ export function useGlobalAgentPicker(options?: {
 }) {
 	const { t } = useTranslation("projects");
 	const { hasPermission } = usePermissions();
-	const { data: agents = [], isLoading: agentsLoading } = useQuery({
+	const { data: agents = EMPTY_AGENTS, isLoading: agentsLoading } = useQuery({
 		...chattableAgentsQueryOptions,
 		enabled: options?.enabled ?? true,
 	});

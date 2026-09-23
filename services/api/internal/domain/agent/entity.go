@@ -466,7 +466,10 @@ type AgentConversation struct {
 	// Populated by JOIN
 	AgentName   string
 	AgentHandle string
-	TaskTitle   *string
+	// AgentType is included with the conversation projection so clients can
+	// choose stop vs pause without an agents.read request.
+	AgentType string
+	TaskTitle *string
 }
 
 // AgentConversationEvent is a single event emitted by the OpenHands SDK.

@@ -46,3 +46,17 @@ func TestConversationFromEntity_ErrorMessageNil(t *testing.T) {
 		t.Errorf("ErrorMessage = %q, want nil for a conversation that hasn't failed", *resp.ErrorMessage)
 	}
 }
+
+func TestConversationFromEntity_AgentType(t *testing.T) {
+	c := &agentdom.AgentConversation{
+		ID:        uuid.New(),
+		AgentID:   uuid.New(),
+		AgentType: agentdom.AgentTypeACP,
+	}
+
+	resp := ConversationFromEntity(c)
+
+	if resp.AgentType != agentdom.AgentTypeACP {
+		t.Fatalf("AgentType = %q, want %q", resp.AgentType, agentdom.AgentTypeACP)
+	}
+}

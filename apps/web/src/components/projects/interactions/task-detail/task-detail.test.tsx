@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import i18next from "i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadLanguage } from "@/i18n/config";
-import { currentUserQueryOptions } from "@/lib/auth-api";
+import { currentUserQueryOptions, type User } from "@/lib/auth-api";
 import type { Task } from "@/lib/interaction-api";
 import type { TaskStatus } from "@/lib/project-api";
 import { TaskDetailModal } from "./index";
@@ -77,14 +77,18 @@ function clientFor(user: string) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
-	client.setQueryData(currentUserQueryOptions.queryKey, {
+	const currentUser: User = {
 		id: user,
 		username: user,
 		full_name: user,
 		role: "USER",
 		must_change_password: false,
 		created_at: "2026-09-18T00:00:00Z",
-	});
+	};
+	client.setQueryData<User | null>(
+		currentUserQueryOptions.queryKey,
+		currentUser,
+	);
 	return client;
 }
 beforeEach(async () => {

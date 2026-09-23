@@ -493,6 +493,7 @@ type AgentConversationResponse struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	AgentName   string     `json:"agent_name,omitempty"`
 	AgentHandle string     `json:"agent_handle,omitempty"`
+	AgentType   string     `json:"agent_type,omitempty"`
 	// EnvironmentID mirrors agentdom.AgentConversation.EnvironmentID: set only
 	// when this conversation is attached to a static environment rather than
 	// an ephemeral sandbox. The web app uses its presence to keep the
@@ -550,6 +551,7 @@ func ConversationFromEntity(c *agentdom.AgentConversation) AgentConversationResp
 		CreatedAt:           c.CreatedAt,
 		AgentName:           c.AgentName,
 		AgentHandle:         c.AgentHandle,
+		AgentType:           c.AgentType,
 		EnvironmentID:       c.EnvironmentID,
 	}
 	if c.ProjectID != uuid.Nil {

@@ -137,6 +137,7 @@ type agentConversationRecord struct {
 	FinishedAt          *time.Time `db:"finished_at"`
 	CreatedAt           time.Time  `db:"created_at"`
 	UpdatedAt           time.Time  `db:"updated_at"`
+	AgentType           string     `db:"agent_type"`
 }
 
 type agentConversationEventRecord struct {
@@ -952,7 +953,8 @@ const conversationCols = `id, agent_id, project_id, trigger_type, task_id, comme
 	 ORDER BY e.event_index DESC LIMIT 1) AS cost_usd,
 	error_message,
 	repo_plugin_id, pr_url,
-	started_at, finished_at, created_at, updated_at, context_items`
+	started_at, finished_at, created_at, updated_at, context_items,
+	(SELECT agent_type FROM agents WHERE agents.id = agent_conversations.agent_id) AS agent_type`
 
 // ListConversations returns a keyset-paginated page of conversations matching
 // the filter, ordered newest-first. It fetches one row beyond limit to detect
@@ -1886,6 +1888,7 @@ func conversationFromRecord(rec agentConversationRecord) *agentdom.AgentConversa
 		FinishedAt:     rec.FinishedAt,
 		CreatedAt:      rec.CreatedAt,
 		UpdatedAt:      rec.UpdatedAt,
+		AgentType:      rec.AgentType,
 	}
 	if rec.TaskID != nil {
 		id := mustParseUUID(*rec.TaskID)
