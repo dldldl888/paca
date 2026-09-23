@@ -97,16 +97,24 @@ func TestPrivateProjectDraftPreviewBindsVersionAndReportsIssues(t *testing.T) {
 
 func TestPrivateProjectDraftPublishIsAtomicAndIdempotent(t *testing.T) {
 	f, owner, session, _ := newProjectDraftFixture(t)
+	seedTaskMemberUser(t, f.env, "draft-publish-peer", "password1")
+	peer, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-publish-peer")
+	if err != nil {
+		t.Fatal(err)
+	}
 	itemID := uuid.NewString()
 	d := f.request(t, http.MethodPost, f.base, map[string]any{
 		"name": "正式发布项目", "goal": "验证发布事务", "chat_session_id": session,
 		"items": []any{map[string]any{
 			"id": itemID, "title": "执行任务", "requirements": "完成交付", "criteria": "通过验收",
-			"assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"assignee_user_id": peer.ID.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
 			"dependencies": []any{},
 		}},
-		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
-		"materials":    []any{},
+		"participants": []any{
+			map[string]any{"user_id": owner.String(), "role": "负责人"},
+			map[string]any{"user_id": peer.ID.String(), "role": "执行人"},
+		},
+		"materials": []any{},
 	}, http.StatusCreated)
 	before := projectBusinessCounts(t, f.env)
 	publication := uuid.NewString()
@@ -121,6 +129,25 @@ func TestPrivateProjectDraftPublishIsAtomicAndIdempotent(t *testing.T) {
 	if after[0] != before[0]+1 || after[2] != before[2]+1 || after[5] != before[5]+1 {
 		t.Fatalf("publish did not create one project/task/notification: before=%v after=%v", before, after)
 	}
+	peerClient, peerToken := taskMemberLogin(t, f.env, "draft-publish-peer", "password1")
+	notificationReq := mustRequest(f.env.ctx, t, http.MethodGet, f.env.base+"/api/v1/users/me/notifications?page_size=20", nil)
+	notificationReq.Header.Set("Authorization", "Bearer "+peerToken)
+	notificationResp := mustDo(t, peerClient, notificationReq)
+	defer notificationResp.Body.Close()
+	assertStatus(t, notificationResp, http.StatusOK)
+	var notificationEnvelope envelope
+	decodeJSON(t, notificationResp, &notificationEnvelope)
+	notificationData := assertDataMap(t, notificationEnvelope)
+	items, ok := notificationData["items"].([]any)
+	if !ok || len(items) == 0 || items[0].(map[string]any)["task_id"] == nil {
+		t.Fatalf("assigned employee did not recover a task notification: %#v", notificationData)
+	}
+	taskID := first["task_ids"].(map[string]any)[itemID].(string)
+	taskReq := mustRequest(f.env.ctx, t, http.MethodGet, f.env.base+"/api/v1/projects/"+first["project_id"].(string)+"/tasks/"+taskID, nil)
+	taskReq.Header.Set("Authorization", "Bearer "+peerToken)
+	taskResp := mustDo(t, peerClient, taskReq)
+	defer taskResp.Body.Close()
+	assertStatus(t, taskResp, http.StatusOK)
 	second := f.request(t, http.MethodPost, path, map[string]any{
 		"expected_version": 1, "publication_id": publication,
 	}, http.StatusOK)
