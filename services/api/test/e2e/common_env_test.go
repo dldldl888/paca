@@ -274,15 +274,16 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	}
 	fileDelivery := handler.NewFileDelivery(fileGate, fileStore, "paca-attachments-e2e", authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore))
 	docRepo := pgRepo.NewDocumentRepository(db)
+	docService := docsvc.New(docRepo, projectRepo)
 	environmentService := environmentsvc.New(pgRepo.NewEnvironmentRepository(db), "", "")
 	annotationService := annotationsvc.New(pgRepo.NewAnnotationRepository(db), environmentService, taskService, attachmentRepo, attachmentRepo, fileStore, "paca-attachments-e2e").WithTaskAccess(taskService, taskService)
 	e2eAuthorizer := authz.NewAuthorizer(authzStore).WithAgentRoleResolver(authzStore)
 	engine := router.New(router.Deps{
 		DocFile:              handler.NewDocFileHandler(attachmentService).WithFileDelivery(fileDelivery),
-		Document:             handler.NewDocumentHandler(docsvc.New(docRepo, projectRepo), docsvc.NewActivityService(docRepo, docRepo, projectRepo, publisher)).WithDeliveryGate(fileGate),
+		Document:             handler.NewDocumentHandler(docService, docsvc.NewActivityService(docRepo, docRepo, projectRepo, publisher)).WithDeliveryGate(fileGate),
 		Environment:          handler.NewEnvironmentHandler(environmentService, ""),
 		Annotation:           handler.NewAnnotationHandler(annotationService).WithFileDelivery(fileDelivery),
-		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithAuthorizer(e2eAuthorizer).WithPublisher(publisher).WithDeliveryGate(fileGate)).WithDeliveryGate(fileGate),
+		Draft:                handler.NewDraftHandler(draftsvc.New(pgRepo.NewDraftRepository(db), agentService, projectRepo).WithDocuments(docService).WithAuthorizer(e2eAuthorizer).WithPublisher(publisher).WithDeliveryGate(fileGate)).WithDeliveryGate(fileGate),
 		TokenManager:         tm,
 		APIKeyAuth:           apiKeyService,
 		Authorizer:           e2eAuthorizer,

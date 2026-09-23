@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/events"
@@ -19,6 +20,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"io"
 	"strings"
+	"time"
 )
 
 type Service struct {
@@ -27,6 +29,7 @@ type Service struct {
 	Repo       *pg.DraftRepository
 	agents     *agentsvc.Service
 	members    *pg.ProjectRepository
+	documents  docdom.DocumentService
 	authorizer *authz.Authorizer
 }
 
@@ -500,6 +503,66 @@ func (s *Service) ListProjectDrafts(ctx context.Context) ([]*draftdom.ProjectDra
 	return s.Repo.ListProjectDrafts(ctx)
 }
 
+// SearchProjectDraftMaterials returns metadata for documents the current
+// owner can actually read. The document service applies the same current
+// visibility predicate as the regular document list/detail endpoints.
+func (s *Service) SearchProjectDraftMaterials(ctx context.Context, query string, limit int) ([]*draftdom.ProjectDraftMaterialCandidate, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	user, ok := authz.ActorIDFromContext(ctx)
+	if !ok || user == uuid.Nil {
+		return nil, draftdom.ErrNotFound
+	}
+	if s.documents == nil {
+		return nil, errors.New("project draft material search unavailable")
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	projects, _, err := s.members.ListAccessible(ctx, user, 0, 100)
+	if err != nil {
+		return nil, err
+	}
+	var search *string
+	if q := strings.TrimSpace(query); q != "" {
+		search = &q
+	}
+	items := make([]*draftdom.ProjectDraftMaterialCandidate, 0, limit)
+	seen := make(map[uuid.UUID]struct{})
+	for _, project := range projects {
+		docs, _, err := s.documents.ListDocuments(ctx, project.ID, nil, search, nil, &limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, doc := range docs {
+			if _, exists := seen[doc.ID]; exists {
+				continue
+			}
+			seen[doc.ID] = struct{}{}
+			items = append(items, &draftdom.ProjectDraftMaterialCandidate{
+				ID: doc.ID, ProjectID: doc.ProjectID, Title: doc.Title,
+				SourceType:      "internal",
+				SourceLocation:  fmt.Sprintf("/projects/%s/docs/%s", doc.ProjectID, doc.ID),
+				SourceVersion:   doc.UpdatedAt.UTC().Format(time.RFC3339),
+				ProcessedStatus: "ready", Visibility: doc.Visibility,
+			})
+			if len(items) == limit {
+				return items, nil
+			}
+		}
+	}
+	return items, nil
+}
+
 func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected int, content draftdom.ProjectDraftContent) (*draftdom.ProjectDraft, error) {
 	if err := content.ValidateStructure(); err != nil {
 		return nil, err
@@ -638,6 +701,11 @@ func (s *Service) WithDeliveryGate(gate *delivery.Gate) *Service { s.gate = gate
 
 func (s *Service) WithAuthorizer(authorizer *authz.Authorizer) *Service {
 	s.authorizer = authorizer
+	return s
+}
+
+func (s *Service) WithDocuments(documents docdom.DocumentService) *Service {
+	s.documents = documents
 	return s
 }
 

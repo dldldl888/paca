@@ -49,6 +49,17 @@ export interface ProjectDraft {
 	updated_at: string;
 }
 
+export interface ProjectDraftMaterialCandidate {
+	id: string;
+	project_id: string;
+	title: string;
+	source_type: "internal";
+	source_location: string;
+	source_version: string;
+	processed_status: "ready";
+	visibility: string;
+}
+
 export const projectDraftsQueryOptions = queryOptions({
 	queryKey: ["private-project-drafts"],
 	queryFn: async () =>
@@ -58,3 +69,18 @@ export const projectDraftsQueryOptions = queryOptions({
 			)
 		).data.data.items,
 });
+
+export const projectDraftMaterialsQueryOptions = (search: string) =>
+	queryOptions({
+		queryKey: ["private-project-draft-materials", search],
+		queryFn: async () =>
+			(
+				await apiClient.instance.get<
+					SuccessEnvelope<{
+						items: ProjectDraftMaterialCandidate[];
+					}>
+				>("/project-drafts/materials", {
+					params: { search, limit: 20 },
+				})
+			).data.data.items,
+	});

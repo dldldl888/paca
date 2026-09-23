@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"net/http"
 	"reflect"
 	"testing"
 
@@ -11,6 +12,48 @@ import (
 	draftsvc "github.com/Paca-AI/api/internal/service/draft"
 	"github.com/google/uuid"
 )
+
+func TestPrivateProjectDraftMaterialSearchOnlyReturnsReadableDocuments(t *testing.T) {
+	f, _, session, _ := newProjectDraftFixture(t)
+	projectID := createProjectForTasksViaAPI(t, f.env, f.client, f.token)
+	base := f.env.base + "/api/v1/projects/" + projectID + "/docs"
+	create := func(client *http.Client, token, title string) {
+		req := mustRequest(f.env.ctx, t, http.MethodPost, base, jsonBody(t, map[string]any{
+			"title":   title,
+			"content": []any{},
+		}))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp := mustDo(t, client, req)
+		resp.Body.Close()
+		assertStatus(t, resp, http.StatusCreated)
+	}
+	create(f.client, f.token, "可读路线图")
+	seedUser(t, f.env, "draft-material-peer", "password1", "Peer")
+	if _, err := f.env.db.Exec(`INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type) SELECT $1,$2,$3,id,'human' FROM project_roles WHERE project_id=$2 AND role_name='Editor'`, uuid.New(), projectID, func() uuid.UUID {
+		u, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-material-peer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.ID
+	}()); err != nil {
+		t.Fatal(err)
+	}
+	peerClient, peerToken := taskMemberLogin(t, f.env, "draft-material-peer", "password1")
+	create(peerClient, peerToken, "不可读路线图")
+
+	f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "资料候选", "goal": "检索资料", "chat_session_id": session,
+	}, http.StatusCreated)
+	result := f.request(t, http.MethodGet, f.base+"/materials?search=路线图&limit=20", nil, http.StatusOK)
+	items, ok := result["items"].([]any)
+	if !ok || len(items) != 1 || items[0].(map[string]any)["title"] != "可读路线图" {
+		t.Fatalf("material search leaked or omitted documents: %#v", result)
+	}
+	if items[0].(map[string]any)["project_id"] != projectID || items[0].(map[string]any)["source_type"] != "internal" {
+		t.Fatalf("material metadata missing: %#v", items[0])
+	}
+}
 
 func newProjectDraftFixture(t *testing.T) (*draftFixture, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()

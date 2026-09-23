@@ -296,6 +296,7 @@ func New(deps Deps) http.Handler {
 					r.Use(httpmw.RequirePermissions(deps.Authorizer, httpmw.GlobalScope(), authz.PermissionProjectsCreate))
 					r.Get("/", deps.Draft.ProjectList)
 					r.Post("/", deps.Draft.ProjectCreate)
+					r.Get("/materials", deps.Draft.ProjectMaterials)
 					r.Get("/{draftId}", deps.Draft.ProjectGet)
 					r.Patch("/{draftId}", deps.Draft.ProjectUpdate)
 					r.Post("/{draftId}/generate", deps.Draft.ProjectGenerate)

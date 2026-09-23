@@ -72,7 +72,15 @@
 				"generating": "Generating",
 				"failed": "Needs retry",
 				"imported": "Updated"
-			}
+			},
+			"showMaterials": "Find internal materials",
+			"hideMaterials": "Hide internal materials",
+			"materialSearch": "Search internal materials",
+			"materialSearchPlaceholder": "Title contains…",
+			"search": "Search",
+			"materialLoading": "Loading materials",
+			"materialError": "Materials are temporarily unavailable",
+			"materialEmpty": "No readable internal materials found"
 		},
 		"updateBanner": {
 			"title": "Update available",

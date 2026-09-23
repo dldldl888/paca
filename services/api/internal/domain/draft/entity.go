@@ -89,6 +89,20 @@ type ProjectDraftMaterial struct {
 	Required        bool     `json:"required"`
 }
 
+// ProjectDraftMaterialCandidate is readable internal-document metadata for a
+// private project draft. Content is fetched through the normal document
+// endpoint after its permission check.
+type ProjectDraftMaterialCandidate struct {
+	ID              uuid.UUID `json:"id"`
+	ProjectID       uuid.UUID `json:"project_id"`
+	Title           string    `json:"title"`
+	SourceType      string    `json:"source_type"`
+	SourceLocation  string    `json:"source_location"`
+	SourceVersion   string    `json:"source_version"`
+	ProcessedStatus string    `json:"processed_status"`
+	Visibility      string    `json:"visibility"`
+}
+
 type ProjectDraft struct {
 	ProjectDraftContent
 	ID            uuid.UUID               `json:"id"`

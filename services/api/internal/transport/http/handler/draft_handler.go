@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 type DraftHandler struct {
@@ -284,6 +286,29 @@ func (h *DraftHandler) ProjectList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	presenter.OK(w, r, map[string]any{"items": items})
+}
+
+func (h *DraftHandler) ProjectMaterials(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 50 {
+			draftError(w, r, apierr.New(apierr.CodeBadRequest, "limit must be an integer between 1 and 50"))
+			return
+		}
+		limit = parsed
+	}
+	items, err := h.svc.SearchProjectDraftMaterials(r.Context(), strings.TrimSpace(r.URL.Query().Get("search")), limit)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, map[string]any{"items": items, "coverage": map[string]any{"scope": "accessible_projects", "limit": limit}})
 }
 
 func (h *DraftHandler) ProjectCreate(w http.ResponseWriter, r *http.Request) {

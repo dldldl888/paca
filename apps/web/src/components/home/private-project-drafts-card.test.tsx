@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -30,17 +30,30 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.status.generating": "生成中",
 				"home.privateDrafts.status.failed": "需要重试",
 				"home.privateDrafts.status.imported": "已更新",
+				"home.privateDrafts.showMaterials": "查找内部资料",
+				"home.privateDrafts.hideMaterials": "收起内部资料",
+				"home.privateDrafts.materialSearch": "搜索内部资料",
+				"home.privateDrafts.materialSearchPlaceholder": "按标题搜索…",
+				"home.privateDrafts.search": "搜索",
+				"home.privateDrafts.materialLoading": "资料加载中",
+				"home.privateDrafts.materialError": "资料暂时无法加载",
+				"home.privateDrafts.materialEmpty": "没有找到当前可读取的内部资料",
 			})[key] ?? key,
 	}),
 }));
 
 import { PrivateProjectDraftsCard } from "./private-project-drafts-card";
 
-function renderCard(items: unknown[], chatSessionId?: string) {
+function renderCard(
+	items: unknown[],
+	chatSessionId?: string,
+	materials: unknown[] = [],
+) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
 	queryClient.setQueryData(["private-project-drafts"], items);
+	queryClient.setQueryData(["private-project-draft-materials", ""], materials);
 	return render(
 		<QueryClientProvider client={queryClient}>
 			<PrivateProjectDraftsCard chatSessionId={chatSessionId} />
@@ -101,5 +114,35 @@ describe("PrivateProjectDraftsCard", () => {
 		);
 		expect(screen.getByText("当前会话草稿")).toBeInTheDocument();
 		expect(screen.queryByText("别的会话")).not.toBeInTheDocument();
+	});
+
+	it("reveals readable material search with source status", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(["private-project-drafts"], []);
+		queryClient.setQueryData(
+			["private-project-draft-materials", "路线"],
+			[
+				{
+					id: "doc-1",
+					title: "可读路线图",
+					processed_status: "ready",
+				},
+			],
+		);
+		const rerender = render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "查找内部资料" }));
+		fireEvent.change(screen.getByRole("textbox", { name: "搜索内部资料" }), {
+			target: { value: "路线" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+		expect(await screen.findByText("可读路线图")).toBeInTheDocument();
+		expect(screen.getByText("ready")).toBeInTheDocument();
+		rerender.unmount();
 	});
 });

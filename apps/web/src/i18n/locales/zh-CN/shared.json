@@ -72,7 +72,15 @@
 				"generating": "生成中",
 				"failed": "需要重试",
 				"imported": "已更新"
-			}
+			},
+			"showMaterials": "查找内部资料",
+			"hideMaterials": "收起内部资料",
+			"materialSearch": "搜索内部资料",
+			"materialSearchPlaceholder": "按标题搜索…",
+			"search": "搜索",
+			"materialLoading": "资料加载中",
+			"materialError": "资料暂时无法加载",
+			"materialEmpty": "没有找到当前可读取的内部资料"
 		},
 		"updateBanner": {
 			"title": "有可用更新",
