@@ -56,6 +56,10 @@ func draftError(w http.ResponseWriter, r *http.Request, e error) {
 	if errors.As(e, &validation) {
 		e = apierr.New(apierr.CodeBadRequest, "draft has validation issues; refresh preview")
 	}
+	var generation *draftdom.ProjectDraftGenerationError
+	if errors.As(e, &generation) {
+		e = apierr.New(apierr.CodeBadRequest, generation.Error())
+	}
 	presenter.Error(w, r, e)
 }
 func (h *DraftHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -343,6 +347,61 @@ func (h *DraftHandler) ProjectUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer leave()
 	d, err := h.svc.UpdateProjectDraft(r.Context(), id, in.ExpectedVersion, in.ProjectDraftContent)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, d)
+}
+
+func (h *DraftHandler) ProjectGenerate(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		ExpectedVersion int       `json:"expected_version"`
+		AgentID         uuid.UUID `json:"agent_id"`
+		Message         string    `json:"message"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, err := h.svc.GenerateProjectDraft(r.Context(), id, in.ExpectedVersion, in.AgentID, in.Message)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, d)
+}
+
+func (h *DraftHandler) ProjectImport(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		ExpectedVersion int       `json:"expected_version"`
+		GenerationID    uuid.UUID `json:"generation_id"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, err := h.svc.ImportProjectDraft(r.Context(), id, in.ExpectedVersion, in.GenerationID)
 	if err != nil {
 		draftError(w, r, err)
 		return

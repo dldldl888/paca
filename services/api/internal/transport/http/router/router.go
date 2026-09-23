@@ -298,6 +298,8 @@ func New(deps Deps) http.Handler {
 					r.Post("/", deps.Draft.ProjectCreate)
 					r.Get("/{draftId}", deps.Draft.ProjectGet)
 					r.Patch("/{draftId}", deps.Draft.ProjectUpdate)
+					r.Post("/{draftId}/generate", deps.Draft.ProjectGenerate)
+					r.Post("/{draftId}/import", deps.Draft.ProjectImport)
 				})
 			}
 

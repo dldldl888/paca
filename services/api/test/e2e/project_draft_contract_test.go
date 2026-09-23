@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	agentdom "github.com/Paca-AI/api/internal/domain/agent"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	pg "github.com/Paca-AI/api/internal/repository/postgres"
@@ -11,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func newProjectDraftFixture(t *testing.T) (*draftFixture, uuid.UUID, uuid.UUID) {
+func newProjectDraftFixture(t *testing.T) (*draftFixture, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	env := newE2EEnv(t)
 	seedProjectAdminUser(t, env, "draft-owner", "password1")
@@ -24,11 +25,14 @@ func newProjectDraftFixture(t *testing.T) (*draftFixture, uuid.UUID, uuid.UUID) 
 	if _, err := env.db.Exec(`INSERT INTO agents(id,name,handle,agent_type,agent_scope,acp_provider,llm_provider,llm_model,llm_api_key_secret) VALUES($1,'Draft fixture','draft-fixture','acp','global','claude-code','','','')`, agentID); err != nil {
 		t.Fatal(err)
 	}
-	session, _, err := env.agentSvc.StartGlobalChatSession(authz.WithActorID(env.ctx, owner.ID), agentID, owner.ID, "anchor", nil, "")
+	session, conversation, err := env.agentSvc.StartGlobalChatSession(authz.WithActorID(env.ctx, owner.ID), agentID, owner.ID, "anchor", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &draftFixture{env: env, client: client, token: token, base: "/api/v1/project-drafts"}, owner.ID, session.ID
+	if err := env.agentRepo.UpdateConversationStatus(env.ctx, conversation.ID, "finished"); err != nil {
+		t.Fatal(err)
+	}
+	return &draftFixture{env: env, client: client, token: token, base: "/api/v1/project-drafts"}, owner.ID, session.ID, agentID
 }
 
 func projectBusinessCounts(t *testing.T, env *e2eEnv) []int {
@@ -45,7 +49,7 @@ func projectBusinessCounts(t *testing.T, env *e2eEnv) []int {
 }
 
 func TestPrivateProjectDraftTaskCandidatesAndRemoval(t *testing.T) {
-	f, owner, session := newProjectDraftFixture(t)
+	f, owner, session, _ := newProjectDraftFixture(t)
 	before := projectBusinessCounts(t, f.env)
 	itemID := uuid.NewString()
 	body := map[string]any{
@@ -86,7 +90,7 @@ func TestPrivateProjectDraftTaskCandidatesAndRemoval(t *testing.T) {
 }
 
 func TestPrivateProjectDraftInvalidContentIsBadRequest(t *testing.T) {
-	f, _, session := newProjectDraftFixture(t)
+	f, _, session, _ := newProjectDraftFixture(t)
 	f.request(t, "POST", f.base, map[string]any{"name": " ", "chat_session_id": session}, 400)
 	d := f.request(t, "POST", f.base, map[string]any{"name": "有效", "chat_session_id": session}, 201)
 	path := f.base + "/" + d["id"].(string)
@@ -97,7 +101,7 @@ func TestPrivateProjectDraftInvalidContentIsBadRequest(t *testing.T) {
 }
 
 func TestPrivateProjectDraftServiceRechecksAuthorityAndSession(t *testing.T) {
-	f, owner, session := newProjectDraftFixture(t)
+	f, owner, session, _ := newProjectDraftFixture(t)
 	authorizer := authz.NewAuthorizer(pg.NewAuthzPermissionStore(f.env.db)).WithAgentRoleResolver(pg.NewAuthzPermissionStore(f.env.db))
 	service := draftsvc.New(pg.NewDraftRepository(f.env.db), f.env.agentSvc, f.env.projectRepo).WithAuthorizer(authorizer)
 	ctx := authz.WithHumanSession(authz.WithActorID(f.env.ctx, owner))
@@ -130,4 +134,103 @@ func TestPrivateProjectDraftServiceRechecksAuthorityAndSession(t *testing.T) {
 	if _, err := service.CreateProjectDraft(ctx, content, session); err == nil {
 		t.Error("revoked actor created a private draft")
 	}
+}
+
+func TestPrivateProjectDraftMultiTurnGenerationImportIsBoundedAndIdempotent(t *testing.T) {
+	f, owner, session, agentID := newProjectDraftFixture(t)
+	d := f.request(t, "POST", f.base, map[string]any{"name": "初始草稿", "goal": "目标", "chat_session_id": session}, 201)
+	path := f.base + "/" + d["id"].(string)
+	started := f.request(t, "POST", path+"/generate", map[string]any{
+		"expected_version": 1,
+		"agent_id":         agentID,
+		"message":          "整理成项目草稿",
+	}, 200)
+	generation := started["generation"].(map[string]any)
+	conversationID := uuid.MustParse(generation["conversation_id"].(string))
+	itemID := uuid.NewString()
+	valid := `{"name":"生成项目","goal":"完成目标","items":[{"id":"` + itemID + `","title":"首项","requirements":"要求","criteria":"标准","dependencies":[]}],"participants":[],"materials":[]}`
+	events := []*agentdom.AgentConversationEvent{
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 0, EventType: "user_message", EventSource: "user", Payload: map[string]any{"content": map[string]any{"type": "text", "text": "整理"}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 1, EventType: "agent_thought_chunk", EventSource: "agent", Payload: map[string]any{"content": map[string]any{"type": "text", "text": "hidden"}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 2, EventType: "agent_message_chunk", EventSource: "agent", Payload: map[string]any{"content": map[string]any{"type": "text", "text": valid}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 3, EventType: "turn_end", EventSource: "system", Payload: map[string]any{"stopReason": "end_turn"}},
+	}
+	for _, event := range events {
+		if err := f.env.agentRepo.CreateConversationEvent(f.env.ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.env.agentRepo.UpdateConversationStatus(f.env.ctx, conversationID, "finished"); err != nil {
+		t.Fatal(err)
+	}
+	imported := f.request(t, "POST", path+"/import", map[string]any{
+		"expected_version": 1,
+		"generation_id":    generation["id"],
+	}, 200)
+	if imported["version"] != float64(2) || imported["name"] != "生成项目" {
+		t.Fatalf("unexpected imported draft: %#v", imported)
+	}
+	retry := f.request(t, "POST", path+"/import", map[string]any{
+		"expected_version": 1,
+		"generation_id":    generation["id"],
+	}, 200)
+	if retry["version"] != float64(2) || retry["name"] != "生成项目" {
+		t.Fatalf("import retry created a second result: %#v", retry)
+	}
+	if got := f.request(t, "GET", path, nil, 200); got["owner_user_id"] != owner.String() {
+		t.Fatal("import changed draft owner")
+	}
+}
+
+func TestPrivateProjectDraftGenerationFailureIsRecoverable(t *testing.T) {
+	f, _, session, agentID := newProjectDraftFixture(t)
+	d := f.request(t, "POST", f.base, map[string]any{"name": "可恢复", "chat_session_id": session}, 201)
+	path := f.base + "/" + d["id"].(string)
+	started := f.request(t, "POST", path+"/generate", map[string]any{
+		"expected_version": 1,
+		"agent_id":         agentID,
+		"message":          "生成",
+	}, 200)
+	generation := started["generation"].(map[string]any)
+	conversationID := uuid.MustParse(generation["conversation_id"].(string))
+	for _, event := range []*agentdom.AgentConversationEvent{
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 0, EventType: "user_message", EventSource: "user", Payload: map[string]any{}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 1, EventType: "agent_message_chunk", EventSource: "agent", Payload: map[string]any{"content": map[string]any{"type": "text", "text": "not json"}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 2, EventType: "turn_end", EventSource: "system", Payload: map[string]any{"stopReason": "end_turn"}},
+	} {
+		if err := f.env.agentRepo.CreateConversationEvent(f.env.ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.env.agentRepo.UpdateConversationStatus(f.env.ctx, conversationID, "finished"); err != nil {
+		t.Fatal(err)
+	}
+	f.request(t, "POST", path+"/import", map[string]any{
+		"expected_version": 1,
+		"generation_id":    generation["id"],
+	}, 400)
+	got := f.request(t, "GET", path, nil, 200)
+	if got["version"] != float64(1) || got["name"] != "可恢复" || got["generation"].(map[string]any)["status"] != "failed" {
+		t.Fatalf("failed generation changed draft unexpectedly: %#v", got)
+	}
+}
+
+func TestPrivateProjectDraftEditInvalidatesStaleGeneration(t *testing.T) {
+	f, _, session, agentID := newProjectDraftFixture(t)
+	d := f.request(t, "POST", f.base, map[string]any{"name": "旧草稿", "chat_session_id": session}, 201)
+	path := f.base + "/" + d["id"].(string)
+	started := f.request(t, "POST", path+"/generate", map[string]any{
+		"expected_version": 1,
+		"agent_id":         agentID,
+		"message":          "生成",
+	}, 200)
+	f.request(t, "PATCH", path, map[string]any{"name": "人工修订", "expected_version": 1}, 200)
+	got := f.request(t, "GET", path, nil, 200)
+	if got["version"] != float64(2) || got["name"] != "人工修订" || got["generation"].(map[string]any)["status"] != "failed" {
+		t.Fatalf("manual edit did not invalidate generation: %#v", got)
+	}
+	f.request(t, "POST", path+"/import", map[string]any{
+		"expected_version": 1,
+		"generation_id":    started["generation"].(map[string]any)["id"],
+	}, 409)
 }

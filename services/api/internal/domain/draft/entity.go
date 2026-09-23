@@ -24,6 +24,12 @@ type ProjectDraftValidationError struct{ Message string }
 
 func (e *ProjectDraftValidationError) Error() string { return e.Message }
 
+// ProjectDraftGenerationError is a recoverable Hermes-output failure. The
+// draft and conversation remain available for another attempt.
+type ProjectDraftGenerationError struct{ Message string }
+
+func (e *ProjectDraftGenerationError) Error() string { return e.Message }
+
 type Item struct {
 	ID               string   `json:"id"`
 	Title            string   `json:"title"`
@@ -85,13 +91,27 @@ type ProjectDraftMaterial struct {
 
 type ProjectDraft struct {
 	ProjectDraftContent
-	ID            uuid.UUID `json:"id"`
-	OwnerUserID   uuid.UUID `json:"owner_user_id"`
-	ChatSessionID uuid.UUID `json:"chat_session_id"`
-	Version       int       `json:"version"`
-	State         string    `json:"state"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            uuid.UUID               `json:"id"`
+	OwnerUserID   uuid.UUID               `json:"owner_user_id"`
+	ChatSessionID uuid.UUID               `json:"chat_session_id"`
+	Version       int                     `json:"version"`
+	State         string                  `json:"state"`
+	Generation    *ProjectDraftGeneration `json:"generation,omitempty"`
+	CreatedAt     time.Time               `json:"created_at"`
+	UpdatedAt     time.Time               `json:"updated_at"`
+}
+
+// ProjectDraftGeneration records the one Hermes turn currently associated
+// with a private project draft. BaseEventIndex makes the import boundary
+// explicit: only events appended after the generation request are eligible.
+type ProjectDraftGeneration struct {
+	ID             uuid.UUID  `json:"id"`
+	Version        int        `json:"version"`
+	AgentID        uuid.UUID  `json:"agent_id"`
+	Status         string     `json:"status"` // starting | running | imported | failed
+	BaseEventIndex int        `json:"base_event_index"`
+	ConversationID *uuid.UUID `json:"conversation_id,omitempty"`
+	Error          string     `json:"error,omitempty"`
 }
 
 func (c *ProjectDraftContent) Normalize() {

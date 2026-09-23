@@ -2571,6 +2571,35 @@ func (s *Service) ValidatePrivateGlobalChatSession(ctx context.Context, sessionI
 	return nil
 }
 
+// PreparePrivateGlobalDraftGeneration validates the draft's private global
+// session and snapshots the latest visible event boundary. A finished latest
+// conversation will be replaced by SendGlobalChatMessage, so its boundary is
+// -1; a paused conversation is resumed and uses its current tail index.
+func (s *Service) PreparePrivateGlobalDraftGeneration(ctx context.Context, sessionID, userID, agentID uuid.UUID) (*agentdom.AgentConversation, int, error) {
+	if err := s.ValidatePrivateGlobalChatSession(ctx, sessionID, userID); err != nil {
+		return nil, 0, err
+	}
+	session, err := s.repo.FindChatSessionByID(ctx, sessionID)
+	if err != nil || session.AgentID != agentID {
+		return nil, 0, agentdom.ErrChatSessionNotFound
+	}
+	latest, err := s.repo.FindLatestConversationByChatSession(ctx, sessionID)
+	if err != nil || latest == nil {
+		return latest, -1, err
+	}
+	if _, err = s.GetGlobalConversation(ctx, latest.ID, userID); err != nil {
+		return nil, 0, err
+	}
+	if agentdom.ConversationStatus(latest.Status) != agentdom.ConversationStatusPaused {
+		return latest, -1, nil
+	}
+	_, total, err := s.repo.ListConversationEvents(ctx, latest.ID, agentdom.ConversationEventWindow{Limit: 1})
+	if err != nil {
+		return nil, 0, err
+	}
+	return latest, int(total) - 1, nil
+}
+
 // StartGlobalChatSession creates a new global chat session and publishes
 // the initial message trigger.
 func (s *Service) StartGlobalChatSession(ctx context.Context, agentID, actorUserID uuid.UUID, message string, contextItems []agentdom.ContextItemRef, onBusy string) (*agentdom.AgentChatSession, *agentdom.AgentConversation, error) {

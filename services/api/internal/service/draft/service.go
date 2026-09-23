@@ -305,6 +305,71 @@ func ParseGeneration(events []visibleEvent, goal string) (draftdom.Content, erro
 	}
 	return c, nil
 }
+
+// ParseProjectDraftGeneration extracts exactly one completed visible turn
+// after baseEventIndex. Hidden thoughts, tool results and events from earlier
+// rounds are ignored; a second user/end marker or a stopped turn invalidates
+// the candidate rather than allowing an ambiguous merge.
+func ParseProjectDraftGeneration(events []*agentdom.AgentConversationEvent, baseEventIndex int) (draftdom.ProjectDraftContent, error) {
+	var text strings.Builder
+	users, ends := 0, 0
+	for _, event := range events {
+		if event == nil || event.EventIndex <= baseEventIndex {
+			continue
+		}
+		switch event.EventType {
+		case "user_message":
+			if event.EventSource != "user" {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成用户事件来源无效")
+			}
+			users++
+			if users > 1 {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成会话包含多个轮次")
+			}
+		case "turn_end":
+			if event.EventSource != "system" {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("完成事件来源无效")
+			}
+			ends++
+			if ends > 1 {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成会话包含多个完成轮次")
+			}
+			stopReason, _ := event.Payload["stopReason"].(string)
+			if stopReason != "end_turn" {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成未正常完成")
+			}
+		case "agent_message_chunk":
+			if event.EventSource != "agent" {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成文本事件来源无效")
+			}
+			if ends > 0 {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成轮次边界无效")
+			}
+			content, ok := event.Payload["content"].(map[string]any)
+			if !ok || content["type"] != "text" {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成文本事件无效")
+			}
+			chunk, ok := content["text"].(string)
+			if !ok || text.Len()+len(chunk) > MaxBody {
+				return draftdom.ProjectDraftContent{}, fmt.Errorf("生成结果超过大小限制")
+			}
+			text.WriteString(chunk)
+		}
+	}
+	if users != 1 || ends != 1 {
+		return draftdom.ProjectDraftContent{}, fmt.Errorf("生成缺少唯一完整轮次")
+	}
+	var content draftdom.ProjectDraftContent
+	if err := DecodeStrict([]byte(text.String()), &content); err != nil {
+		return draftdom.ProjectDraftContent{}, fmt.Errorf("Hermes 回复不是有效项目草稿 JSON；请查看原回复并重试")
+	}
+	content.Normalize()
+	if err := content.ValidateStructure(); err != nil {
+		return content, err
+	}
+	return content, nil
+}
+
 func (s *Service) Import(ctx context.Context, pid, id uuid.UUID, expected int, generation uuid.UUID) (*draftdom.Draft, error) {
 	// Acquire before all row locks; foreign-project context revocation must
 	// wait until the protected import has committed.
@@ -448,6 +513,125 @@ func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected
 	}
 	defer leave()
 	return s.Repo.UpdateProjectDraft(ctx, id, expected, content)
+}
+
+// GenerateProjectDraft starts one Hermes turn anchored to the owner's global
+// chat session. The draft row records the event boundary before the message
+// is sent, so a later import can exclude old rounds and hidden events.
+func (s *Service) GenerateProjectDraft(ctx context.Context, id uuid.UUID, expected int, agentID uuid.UUID, message string) (*draftdom.ProjectDraft, error) {
+	if agentID == uuid.Nil || strings.TrimSpace(message) == "" || len(message) > MaxBody {
+		return nil, draftdom.ErrConflict
+	}
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	user, ok := authz.ActorIDFromContext(ctx)
+	if !ok || user == uuid.Nil {
+		return nil, draftdom.ErrNotFound
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	d, err := s.Repo.GetProjectDraft(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if d.Version != expected {
+		return nil, draftdom.ErrConflict
+	}
+	_, baseEventIndex, err := s.agents.PreparePrivateGlobalDraftGeneration(ctx, d.ChatSessionID, user, agentID)
+	if err != nil {
+		return nil, err
+	}
+	started, err := s.Repo.StartProjectDraftGeneration(ctx, id, expected, agentID, baseEventIndex)
+	if err != nil {
+		return nil, err
+	}
+	conv, err := s.agents.SendGlobalChatMessage(ctx, d.ChatSessionID, user, message, nil, agentdom.OnBusyQueue)
+	if err != nil {
+		_, _ = s.Repo.FailProjectDraftGeneration(ctx, id, started.Generation.ID, err.Error())
+		return nil, err
+	}
+	bound, err := s.Repo.BindProjectDraftGeneration(ctx, id, started.Generation.ID, conv.ID)
+	if err != nil {
+		_, _ = s.Repo.FailProjectDraftGeneration(ctx, id, started.Generation.ID, err.Error())
+		return nil, err
+	}
+	return bound, nil
+}
+
+// ImportProjectDraft validates the completed visible turn and atomically
+// installs its JSON as the next draft version. Import is idempotent for the
+// same generation/version pair and rejects edits that won the race first.
+func (s *Service) ImportProjectDraft(ctx context.Context, id uuid.UUID, expected int, generationID uuid.UUID) (*draftdom.ProjectDraft, error) {
+	if generationID == uuid.Nil {
+		return nil, draftdom.ErrConflict
+	}
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	user, ok := authz.ActorIDFromContext(ctx)
+	if !ok || user == uuid.Nil {
+		return nil, draftdom.ErrNotFound
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	d, err := s.Repo.GetProjectDraft(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	g := d.Generation
+	if g == nil || g.ID != generationID || g.Version != expected {
+		return nil, draftdom.ErrConflict
+	}
+	if g.Status == "imported" && d.Version == expected+1 {
+		return d, nil
+	}
+	if g.Status == "failed" {
+		return nil, draftdom.ErrPending
+	}
+	if g.Status != "running" || g.ConversationID == nil || d.Version != expected {
+		return nil, draftdom.ErrConflict
+	}
+	conv, err := s.agents.GetGlobalConversation(ctx, *g.ConversationID, user)
+	if err != nil {
+		return nil, err
+	}
+	if conv.AgentID != g.AgentID || conv.ChatSessionID == nil || *conv.ChatSessionID != d.ChatSessionID {
+		return nil, draftdom.ErrNotFound
+	}
+	status := agentdom.ConversationStatus(conv.Status)
+	if status == agentdom.ConversationStatusQueued || status == agentdom.ConversationStatusRunning || status == agentdom.ConversationStatusPaused {
+		return nil, draftdom.ErrPending
+	}
+	if status != agentdom.ConversationStatusFinished {
+		_, _ = s.Repo.FailProjectDraftGeneration(ctx, id, generationID, "Hermes 生成失败或已停止，请查看原会话并重试。")
+		return nil, draftdom.ErrPending
+	}
+	events, total, err := s.agents.ListConversationEvents(ctx, *g.ConversationID, agentdom.ConversationEventWindow{Limit: 10001})
+	if err != nil {
+		return nil, err
+	}
+	if total > 10000 || len(events) > 10000 {
+		err = fmt.Errorf("生成事件数量超过限制")
+	} else {
+		var content draftdom.ProjectDraftContent
+		content, err = ParseProjectDraftGeneration(events, g.BaseEventIndex)
+		if err == nil {
+			return s.Repo.CompleteProjectDraftGeneration(ctx, id, generationID, expected, content)
+		}
+	}
+	_, _ = s.Repo.FailProjectDraftGeneration(ctx, id, generationID, err.Error())
+	var validation *draftdom.ProjectDraftValidationError
+	if errors.As(err, &validation) {
+		return nil, err
+	}
+	return nil, &draftdom.ProjectDraftGenerationError{Message: err.Error()}
 }
 
 func (s *Service) WithDeliveryGate(gate *delivery.Gate) *Service { s.gate = gate; return s }
