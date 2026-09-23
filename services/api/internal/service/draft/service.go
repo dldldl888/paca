@@ -529,6 +529,9 @@ func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expecte
 }
 
 func (s *Service) PublishProjectDraft(ctx context.Context, id uuid.UUID, expected int, publication uuid.UUID) (*draftdom.ProjectDraftPublication, error) {
+	if !authz.IsHumanSession(ctx) {
+		return nil, taskdom.ErrTaskForbidden
+	}
 	if err := s.requireProjectDraftCapability(ctx); err != nil {
 		return nil, err
 	}

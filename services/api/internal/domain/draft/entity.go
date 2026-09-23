@@ -252,6 +252,14 @@ func (c ProjectDraftContent) ValidateStructure() error {
 		if utf8.RuneCountInString(participant.Role) > 200 {
 			return invalid("participant role exceeds limit")
 		}
+		switch strings.ToLower(strings.TrimSpace(participant.Role)) {
+		case "", "负责人", "项目负责人", "manager", "owner", "执行人", "候选执行人", "协作人", "成员", "member", "editor", "executor":
+		default:
+			return invalid("participant role is unsupported")
+		}
+	}
+	if c.ManagerUserID != "" && !seenUsers[c.ManagerUserID] {
+		return invalid("manager_user_id must be one of the participants")
 	}
 	seenMaterials := map[string]bool{}
 	for _, material := range c.Materials {

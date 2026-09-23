@@ -155,3 +155,65 @@ func TestPrivateProjectDraftPublicationRejectsInactiveParticipant(t *testing.T) 
 	f.request(t, http.MethodPost, f.base+"/"+d["id"].(string)+"/publish", map[string]any{"expected_version": 1, "publication_id": uuid.New()}, http.StatusBadRequest)
 	_ = owner
 }
+
+func TestPrivateProjectDraftPublicationRequiresManagerInPreviewParticipants(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	seedUser(t, f.env, "unselected-manager", "password1", "Manager")
+	manager, err := f.env.userRepo.FindByUsername(f.env.ctx, "unselected-manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "未选负责人", "goal": "预览必须一致", "chat_session_id": session,
+		"manager_user_id": manager.ID.String(),
+		"participants":    []any{map[string]any{"user_id": owner.String(), "role": "执行人"}},
+		"items":           []any{map[string]any{"id": uuid.NewString(), "title": "任务", "requirements": "要求", "criteria": "标准", "assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 1, "dependencies": []string{}}},
+	}, http.StatusBadRequest)
+}
+
+func TestPrivateProjectDraftPublicationRollsBackEveryStage(t *testing.T) {
+	for _, table := range []string{"projects", "project_roles", "project_members", "task_types", "task_statuses", "task_counters", "tasks", "task_assignees", "task_activities", "notifications", "task_links", "project_drafts"} {
+		t.Run(table, func(t *testing.T) {
+			f, owner, session, _ := newProjectDraftFixture(t)
+			d := publicationDraft(t, f, owner, session)
+			before := publicationWriteCounts(t, f.env)
+			if _, err := f.env.db.Exec(`CREATE FUNCTION reject_publication_stage() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected publication failure'; END $$`); err != nil {
+				t.Fatal(err)
+			}
+			event := "INSERT"
+			if table == "project_drafts" {
+				event = "UPDATE"
+			}
+			if _, err := f.env.db.Exec(`CREATE TRIGGER reject_publication_stage BEFORE ` + event + ` ON ` + table + ` FOR EACH ROW EXECUTE FUNCTION reject_publication_stage()`); err != nil {
+				t.Fatal(err)
+			}
+			path := f.base + "/" + d["id"].(string)
+			input := map[string]any{"expected_version": 1, "publication_id": uuid.New()}
+			f.request(t, http.MethodPost, path+"/publish", input, http.StatusInternalServerError)
+			if after := publicationWriteCounts(t, f.env); !reflect.DeepEqual(before, after) {
+				t.Fatalf("partial publication at %s: %v -> %v", table, before, after)
+			}
+			current := f.request(t, http.MethodGet, path, nil, http.StatusOK)
+			if current["state"] != "editable" || current["publication"] != nil || current["publication_id"] != nil {
+				t.Fatalf("failed publication froze draft or left receipt: %#v", current)
+			}
+			if _, err := f.env.db.Exec(`DROP TRIGGER reject_publication_stage ON ` + table); err != nil {
+				t.Fatal(err)
+			}
+			f.request(t, http.MethodPost, path+"/publish", input, http.StatusOK)
+		})
+	}
+}
+
+func publicationWriteCounts(t *testing.T, env *e2eEnv) []int {
+	t.Helper()
+	counts := make([]int, 0, 12)
+	for _, table := range []string{"projects", "project_roles", "project_members", "task_types", "task_statuses", "task_counters", "tasks", "task_assignees", "task_activities", "notifications", "task_links", "project_drafts"} {
+		var n int
+		if err := env.db.Get(&n, "SELECT count(*) FROM "+table); err != nil {
+			t.Fatal(err)
+		}
+		counts = append(counts, n)
+	}
+	return counts
+}

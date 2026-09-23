@@ -194,7 +194,7 @@ func (r *DraftRepository) CreateProjectDraftFile(ctx context.Context, draftID uu
 	var out *draftdom.ProjectDraftFile
 	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
 		var state string
-		if err := tx.GetContext(ctx, &state, `SELECT state FROM project_drafts WHERE id=$1 AND owner_user_id=$2`, draftID, user); err != nil {
+		if err := tx.GetContext(ctx, &state, `SELECT state FROM project_drafts WHERE id=$1 AND owner_user_id=$2 FOR UPDATE`, draftID, user); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return draftdom.ErrNotFound
 			}
@@ -333,7 +333,19 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			return err
 		}
 		adminRole, editorRole := uuid.New(), uuid.New()
-		adminPerms, _ := json.Marshal(map[string]bool{"*": true})
+		adminPerms, _ := json.Marshal(map[string]bool{
+			"projects.read": true, "projects.write": true,
+			"project.members.read": true, "project.members.write": true,
+			"project.roles.read": true, "project.roles.write": true,
+			"tasks.read": true, "tasks.read_all": true, "tasks.write": true, "tasks.manage": true,
+			"sprints.read": true, "sprints.write": true,
+			"docs.read": true, "docs.write": true,
+			"agents.read": true, "agents.write": true,
+			"conversations.read": true, "conversations.write": true,
+			"workflows.read": true, "workflows.write": true,
+			"environments.read": true, "environments.write": true, "environments.connect": true,
+			"annotations.read": true, "annotations.write": true, "annotations.resolve": true,
+		})
 		editorPerms, _ := json.Marshal(map[string]bool{"projects.read": true, "tasks.read": true, "tasks.write": true, "docs.read": true})
 		for _, role := range []struct {
 			id          uuid.UUID
@@ -358,7 +370,9 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			if !active {
 				return &draftdom.ProjectDraftValidationError{Message: "manager user is no longer active"}
 			}
-			members[managerID] = uuid.New()
+			if _, selected := members[managerID]; !selected {
+				return &draftdom.ProjectDraftValidationError{Message: "manager user must be a selected participant"}
+			}
 			adminUsers[managerID] = true
 		}
 		for _, participant := range d.Participants {
@@ -471,7 +485,7 @@ func (r *DraftRepository) UpdateProjectDraftFile(ctx context.Context, draftID, f
 	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		var state string
-		if err := tx.GetContext(ctx, &state, `SELECT state FROM project_drafts WHERE id=$1 AND owner_user_id=$2`, draftID, user); err != nil {
+		if err := tx.GetContext(ctx, &state, `SELECT state FROM project_drafts WHERE id=$1 AND owner_user_id=$2 FOR UPDATE`, draftID, user); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return draftdom.ErrNotFound
 			}

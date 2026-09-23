@@ -21,7 +21,7 @@ func validProjectDraftContent() ProjectDraftContent {
 			Dependencies: []string{},
 		}},
 		Participants: []ProjectDraftParticipant{{
-			UserID: "10000000-0000-4000-8000-000000000002",
+			UserID: "10000000-0000-4000-8000-000000000001",
 			Role:   "负责人",
 		}},
 		Materials: []ProjectDraftMaterial{{

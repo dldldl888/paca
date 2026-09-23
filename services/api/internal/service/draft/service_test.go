@@ -2,7 +2,11 @@ package draftsvc
 
 import (
 	"encoding/json"
+	"errors"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
+	"github.com/google/uuid"
 	"strings"
 	"testing"
 )
@@ -10,6 +14,16 @@ import (
 func validContent() draftdom.Content {
 	return draftdom.Content{Goal: "PRIVATE", Items: []draftdom.Item{{ID: "10000000-0000-4000-8000-000000000001", Title: "合成任务", Requirements: "交付", Criteria: "验收", AssigneeMemberID: "20000000-0000-4000-8000-000000000001", DueDate: "2026-12-01T23:59:00+08:00", Importance: 2}}}
 }
+
+func TestPublishProjectDraftRequiresHumanSession(t *testing.T) {
+	s := &Service{}
+	ctx := authz.WithActorID(t.Context(), uuid.New())
+	_, err := s.PublishProjectDraft(ctx, uuid.New(), 1, uuid.New())
+	if !errors.Is(err, taskdom.ErrTaskForbidden) {
+		t.Fatalf("non-human publication was not rejected: %v", err)
+	}
+}
+
 func TestDraftValidationAndProjection(t *testing.T) {
 	for _, test := range []struct {
 		name              string
