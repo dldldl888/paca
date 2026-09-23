@@ -35,6 +35,101 @@ type Content struct {
 	Sources     []string `json:"sources"`
 	Assumptions []string `json:"assumptions"`
 }
+
+// ProjectDraftContent is the private, pre-project portion of a new project
+// plan. It intentionally stores stable user/document identifiers only; no
+// project or member row is created until a later publish transaction.
+type ProjectDraftContent struct {
+	Name          string                    `json:"name"`
+	Goal          string                    `json:"goal"`
+	ManagerUserID string                    `json:"manager_user_id,omitempty"`
+	Participants  []ProjectDraftParticipant `json:"participants"`
+	Materials     []ProjectDraftMaterial    `json:"materials"`
+}
+
+type ProjectDraftParticipant struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role,omitempty"`
+}
+
+type ProjectDraftMaterial struct {
+	ID       string   `json:"id"`
+	Kind     string   `json:"kind"`
+	Purpose  string   `json:"purpose,omitempty"`
+	TaskIDs  []string `json:"task_ids,omitempty"`
+	Required bool     `json:"required"`
+}
+
+type ProjectDraft struct {
+	ProjectDraftContent
+	ID            uuid.UUID `json:"id"`
+	OwnerUserID   uuid.UUID `json:"owner_user_id"`
+	ChatSessionID uuid.UUID `json:"chat_session_id"`
+	Version       int       `json:"version"`
+	State         string    `json:"state"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func (c *ProjectDraftContent) Normalize() {
+	if c.Participants == nil {
+		c.Participants = []ProjectDraftParticipant{}
+	}
+	if c.Materials == nil {
+		c.Materials = []ProjectDraftMaterial{}
+	}
+}
+
+func (c ProjectDraftContent) ValidateStructure() error {
+	if strings.TrimSpace(c.Name) == "" || utf8.RuneCountInString(c.Name) > 200 {
+		return errors.New("project name is required and must be at most 200 characters")
+	}
+	if utf8.RuneCountInString(c.Goal) > 10000 {
+		return errors.New("project goal exceeds limit")
+	}
+	if c.ManagerUserID != "" {
+		id, err := uuid.Parse(c.ManagerUserID)
+		if err != nil || id == uuid.Nil || id.String() != c.ManagerUserID {
+			return errors.New("manager_user_id must be a canonical UUID")
+		}
+	}
+	if len(c.Participants) > 100 || len(c.Materials) > 100 {
+		return errors.New("too many project participants or materials")
+	}
+	seenUsers := map[string]bool{}
+	for _, participant := range c.Participants {
+		id, err := uuid.Parse(participant.UserID)
+		if err != nil || id == uuid.Nil || id.String() != participant.UserID || seenUsers[participant.UserID] {
+			return errors.New("participant user_id must be unique canonical UUIDs")
+		}
+		seenUsers[participant.UserID] = true
+		if utf8.RuneCountInString(participant.Role) > 200 {
+			return errors.New("participant role exceeds limit")
+		}
+	}
+	seenMaterials := map[string]bool{}
+	for _, material := range c.Materials {
+		id, err := uuid.Parse(material.ID)
+		if err != nil || id == uuid.Nil || id.String() != material.ID || seenMaterials[material.ID] {
+			return errors.New("material id must be unique canonical UUID")
+		}
+		if material.Kind != "document" && material.Kind != "file" {
+			return errors.New("material kind must be document or file")
+		}
+		seenMaterials[material.ID] = true
+		if utf8.RuneCountInString(material.Purpose) > 500 {
+			return errors.New("material purpose exceeds limit")
+		}
+		for _, taskID := range material.TaskIDs {
+			task, err := uuid.Parse(taskID)
+			if err != nil || task == uuid.Nil || task.String() != taskID {
+				return errors.New("material task_ids must be canonical UUIDs")
+			}
+		}
+	}
+	return nil
+}
+
 type Generation struct {
 	ID             uuid.UUID  `json:"id"`
 	Version        int        `json:"version"`

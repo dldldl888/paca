@@ -284,6 +284,23 @@ func New(deps Deps) http.Handler {
 					Post("/projects", deps.Project.CreateProject)
 			})
 
+			// Private new-project drafts live outside the formal project tree.
+			// Creating and editing one requires a human JWT with the same
+			// global capability used to create a project; publication remains a
+			// separate flow once the draft is complete.
+			if deps.Draft != nil {
+				r.Route("/project-drafts", func(r chi.Router) {
+					r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(httpmw.RequireJWTAuth())
+					r.Use(httpmw.RequireFreshPassword())
+					r.Use(httpmw.RequirePermissions(deps.Authorizer, httpmw.GlobalScope(), authz.PermissionProjectsCreate))
+					r.Get("/", deps.Draft.ProjectList)
+					r.Post("/", deps.Draft.ProjectCreate)
+					r.Get("/{draftId}", deps.Draft.ProjectGet)
+					r.Patch("/{draftId}", deps.Draft.ProjectUpdate)
+				})
+			}
+
 			// Port forward resolution — how the Paca browser extension
 			// turns "I'm on host:<port>" into "this is environment X in
 			// project Y" before it knows which project-scoped endpoint to

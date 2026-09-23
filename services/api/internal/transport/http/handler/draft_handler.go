@@ -259,3 +259,93 @@ func (h *DraftHandler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 	presenter.OK(w, r, d)
 }
+
+func projectDraftID(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "draftId"))
+	if err != nil {
+		return uuid.Nil, apierr.New(apierr.CodeBadRequest, "invalid project draft id")
+	}
+	return id, nil
+}
+
+func (h *DraftHandler) ProjectList(w http.ResponseWriter, r *http.Request) {
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	items, err := h.svc.ListProjectDrafts(r.Context())
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, map[string]any{"items": items})
+}
+
+func (h *DraftHandler) ProjectCreate(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		draftdom.ProjectDraftContent
+		ChatSessionID uuid.UUID `json:"chat_session_id"`
+	}
+	if err := draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, err := h.svc.CreateProjectDraft(r.Context(), in.ProjectDraftContent, in.ChatSessionID)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.Created(w, r, d)
+}
+
+func (h *DraftHandler) ProjectGet(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, err := h.svc.GetProjectDraft(r.Context(), id)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, d)
+}
+
+func (h *DraftHandler) ProjectUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		draftdom.ProjectDraftContent
+		ExpectedVersion int `json:"expected_version"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	d, err := h.svc.UpdateProjectDraft(r.Context(), id, in.ExpectedVersion, in.ProjectDraftContent)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, d)
+}

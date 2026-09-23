@@ -2550,6 +2550,23 @@ func (s *Service) ListGlobalChatSessions(ctx context.Context, agentID, actorUser
 	return s.readableChatSessions(ctx, sessions)
 }
 
+// ValidatePrivateGlobalChatSession confirms that a human owns the global chat
+// session used to anchor a private project draft. It deliberately does not
+// grant project creation or conversation write permissions.
+func (s *Service) ValidatePrivateGlobalChatSession(ctx context.Context, sessionID, userID uuid.UUID) error {
+	if sessionID == uuid.Nil || userID == uuid.Nil || s.repo == nil {
+		return agentdom.ErrChatSessionNotFound
+	}
+	session, err := s.repo.FindChatSessionByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session.ProjectID != uuid.Nil || session.MemberID != uuid.Nil || session.ActorUserID == nil || *session.ActorUserID != userID {
+		return agentdom.ErrChatSessionNotFound
+	}
+	return nil
+}
+
 // StartGlobalChatSession creates a new global chat session and publishes
 // the initial message trigger.
 func (s *Service) StartGlobalChatSession(ctx context.Context, agentID, actorUserID uuid.UUID, message string, contextItems []agentdom.ContextItemRef, onBusy string) (*agentdom.AgentChatSession, *agentdom.AgentConversation, error) {

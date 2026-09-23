@@ -10,6 +10,7 @@ import (
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/events"
+	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/Paca-AI/api/internal/platform/messaging"
 	pg "github.com/Paca-AI/api/internal/repository/postgres"
@@ -385,6 +386,55 @@ func (s *Service) Import(ctx context.Context, pid, id uuid.UUID, expected int, g
 		}
 		return pg.SaveDraft(ctx, tx, d)
 	})
+}
+
+func (s *Service) CreateProjectDraft(ctx context.Context, content draftdom.ProjectDraftContent, sessionID uuid.UUID) (*draftdom.ProjectDraft, error) {
+	if err := content.ValidateStructure(); err != nil {
+		return nil, err
+	}
+	user, ok := authz.ActorIDFromContext(ctx)
+	if !ok || user == uuid.Nil {
+		return nil, draftdom.ErrNotFound
+	}
+	if err := s.agents.ValidatePrivateGlobalChatSession(ctx, sessionID, user); err != nil {
+		return nil, err
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	return s.Repo.CreateProjectDraft(ctx, content, sessionID)
+}
+
+func (s *Service) GetProjectDraft(ctx context.Context, id uuid.UUID) (*draftdom.ProjectDraft, error) {
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	return s.Repo.GetProjectDraft(ctx, id)
+}
+
+func (s *Service) ListProjectDrafts(ctx context.Context) ([]*draftdom.ProjectDraft, error) {
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	return s.Repo.ListProjectDrafts(ctx)
+}
+
+func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected int, content draftdom.ProjectDraftContent) (*draftdom.ProjectDraft, error) {
+	if err := content.ValidateStructure(); err != nil {
+		return nil, err
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	return s.Repo.UpdateProjectDraft(ctx, id, expected, content)
 }
 
 func (s *Service) WithDeliveryGate(gate *delivery.Gate) *Service { s.gate = gate; return s }
