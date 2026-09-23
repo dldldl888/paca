@@ -509,6 +509,25 @@ func (s *Service) ListProjectDrafts(ctx context.Context) ([]*draftdom.ProjectDra
 	return s.Repo.ListProjectDrafts(ctx)
 }
 
+func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expected int) (*draftdom.ProjectDraftPreview, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	d, err := s.Repo.GetProjectDraft(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if d.Version != expected {
+		return nil, draftdom.ErrConflict
+	}
+	return d.Preview(), nil
+}
+
 // SearchProjectDraftMaterials returns metadata for documents the current
 // owner can actually read. The document service applies the same current
 // visibility predicate as the regular document list/detail endpoints.

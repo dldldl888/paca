@@ -115,6 +115,23 @@ type ProjectDraftWebCandidate struct {
 	ProcessedStatus string    `json:"processed_status"`
 }
 
+type ProjectDraftPreviewIssue struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+type ProjectDraftPreview struct {
+	ID           uuid.UUID                  `json:"id"`
+	Version      int                        `json:"version"`
+	Name         string                     `json:"name"`
+	Goal         string                     `json:"goal"`
+	Items        []ProjectDraftItem         `json:"items"`
+	Participants []ProjectDraftParticipant  `json:"participants"`
+	Materials    []ProjectDraftMaterial     `json:"materials"`
+	Issues       []ProjectDraftPreviewIssue `json:"issues"`
+	CanPublish   bool                       `json:"can_publish"`
+}
+
 type ProjectDraftFile struct {
 	ID               uuid.UUID `json:"id"`
 	DraftID          uuid.UUID `json:"draft_id"`
@@ -256,6 +273,63 @@ func (c ProjectDraftContent) ValidateStructure() error {
 		}
 	}
 	return nil
+}
+
+func (d *ProjectDraft) Preview() *ProjectDraftPreview {
+	p := &ProjectDraftPreview{
+		ID: d.ID, Version: d.Version, Name: d.Name, Goal: d.Goal,
+		Items: append([]ProjectDraftItem{}, d.Items...), Participants: append([]ProjectDraftParticipant{}, d.Participants...), Materials: append([]ProjectDraftMaterial{}, d.Materials...),
+		Issues: []ProjectDraftPreviewIssue{}, CanPublish: true,
+	}
+	add := func(field, message string) {
+		p.Issues = append(p.Issues, ProjectDraftPreviewIssue{Field: field, Message: message})
+	}
+	if err := d.ProjectDraftContent.ValidateStructure(); err != nil {
+		add("draft", err.Error())
+	}
+	if strings.TrimSpace(d.Goal) == "" {
+		add("goal", "项目目标不能为空")
+	}
+	if len(d.Items) == 0 {
+		add("items", "至少添加一项任务")
+	}
+	if len(d.Participants) == 0 {
+		add("participants", "至少选择一名参与人")
+	}
+	for i, item := range d.Items {
+		prefix := fmt.Sprintf("items[%d].", i)
+		if strings.TrimSpace(item.Title) == "" {
+			add(prefix+"title", "任务标题不能为空")
+		}
+		if strings.TrimSpace(item.Requirements) == "" {
+			add(prefix+"requirements", "任务要求不能为空")
+		}
+		if strings.TrimSpace(item.Criteria) == "" {
+			add(prefix+"criteria", "验收标准不能为空")
+		}
+		if strings.TrimSpace(item.AssigneeUserID) == "" {
+			add(prefix+"assignee_user_id", "请选择任务负责人")
+		}
+		if _, err := time.Parse(time.RFC3339, item.DueDate); err != nil {
+			add(prefix+"due_date", "截止时间必须包含明确时区")
+		}
+		if item.StartDate != "" {
+			start, startErr := time.Parse(time.RFC3339, item.StartDate)
+			due, dueErr := time.Parse(time.RFC3339, item.DueDate)
+			if startErr != nil {
+				add(prefix+"start_date", "开始时间必须包含明确时区")
+			} else if dueErr == nil && start.After(due) {
+				add(prefix+"start_date", "开始时间不得晚于截止时间")
+			}
+		}
+	}
+	for i, material := range d.Materials {
+		if material.Required && material.ProcessedStatus != "ready" {
+			add(fmt.Sprintf("materials[%d]", i), "必要资料必须可读取且已处理")
+		}
+	}
+	p.CanPublish = len(p.Issues) == 0
+	return p
 }
 
 type Generation struct {

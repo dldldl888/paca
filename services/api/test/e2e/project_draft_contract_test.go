@@ -64,6 +64,37 @@ func TestPrivateProjectDraftWebSearchReportsUnavailableProvider(t *testing.T) {
 	}
 }
 
+func TestPrivateProjectDraftPreviewBindsVersionAndReportsIssues(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "预览项目", "goal": "验证预览", "chat_session_id": session,
+	}, http.StatusCreated)
+	path := f.base + "/" + d["id"].(string)
+	empty := f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusOK)
+	if empty["can_publish"] != false || len(empty["issues"].([]any)) == 0 {
+		t.Fatalf("empty draft should be blocked by preview: %#v", empty)
+	}
+	itemID := uuid.NewString()
+	updated := f.request(t, http.MethodPatch, path, map[string]any{
+		"expected_version": 1,
+		"name":             "预览项目", "goal": "验证预览", "items": []any{map[string]any{
+			"id": itemID, "title": "可执行任务", "requirements": "交付要求", "criteria": "验收标准",
+			"assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials":    []any{},
+	}, http.StatusOK)
+	if updated["version"] != float64(2) {
+		t.Fatalf("expected updated draft version 2: %#v", updated)
+	}
+	valid := f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 2}, http.StatusOK)
+	if valid["version"] != float64(2) || valid["can_publish"] != true {
+		t.Fatalf("valid draft should be publishable: %#v", valid)
+	}
+	f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusConflict)
+}
+
 func TestPrivateProjectDraftFileUploadTracksParsingAndOwnerIsolation(t *testing.T) {
 	f, _, session, _ := newProjectDraftFixture(t)
 	d := f.request(t, http.MethodPost, f.base, map[string]any{

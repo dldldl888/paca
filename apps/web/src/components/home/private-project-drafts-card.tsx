@@ -11,6 +11,7 @@ import {
 	type ProjectDraft,
 	projectDraftFilesQueryOptions,
 	projectDraftMaterialsQueryOptions,
+	projectDraftPreviewQueryOptions,
 	projectDraftsQueryOptions,
 	projectDraftWebSearchQueryOptions,
 	uploadProjectDraftFile,
@@ -46,6 +47,7 @@ export function PrivateProjectDraftsCard({
 	const [webSearchOpen, setWebSearchOpen] = useState(false);
 	const [webSearch, setWebSearch] = useState("");
 	const [submittedWebSearch, setSubmittedWebSearch] = useState("");
+	const [previewDraftId, setPreviewDraftId] = useState<string>();
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
 	const [uploadError, setUploadError] = useState("");
 	const materials = useQuery({
@@ -56,13 +58,23 @@ export function PrivateProjectDraftsCard({
 		...projectDraftWebSearchQueryOptions(submittedWebSearch),
 		enabled: allowed && webSearchOpen && submittedWebSearch.length > 0,
 	});
-
-	if (!allowed) return null;
 	const visibleDrafts = chatSessionId
 		? (drafts.data ?? []).filter(
 				(draft) => draft.chat_session_id === chatSessionId,
 			)
 		: (drafts.data ?? []);
+	const previewDraft = visibleDrafts.find(
+		(draft) => draft.id === previewDraftId,
+	);
+	const preview = useQuery({
+		...projectDraftPreviewQueryOptions(
+			previewDraftId ?? "",
+			previewDraft?.version ?? 0,
+		),
+		enabled: allowed && !!previewDraft,
+	});
+
+	if (!allowed) return null;
 	if (
 		!drafts.isPending &&
 		!drafts.isError &&
@@ -145,6 +157,17 @@ export function PrivateProjectDraftsCard({
 											}}
 										/>
 									</label>
+									<button
+										type="button"
+										className="mt-2 ml-3 text-xs text-primary underline-offset-4 hover:underline"
+										onClick={() =>
+											setPreviewDraftId((current) =>
+												current === draft.id ? undefined : draft.id,
+											)
+										}
+									>
+										{t("home.privateDrafts.preview")}
+									</button>
 								</div>
 								<Badge variant="outline" className="shrink-0">
 									{t(`home.privateDrafts.status.${statusKey(draft)}`)}
@@ -152,6 +175,36 @@ export function PrivateProjectDraftsCard({
 							</li>
 						))}
 					</ul>
+				)}
+				{previewDraft && (
+					<div className="mt-3 rounded-md border border-border/50 px-3 py-2 text-sm">
+						{preview.isPending ? (
+							<p className="text-muted-foreground">
+								{t("home.privateDrafts.materialLoading")}
+							</p>
+						) : preview.isError ? (
+							<p className="text-destructive">
+								{t("home.privateDrafts.materialError")}
+							</p>
+						) : preview.data?.can_publish ? (
+							<p className="text-green-600">
+								{t("home.privateDrafts.previewReady")}
+							</p>
+						) : (
+							<>
+								<p className="text-destructive">
+									{t("home.privateDrafts.previewIssues")}
+								</p>
+								<ul className="mt-1 list-disc pl-4 text-xs text-muted-foreground">
+									{preview.data?.issues.map((issue) => (
+										<li key={`${issue.field}:${issue.message}`}>
+											{issue.message}
+										</li>
+									))}
+								</ul>
+							</>
+						)}
+					</div>
 				)}
 				{uploadError && (
 					<p className="mt-2 text-xs text-destructive">{uploadError}</p>

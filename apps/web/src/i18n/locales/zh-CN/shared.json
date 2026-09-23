@@ -90,7 +90,10 @@
 			"webSearchPlaceholder": "输入公开查询…",
 			"webSearchLoading": "公开检索中",
 			"webSearchError": "公开检索暂时不可用",
-			"webSearchEmpty": "没有找到公开结果"
+			"webSearchEmpty": "没有找到公开结果",
+			"preview": "预览",
+			"previewReady": "可以确认",
+			"previewIssues": "需要补充信息"
 		},
 		"updateBanner": {
 			"title": "有可用更新",

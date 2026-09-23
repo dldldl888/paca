@@ -45,6 +45,9 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.webSearchLoading": "公开检索中",
 				"home.privateDrafts.webSearchError": "公开检索暂时不可用",
 				"home.privateDrafts.webSearchEmpty": "没有找到公开结果",
+				"home.privateDrafts.preview": "预览",
+				"home.privateDrafts.previewReady": "可以确认",
+				"home.privateDrafts.previewIssues": "需要补充信息",
 			})[key] ?? key,
 	}),
 }));
@@ -187,5 +190,40 @@ describe("PrivateProjectDraftsCard", () => {
 			"href",
 			"https://example.com/page",
 		);
+	});
+
+	it("opens a version-bound preview without publishing", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(
+			["private-project-drafts"],
+			[
+				{
+					id: "draft-preview",
+					name: "预览项目",
+					version: 2,
+					state: "editable",
+				},
+			],
+		);
+		queryClient.setQueryData(
+			["private-project-draft-preview", "draft-preview", 2],
+			{
+				id: "draft-preview",
+				version: 2,
+				can_publish: false,
+				issues: [{ field: "items", message: "至少添加一项任务" }],
+			},
+		);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "预览" }));
+		expect(await screen.findByText("至少添加一项任务")).toBeInTheDocument();
+		expect(screen.getByText("需要补充信息")).toBeInTheDocument();
+		expect(screen.queryByText("确认并分派")).not.toBeInTheDocument();
 	});
 });

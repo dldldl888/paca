@@ -90,7 +90,10 @@
 			"webSearchPlaceholder": "Enter a public query…",
 			"webSearchLoading": "Searching public web",
 			"webSearchError": "Public web search is temporarily unavailable",
-			"webSearchEmpty": "No public results found"
+			"webSearchEmpty": "No public results found",
+			"preview": "Preview",
+			"previewReady": "Ready to confirm",
+			"previewIssues": "More information needed"
 		},
 		"updateBanner": {
 			"title": "Update available",

@@ -340,6 +340,36 @@ func (h *DraftHandler) ProjectWebSearch(w http.ResponseWriter, r *http.Request) 
 	presenter.OK(w, r, map[string]any{"items": items, "coverage": map[string]any{"source": "public", "limit": limit}})
 }
 
+func (h *DraftHandler) ProjectPreview(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		ExpectedVersion int `json:"expected_version"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	if in.ExpectedVersion < 1 {
+		draftError(w, r, apierr.New(apierr.CodeBadRequest, "expected_version must be positive"))
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	preview, err := h.svc.PreviewProjectDraft(r.Context(), id, in.ExpectedVersion)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, preview)
+}
+
 func (h *DraftHandler) ProjectFileList(w http.ResponseWriter, r *http.Request) {
 	id, err := projectDraftID(r)
 	if err != nil {

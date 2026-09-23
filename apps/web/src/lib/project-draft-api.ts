@@ -84,6 +84,18 @@ export interface ProjectDraftWebCandidate {
 	processed_status: "unverified";
 }
 
+export interface ProjectDraftPreview {
+	id: string;
+	version: number;
+	name: string;
+	goal: string;
+	items: ProjectDraft["items"];
+	participants: ProjectDraft["participants"];
+	materials: ProjectDraft["materials"];
+	issues: Array<{ field: string; message: string }>;
+	can_publish: boolean;
+}
+
 export const projectDraftsQueryOptions = queryOptions({
 	queryKey: ["private-project-drafts"],
 	queryFn: async () =>
@@ -129,6 +141,21 @@ export const projectDraftWebSearchQueryOptions = (query: string) =>
 					SuccessEnvelope<{ items: ProjectDraftWebCandidate[] }>
 				>("/project-drafts/web-search", { params: { q: query, limit: 20 } })
 			).data.data.items,
+	});
+
+export const projectDraftPreviewQueryOptions = (
+	draftId: string,
+	version: number,
+) =>
+	queryOptions({
+		queryKey: ["private-project-draft-preview", draftId, version],
+		queryFn: async () =>
+			(
+				await apiClient.instance.post<SuccessEnvelope<ProjectDraftPreview>>(
+					`/project-drafts/${draftId}/preview`,
+					{ expected_version: version },
+				)
+			).data.data,
 	});
 
 export async function uploadProjectDraftFile(draftId: string, file: File) {
