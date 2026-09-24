@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -183,6 +184,58 @@ func (r *DraftRepository) ListProjectDrafts(ctx context.Context) ([]*draftdom.Pr
 		result = append(result, d)
 	}
 	return result, nil
+}
+
+// ValidateProjectDraftUsers rechecks the live account state used by a draft
+// preview. Publication repeats the same checks inside its write transaction;
+// preview only reports the current state so the owner can correct it before
+// confirming.
+func (r *DraftRepository) ValidateProjectDraftUsers(ctx context.Context, content draftdom.ProjectDraftContent) ([]draftdom.ProjectDraftPreviewIssue, error) {
+	type reference struct {
+		field string
+		id    uuid.UUID
+	}
+	references := make([]reference, 0, len(content.Participants)+len(content.Items)+1)
+	add := func(field, rawID string) {
+		id, err := uuid.Parse(rawID)
+		if err == nil && id != uuid.Nil {
+			references = append(references, reference{field: field, id: id})
+		}
+	}
+	for i, participant := range content.Participants {
+		add(fmt.Sprintf("participants[%d].user_id", i), participant.UserID)
+	}
+	if content.ManagerUserID != "" {
+		add("manager_user_id", content.ManagerUserID)
+	}
+	for i, item := range content.Items {
+		add(fmt.Sprintf("items[%d].assignee_user_id", i), item.AssigneeUserID)
+	}
+	if len(references) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(references))
+	args := make([]any, len(references))
+	for i, ref := range references {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = ref.id.String()
+	}
+	var activeIDs []uuid.UUID
+	query := `SELECT id FROM users WHERE id IN (` + strings.Join(placeholders, ",") + `) AND deleted_at IS NULL`
+	if err := DeliveryQuery(ctx, r.db).SelectContext(ctx, &activeIDs, query, args...); err != nil {
+		return nil, err
+	}
+	active := make(map[uuid.UUID]struct{}, len(activeIDs))
+	for _, id := range activeIDs {
+		active[id] = struct{}{}
+	}
+	issues := make([]draftdom.ProjectDraftPreviewIssue, 0)
+	for _, ref := range references {
+		if _, ok := active[ref.id]; !ok {
+			issues = append(issues, draftdom.ProjectDraftPreviewIssue{Field: ref.field, Message: "人员已停用或不存在，请重新选择在职账号"})
+		}
+	}
+	return issues, nil
 }
 
 func (r *DraftRepository) CreateProjectDraftFile(ctx context.Context, draftID uuid.UUID, f *attachmentdom.File) (*draftdom.ProjectDraftFile, error) {

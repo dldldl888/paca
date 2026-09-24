@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -154,6 +155,41 @@ func TestPrivateProjectDraftPublicationRejectsInactiveParticipant(t *testing.T) 
 	}
 	f.request(t, http.MethodPost, f.base+"/"+d["id"].(string)+"/publish", map[string]any{"expected_version": 1, "publication_id": uuid.New()}, http.StatusBadRequest)
 	_ = owner
+}
+
+func TestPrivateProjectDraftPreviewReportsInactiveParticipant(t *testing.T) {
+	f, _, session, _ := newProjectDraftFixture(t)
+	seedUser(t, f.env, "inactive-preview-person", "password1", "Inactive preview")
+	inactive, err := f.env.userRepo.FindByUsername(f.env.ctx, "inactive-preview-person")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "停用预览", "goal": "预览时提示", "chat_session_id": session,
+		"participants": []any{map[string]any{"user_id": inactive.ID.String()}},
+		"items": []any{map[string]any{
+			"id": uuid.NewString(), "title": "任务", "requirements": "要求", "criteria": "标准",
+			"assignee_user_id": inactive.ID.String(), "due_date": "2026-12-01T18:00:00+08:00", "dependencies": []string{},
+		}},
+	}, http.StatusCreated)
+	if _, err := f.env.db.Exec(`UPDATE users SET deleted_at=now() WHERE id=$1`, inactive.ID); err != nil {
+		t.Fatal(err)
+	}
+	preview := f.request(t, http.MethodPost, f.base+"/"+d["id"].(string)+"/preview", map[string]any{"expected_version": 1}, http.StatusOK)
+	if preview["can_publish"] != false {
+		t.Fatalf("preview should block inactive participant: %#v", preview)
+	}
+	found := false
+	for _, raw := range preview["issues"].([]any) {
+		issue := raw.(map[string]any)
+		if strings.Contains(issue["message"].(string), "停用") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("preview did not explain inactive participant: %#v", preview)
+	}
 }
 
 func TestPrivateProjectDraftPublicationRequiresManagerInPreviewParticipants(t *testing.T) {

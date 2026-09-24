@@ -529,6 +529,11 @@ func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expecte
 		return nil, draftdom.ErrConflict
 	}
 	preview := d.Preview()
+	userIssues, err := s.Repo.ValidateProjectDraftUsers(ctx, d.ProjectDraftContent)
+	if err != nil {
+		return nil, err
+	}
+	preview.Issues = append(preview.Issues, userIssues...)
 	if len(d.Materials) > 0 {
 		if s.documents == nil {
 			preview.Issues = append(preview.Issues, draftdom.ProjectDraftPreviewIssue{
