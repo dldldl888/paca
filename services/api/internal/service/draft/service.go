@@ -534,32 +534,45 @@ func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expecte
 		return nil, err
 	}
 	preview.Issues = append(preview.Issues, userIssues...)
-	if len(d.Materials) > 0 {
-		if s.documents == nil {
-			preview.Issues = append(preview.Issues, draftdom.ProjectDraftPreviewIssue{
-				Field:   "materials",
-				Message: "资料权限服务不可用",
-			})
-		} else {
-			for i, material := range d.Materials {
-				if material.SourceType != "internal" {
-					continue
-				}
-				documentID, parseErr := uuid.Parse(material.ID)
-				if parseErr != nil {
-					continue
-				}
-				if _, accessErr := s.documents.CheckDocumentAccess(ctx, uuid.Nil, documentID, docdom.AccessRead); accessErr != nil {
-					preview.Issues = append(preview.Issues, draftdom.ProjectDraftPreviewIssue{
-						Field:   fmt.Sprintf("materials[%d]", i),
-						Message: "资料已不可读，请移除或重新选择当前可读资料",
-					})
-				}
-			}
-		}
+	materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, d.Materials, false)
+	if materialErr != nil {
+		return nil, materialErr
 	}
+	preview.Issues = append(preview.Issues, materialIssues...)
 	preview.CanPublish = len(preview.Issues) == 0
 	return preview, nil
+}
+
+func (s *Service) projectDraftMaterialAccessIssues(ctx context.Context, materials []draftdom.ProjectDraftMaterial, returnAccessErrors bool) ([]draftdom.ProjectDraftPreviewIssue, error) {
+	if len(materials) == 0 {
+		return nil, nil
+	}
+	if s.documents == nil {
+		return []draftdom.ProjectDraftPreviewIssue{{
+			Field:   "materials",
+			Message: "资料权限服务不可用",
+		}}, nil
+	}
+	issues := make([]draftdom.ProjectDraftPreviewIssue, 0)
+	for i, material := range materials {
+		if material.SourceType != "internal" {
+			continue
+		}
+		documentID, parseErr := uuid.Parse(material.ID)
+		if parseErr != nil {
+			continue
+		}
+		if _, accessErr := s.documents.CheckDocumentAccess(ctx, uuid.Nil, documentID, docdom.AccessRead); accessErr != nil {
+			if returnAccessErrors && !errors.Is(accessErr, docdom.ErrDocNotFound) {
+				return nil, accessErr
+			}
+			issues = append(issues, draftdom.ProjectDraftPreviewIssue{
+				Field:   fmt.Sprintf("materials[%d]", i),
+				Message: "资料已不可读，请移除或重新选择当前可读资料",
+			})
+		}
+	}
+	return issues, nil
 }
 
 func (s *Service) PublishProjectDraft(ctx context.Context, id uuid.UUID, expected int, publication uuid.UUID) (*draftdom.ProjectDraftPublication, error) {
@@ -777,6 +790,13 @@ func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected
 		return nil, err
 	}
 	defer leave()
+	materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, content.Materials, true)
+	if materialErr != nil {
+		return nil, materialErr
+	}
+	if len(materialIssues) > 0 {
+		return nil, &draftdom.ProjectDraftValidationError{Message: materialIssues[0].Message}
+	}
 	return s.Repo.UpdateProjectDraft(ctx, id, expected, content)
 }
 
@@ -899,7 +919,14 @@ func (s *Service) ImportProjectDraft(ctx context.Context, id uuid.UUID, expected
 		var content draftdom.ProjectDraftContent
 		content, err = ParseProjectDraftGeneration(events, g.BaseEventIndex)
 		if err == nil {
-			return s.Repo.CompleteProjectDraftGeneration(ctx, id, generationID, expected, content)
+			var materialIssues []draftdom.ProjectDraftPreviewIssue
+			materialIssues, err = s.projectDraftMaterialAccessIssues(ctx, content.Materials, true)
+			if err == nil && len(materialIssues) > 0 {
+				err = &draftdom.ProjectDraftValidationError{Message: materialIssues[0].Message}
+			}
+			if err == nil {
+				return s.Repo.CompleteProjectDraftGeneration(ctx, id, generationID, expected, content)
+			}
 		}
 	}
 	_, _ = s.Repo.FailProjectDraftGeneration(ctx, id, generationID, err.Error())

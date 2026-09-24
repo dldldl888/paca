@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -243,6 +244,63 @@ func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) 
 	}
 	if !revokedIssue {
 		t.Fatalf("preview did not report the revoked source material: %#v", issues)
+	}
+}
+
+func TestPrivateProjectDraftUpdateRejectsRevokedInternalMaterial(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	projectID := createProjectForTasksViaAPI(t, f.env, f.client, f.token)
+	seedUser(t, f.env, "draft-update-material-owner", "password1", "Material owner")
+	materialUser, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-update-material-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docID := uuid.New()
+	if _, err := f.env.db.Exec(`INSERT INTO documents(id,project_id,title,content,visibility,owner_user_id) VALUES($1,$2,'更新撤权资料','[]','project',$3)`, docID, projectID, materialUser.ID); err != nil {
+		t.Fatal(err)
+	}
+	itemID := uuid.NewString()
+	content := map[string]any{
+		"name": "资料写入撤权", "goal": "撤权后不能写回旧资料", "chat_session_id": session,
+		"items": []any{map[string]any{
+			"id": itemID, "title": "引用资料", "requirements": "核验", "criteria": "通过",
+			"assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials": []any{map[string]any{
+			"id": docID, "kind": "document", "source_type": "internal", "processed_status": "ready",
+			"task_ids": []any{itemID}, "required": true,
+		}},
+	}
+	draft := f.request(t, http.MethodPost, f.base, content, http.StatusCreated)
+	path := f.base + "/" + draft["id"].(string)
+	delete(content, "chat_session_id")
+	content["expected_version"] = 1
+	readable := f.request(t, http.MethodPatch, path, content, http.StatusOK)
+	if readable["version"] != float64(2) || len(readable["materials"].([]any)) != 1 {
+		t.Fatalf("readable material was not saved: %#v", readable)
+	}
+	accessReq := mustRequest(f.env.ctx, t, http.MethodPatch, f.env.base+"/api/v1/projects/"+projectID+"/docs/"+docID.String()+"/access", jsonBody(t, map[string]any{
+		"expected_access_version": 1,
+		"visibility":              "private",
+	}))
+	accessReq.Header.Set("Authorization", "Bearer "+f.token)
+	accessResp := mustDo(t, f.client, accessReq)
+	defer accessResp.Body.Close()
+	assertStatus(t, accessResp, http.StatusOK)
+
+	content["expected_version"] = 2
+	content["name"] = "不能写入的修改"
+	f.request(t, http.MethodPatch, path, content, http.StatusBadRequest)
+	current := f.request(t, http.MethodGet, path, nil, http.StatusOK)
+	if current["version"] != float64(2) || current["name"] != "资料写入撤权" || len(current["materials"].([]any)) != 1 {
+		t.Fatalf("revoked material update changed the draft: %#v", current)
+	}
+	content["materials"] = []any{}
+	removed := f.request(t, http.MethodPatch, path, content, http.StatusOK)
+	if removed["version"] != float64(3) || len(removed["materials"].([]any)) != 0 {
+		t.Fatalf("owner could not remove revoked material: %#v", removed)
 	}
 }
 
@@ -565,6 +623,62 @@ func TestPrivateProjectDraftMultiTurnGenerationImportIsBoundedAndIdempotent(t *t
 	}
 	if got := f.request(t, "GET", path, nil, 200); got["owner_user_id"] != owner.String() {
 		t.Fatal("import changed draft owner")
+	}
+}
+
+func TestPrivateProjectDraftImportRejectsRevokedInternalMaterial(t *testing.T) {
+	f, owner, session, agentID := newProjectDraftFixture(t)
+	projectID := createProjectForTasksViaAPI(t, f.env, f.client, f.token)
+	seedUser(t, f.env, "draft-import-material-owner", "password1", "Material owner")
+	materialUser, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-import-material-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docID := uuid.New()
+	if _, err := f.env.db.Exec(`INSERT INTO documents(id,project_id,title,content,visibility,owner_user_id) VALUES($1,$2,'导入撤权资料','[]','project',$3)`, docID, projectID, materialUser.ID); err != nil {
+		t.Fatal(err)
+	}
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "导入撤权", "goal": "撤权后不能导入资料", "chat_session_id": session,
+	}, http.StatusCreated)
+	path := f.base + "/" + d["id"].(string)
+	started := f.request(t, http.MethodPost, path+"/generate", map[string]any{
+		"expected_version": 1, "agent_id": agentID, "message": "整理成项目草稿",
+	}, http.StatusOK)
+	generation := started["generation"].(map[string]any)
+	conversationID := uuid.MustParse(generation["conversation_id"].(string))
+	itemID := uuid.NewString()
+	valid := fmt.Sprintf(`{"name":"导入项目","goal":"完成目标","items":[{"id":"%s","title":"资料任务","requirements":"要求","criteria":"标准","assignee_user_id":"%s","dependencies":[]}],"participants":[{"user_id":"%s","role":"负责人"}],"materials":[{"id":"%s","kind":"document","source_type":"internal","processed_status":"ready","task_ids":["%s"],"required":true}]}`,
+		itemID, owner, owner, docID, itemID)
+	events := []*agentdom.AgentConversationEvent{
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 0, EventType: "user_message", EventSource: "user", Payload: map[string]any{"content": map[string]any{"type": "text", "text": "整理"}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 1, EventType: "agent_message_chunk", EventSource: "agent", Payload: map[string]any{"content": map[string]any{"type": "text", "text": valid}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 2, EventType: "turn_end", EventSource: "system", Payload: map[string]any{"stopReason": "end_turn"}},
+	}
+	for _, event := range events {
+		if err := f.env.agentRepo.CreateConversationEvent(f.env.ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.env.agentRepo.UpdateConversationStatus(f.env.ctx, conversationID, "finished"); err != nil {
+		t.Fatal(err)
+	}
+	accessReq := mustRequest(f.env.ctx, t, http.MethodPatch, f.env.base+"/api/v1/projects/"+projectID+"/docs/"+docID.String()+"/access", jsonBody(t, map[string]any{
+		"expected_access_version": 1,
+		"visibility":              "private",
+	}))
+	accessReq.Header.Set("Authorization", "Bearer "+f.token)
+	accessResp := mustDo(t, f.client, accessReq)
+	defer accessResp.Body.Close()
+	assertStatus(t, accessResp, http.StatusOK)
+
+	f.request(t, http.MethodPost, path+"/import", map[string]any{
+		"expected_version": 1,
+		"generation_id":    generation["id"],
+	}, http.StatusBadRequest)
+	current := f.request(t, http.MethodGet, path, nil, http.StatusOK)
+	if current["version"] != float64(1) || current["name"] != "导入撤权" || current["generation"].(map[string]any)["status"] != "failed" {
+		t.Fatalf("revoked material import changed the draft: %#v", current)
 	}
 }
 
