@@ -131,6 +131,9 @@ func (c *PublicWebSearchClient) Search(ctx context.Context, query string, limit 
 			SourceType: "web", AccessedAt: accessed, ReadStatus: "unverified", ProcessedStatus: "unverified",
 		})
 	}
+	if len(decoded.Results) > 0 && len(items) == 0 {
+		return nil, ErrPublicWebSearchUnavailable
+	}
 	return items, nil
 }
 

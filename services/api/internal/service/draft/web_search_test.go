@@ -117,6 +117,19 @@ func TestPublicWebSearchClientKeepsResultsWhenDiagnosticsUseUnknownShape(t *test
 	}
 }
 
+func TestPublicWebSearchClientRejectsWhenAllResultsAreInvalid(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"title":"Private","url":"file:///etc/passwd"},{"title":"Missing","url":""}]}`))
+	}))
+	defer server.Close()
+
+	client := &PublicWebSearchClient{Endpoint: server.URL, Client: server.Client()}
+	if _, err := client.Search(t.Context(), "query", 5); !errors.Is(err, ErrPublicWebSearchUnavailable) {
+		t.Fatalf("expected all-invalid upstream results to be unavailable, got %v", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
