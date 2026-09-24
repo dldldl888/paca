@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
 	type ProjectDraft,
+	ProjectDraftUploadError,
 	projectDraftFilesQueryOptions,
 	projectDraftMaterialsQueryOptions,
 	projectDraftPreviewQueryOptions,
@@ -64,7 +65,9 @@ export function PrivateProjectDraftsCard({
 	const [submittedWebSearch, setSubmittedWebSearch] = useState("");
 	const [previewDraftId, setPreviewDraftId] = useState<string>();
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
-	const [failedUploads, setFailedUploads] = useState<Record<string, File>>({});
+	const [failedUploads, setFailedUploads] = useState<
+		Record<string, { file: File; fileId?: string }>
+	>({});
 	const [uploadError, setUploadError] = useState("");
 	const [publishedDraftId, setPublishedDraftId] = useState<string>();
 	const [publishedProjectIDs, setPublishedProjectIDs] = useState<
@@ -96,7 +99,15 @@ export function PrivateProjectDraftsCard({
 		),
 		enabled: allowed && !!previewDraft,
 	});
-	async function uploadDraftFile(draftId: string, file: File) {
+	const previewFiles = useQuery({
+		...projectDraftFilesQueryOptions(previewDraftId ?? ""),
+		enabled: allowed && !!previewDraft,
+	});
+	async function uploadDraftFile(
+		draftId: string,
+		file: File,
+		retryFileId?: string,
+	) {
 		setUploadError("");
 		setUploadingDraftId(draftId);
 		setFailedUploads((current) => {
@@ -105,13 +116,20 @@ export function PrivateProjectDraftsCard({
 			return next;
 		});
 		try {
-			await uploadProjectDraftFile(draftId, file);
+			await uploadProjectDraftFile(draftId, file, retryFileId);
 			await qc.invalidateQueries({
 				queryKey: projectDraftFilesQueryOptions(draftId).queryKey,
 			});
-		} catch {
+		} catch (error) {
 			setUploadError(t("home.privateDrafts.uploadError"));
-			setFailedUploads((current) => ({ ...current, [draftId]: file }));
+			setFailedUploads((current) => ({
+				...current,
+				[draftId]: {
+					file,
+					fileId:
+						error instanceof ProjectDraftUploadError ? error.fileId : undefined,
+				},
+			}));
 		} finally {
 			setUploadingDraftId(undefined);
 		}
@@ -249,9 +267,15 @@ export function PrivateProjectDraftsCard({
 											type="button"
 											className="mt-2 ml-3 text-xs text-primary underline-offset-4 hover:underline"
 											disabled={!!uploadingDraftId}
-											onClick={() =>
-												void uploadDraftFile(draft.id, failedUploads[draft.id])
-											}
+											onClick={() => {
+												const failed = failedUploads[draft.id];
+												if (!failed) return;
+												void uploadDraftFile(
+													draft.id,
+													failed.file,
+													failed.fileId,
+												);
+											}}
 										>
 											{t("home.privateDrafts.retryUpload")}
 										</button>
@@ -279,6 +303,38 @@ export function PrivateProjectDraftsCard({
 				)}
 				{previewDraft && (
 					<div className="mt-3 rounded-md border border-border/50 px-3 py-2 text-sm">
+						{previewFiles.data
+							?.filter(
+								(file) =>
+									file.processing_status === "failed" ||
+									file.upload_status !== "uploaded",
+							)
+							.map((file) => (
+								<label
+									key={file.file_id}
+									className="mb-2 block text-xs text-destructive underline-offset-4 hover:underline"
+								>
+									{file.file_name}: {t("home.privateDrafts.retryUpload")}
+									<input
+										type="file"
+										accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+										className="sr-only"
+										disabled={!!uploadingDraftId}
+										onChange={(event) => {
+											const selected = event.currentTarget.files?.[0];
+											if (!selected) return;
+											const input = event.currentTarget;
+											void uploadDraftFile(
+												previewDraft.id,
+												selected,
+												file.file_id,
+											).finally(() => {
+												input.value = "";
+											});
+										}}
+									/>
+								</label>
+							))}
 						{preview.isPending ? (
 							<p className="text-muted-foreground">
 								{t("home.privateDrafts.materialLoading")}

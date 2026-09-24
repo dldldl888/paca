@@ -253,6 +253,66 @@ func (r *DraftRepository) GetProjectDraftFileRecord(ctx context.Context, draftID
 	return fileRecordToEntity(&row), nil
 }
 
+// ResetProjectDraftFile returns a durable upload session to pending while
+// holding the draft/file rows. A ready file is immutable; callers must upload
+// a new file instead of silently replacing parsed content.
+func (r *DraftRepository) ResetProjectDraftFile(ctx context.Context, draftID, fileID uuid.UUID) (*attachmentdom.File, error) {
+	user, err := projectDraftActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out *attachmentdom.File
+	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		var state string
+		if err := tx.GetContext(ctx, &state, `SELECT state FROM project_drafts WHERE id=$1 AND owner_user_id=$2 FOR UPDATE`, draftID, user); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return draftdom.ErrNotFound
+			}
+			return err
+		}
+		if state != "editable" {
+			return draftdom.ErrConflict
+		}
+		var row struct {
+			ID                string    `db:"id"`
+			StorageKey        string    `db:"storage_key"`
+			Bucket            string    `db:"bucket"`
+			FileName          string    `db:"file_name"`
+			ContentType       string    `db:"content_type"`
+			FileSize          int64     `db:"file_size"`
+			UploadStatus      string    `db:"upload_status"`
+			MultipartUploadID *string   `db:"multipart_upload_id"`
+			UploadedBy        *string   `db:"uploaded_by"`
+			CreatedAt         time.Time `db:"created_at"`
+			UpdatedAt         time.Time `db:"updated_at"`
+			ProcessingStatus  string    `db:"processing_status"`
+		}
+		if err := tx.GetContext(ctx, &row, `SELECT f.id,f.storage_key,f.bucket,f.file_name,f.content_type,f.file_size,f.upload_status,f.multipart_upload_id,f.uploaded_by,f.created_at,f.updated_at,p.processing_status FROM files f JOIN project_draft_files p ON p.file_id=f.id WHERE p.draft_id=$1 AND p.file_id=$2 AND p.owner_user_id=$3 FOR UPDATE`, draftID, fileID, user); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return draftdom.ErrNotFound
+			}
+			return err
+		}
+		if row.UploadStatus == string(attachmentdom.UploadStatusUploaded) && row.ProcessingStatus == "ready" {
+			return draftdom.ErrConflict
+		}
+		now := time.Now()
+		if _, err := tx.ExecContext(ctx, `UPDATE files SET upload_status=$2,multipart_upload_id=NULL,updated_at=$3 WHERE id=$1`, fileID, attachmentdom.UploadStatusPending, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE project_draft_files SET processing_status='pending',processing_error=NULL,extracted_text=NULL,updated_at=$3 WHERE draft_id=$1 AND file_id=$2 AND owner_user_id=$4`, draftID, fileID, now, user); err != nil {
+			return err
+		}
+		out = &attachmentdom.File{
+			ID: mustParseUUID(row.ID), StorageKey: row.StorageKey, Bucket: row.Bucket, FileName: row.FileName,
+			ContentType: row.ContentType, FileSize: row.FileSize, UploadStatus: attachmentdom.UploadStatusPending,
+			MultipartUploadID: nil, UploadedBy: stringPtrToUUIDPtr(row.UploadedBy), CreatedAt: row.CreatedAt, UpdatedAt: now,
+		}
+		return nil
+	})
+	return out, err
+}
+
 func (r *DraftRepository) ListProjectDraftFiles(ctx context.Context, draftID uuid.UUID) ([]*draftdom.ProjectDraftFile, error) {
 	user, err := projectDraftActor(ctx)
 	if err != nil {

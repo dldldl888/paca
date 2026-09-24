@@ -721,6 +721,30 @@ func (s *Service) CompleteProjectDraftFile(ctx context.Context, draftID, fileID 
 	return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusUploaded), "ready", "", &text)
 }
 
+func (s *Service) RetryProjectDraftFile(ctx context.Context, draftID, fileID uuid.UUID) (*attachmentdom.UploadSession, error) {
+	if err := s.requireProjectDraftCapability(ctx); err != nil {
+		return nil, err
+	}
+	if s.store == nil || s.bucket == "" {
+		return nil, errors.New("project draft file storage unavailable")
+	}
+	ctx, leave, err := s.enterDelivery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	file, err := s.Repo.ResetProjectDraftFile(ctx, draftID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	url, err := s.store.PresignPutObject(ctx, s.bucket, file.StorageKey, file.ContentType, time.Hour)
+	if err != nil {
+		_, _ = s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusFailed), "failed", "无法创建上传地址", nil)
+		return nil, err
+	}
+	return &attachmentdom.UploadSession{FileID: file.ID, UploadURL: url}, nil
+}
+
 func (s *Service) ListProjectDraftFiles(ctx context.Context, draftID uuid.UUID) ([]*draftdom.ProjectDraftFile, error) {
 	if err := s.requireProjectDraftCapability(ctx); err != nil {
 		return nil, err

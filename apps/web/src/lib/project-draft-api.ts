@@ -76,6 +76,16 @@ export interface ProjectDraftFile {
 	updated_at: string;
 }
 
+export class ProjectDraftUploadError extends Error {
+	readonly fileId: string;
+
+	constructor(fileId: string, message = "project draft file upload failed") {
+		super(message);
+		this.name = "ProjectDraftUploadError";
+		this.fileId = fileId;
+	}
+}
+
 export interface ProjectDraftWebCandidate {
 	title: string;
 	url: string;
@@ -188,26 +198,58 @@ export async function publishProjectDraft(
 	).data.data;
 }
 
-export async function uploadProjectDraftFile(draftId: string, file: File) {
-	const session = (
-		await apiClient.instance.post<
-			SuccessEnvelope<{ file_id: string; upload_url: string }>
-		>(`/project-drafts/${draftId}/files/initiate-upload`, {
-			file_name: file.name,
-			content_type: file.type || "application/octet-stream",
-			file_size: file.size,
-		})
-	).data.data;
-	const uploaded = await fetch(session.upload_url, {
-		method: "PUT",
-		headers: { "Content-Type": file.type || "application/octet-stream" },
-		body: file,
-	});
-	if (!uploaded.ok) throw new Error("upload failed");
-	return (
-		await apiClient.instance.post<SuccessEnvelope<ProjectDraftFile>>(
-			`/project-drafts/${draftId}/files/complete-upload`,
-			{ file_id: session.file_id },
-		)
-	).data.data;
+export async function uploadProjectDraftFile(
+	draftId: string,
+	file: File,
+	retryFileId?: string,
+) {
+	const session = retryFileId
+		? (
+				await apiClient.instance.post<
+					SuccessEnvelope<{ file_id: string; upload_url: string }>
+				>(`/project-drafts/${draftId}/files/retry-upload`, {
+					file_id: retryFileId,
+				})
+			).data.data
+		: (
+				await apiClient.instance.post<
+					SuccessEnvelope<{ file_id: string; upload_url: string }>
+				>(`/project-drafts/${draftId}/files/initiate-upload`, {
+					file_name: file.name,
+					content_type: file.type || "application/octet-stream",
+					file_size: file.size,
+				})
+			).data.data;
+	try {
+		const uploaded = await fetch(session.upload_url, {
+			method: "PUT",
+			headers: { "Content-Type": file.type || "application/octet-stream" },
+			body: file,
+		});
+		if (!uploaded.ok) throw new Error("upload failed");
+	} catch (error) {
+		if (error instanceof ProjectDraftUploadError) throw error;
+		throw new ProjectDraftUploadError(session.file_id, "upload failed");
+	}
+	try {
+		const completed = (
+			await apiClient.instance.post<SuccessEnvelope<ProjectDraftFile>>(
+				`/project-drafts/${draftId}/files/complete-upload`,
+				{ file_id: session.file_id },
+			)
+		).data.data;
+		if (completed.processing_status === "failed") {
+			throw new ProjectDraftUploadError(
+				session.file_id,
+				completed.processing_error || "file processing failed",
+			);
+		}
+		return completed;
+	} catch (error) {
+		if (error instanceof ProjectDraftUploadError) throw error;
+		throw new ProjectDraftUploadError(
+			session.file_id,
+			"file processing failed",
+		);
+	}
 }

@@ -300,6 +300,7 @@ func New(deps Deps) http.Handler {
 					r.Get("/web-search", deps.Draft.ProjectWebSearch)
 					r.Get("/{draftId}/files", deps.Draft.ProjectFileList)
 					r.Post("/{draftId}/files/initiate-upload", deps.Draft.ProjectFileInitiate)
+					r.Post("/{draftId}/files/retry-upload", deps.Draft.ProjectFileRetry)
 					r.Post("/{draftId}/files/complete-upload", deps.Draft.ProjectFileComplete)
 					r.Post("/{draftId}/preview", deps.Draft.ProjectPreview)
 					r.Post("/{draftId}/publish", deps.Draft.ProjectPublish)

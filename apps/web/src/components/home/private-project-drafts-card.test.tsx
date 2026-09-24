@@ -395,4 +395,62 @@ describe("PrivateProjectDraftsCard", () => {
 			expect(uploadProjectDraftFile).toHaveBeenCalledTimes(2),
 		);
 	});
+
+	it("offers persisted failed files for retry after refresh", async () => {
+		const { uploadProjectDraftFile } = await import("@/lib/project-draft-api");
+		vi.mocked(uploadProjectDraftFile).mockResolvedValue({} as never);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(
+			["private-project-drafts"],
+			[
+				{
+					id: "draft-persisted",
+					name: "持久化重试",
+					version: 1,
+					state: "editable",
+				},
+			],
+		);
+		queryClient.setQueryData(
+			["private-project-draft-preview", "draft-persisted", 1],
+			{
+				id: "draft-persisted",
+				version: 1,
+				can_publish: false,
+				issues: [{ field: "items", message: "至少添加一项任务" }],
+			},
+		);
+		queryClient.setQueryData(
+			["private-project-draft-files", "draft-persisted"],
+			[
+				{
+					file_id: "file-failed",
+					file_name: "failed.pdf",
+					upload_status: "uploaded",
+					processing_status: "failed",
+				},
+			],
+		);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "预览" }));
+		const file = new File(["replacement"], "replacement.pdf", {
+			type: "application/pdf",
+		});
+		fireEvent.change(await screen.findByLabelText("failed.pdf: 重试上传"), {
+			target: { files: [file] },
+		});
+		await waitFor(() =>
+			expect(uploadProjectDraftFile).toHaveBeenCalledWith(
+				"draft-persisted",
+				file,
+				"file-failed",
+			),
+		);
+	});
 });

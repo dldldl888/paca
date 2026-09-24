@@ -109,3 +109,65 @@ func projectDraftOfficeFixture(t *testing.T, name string) []byte {
 	}
 	return out.Bytes()
 }
+
+func TestPrivateProjectDraftFileUploadCanRetryPersistedFile(t *testing.T) {
+	f, _, session, _ := newProjectDraftFixture(t)
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "上传重试", "goal": "恢复持久化上传", "chat_session_id": session,
+	}, http.StatusCreated)
+	path := f.base + "/" + d["id"].(string)
+	valid := projectDraftOfficeFixture(t, "retry.pdf")
+	start := f.request(t, http.MethodPost, path+"/files/initiate-upload", map[string]any{
+		"file_name": "retry.pdf", "content_type": "application/pdf", "file_size": len(valid),
+	}, http.StatusCreated)
+	retry := f.request(t, http.MethodPost, path+"/files/retry-upload", map[string]any{
+		"file_id": start["file_id"],
+	}, http.StatusOK)
+	if retry["file_id"] != start["file_id"] || retry["upload_url"] == nil {
+		t.Fatalf("retry did not reuse persisted file: start=%#v retry=%#v", start, retry)
+	}
+	putProjectDraftFile(t, f, retry["upload_url"].(string), "application/pdf", valid)
+	ready := f.request(t, http.MethodPost, path+"/files/complete-upload", map[string]any{"file_id": retry["file_id"]}, http.StatusOK)
+	if ready["processing_status"] != "ready" {
+		t.Fatalf("retried upload was not parsed: %#v", ready)
+	}
+	f.request(t, http.MethodPost, path+"/files/retry-upload", map[string]any{"file_id": retry["file_id"]}, http.StatusConflict)
+
+	bad := f.request(t, http.MethodPost, path+"/files/initiate-upload", map[string]any{
+		"file_name": "bad.pdf", "content_type": "application/pdf", "file_size": len("broken"),
+	}, http.StatusCreated)
+	putProjectDraftFile(t, f, bad["upload_url"].(string), "application/pdf", []byte("broken"))
+	failed := f.request(t, http.MethodPost, path+"/files/complete-upload", map[string]any{"file_id": bad["file_id"]}, http.StatusOK)
+	if failed["processing_status"] != "failed" {
+		t.Fatalf("malformed upload did not enter retryable state: %#v", failed)
+	}
+	retryFailed := f.request(t, http.MethodPost, path+"/files/retry-upload", map[string]any{"file_id": bad["file_id"]}, http.StatusOK)
+	if retryFailed["file_id"] != bad["file_id"] {
+		t.Fatalf("failed file retry changed file identity: before=%#v after=%#v", bad, retryFailed)
+	}
+	putProjectDraftFile(t, f, retryFailed["upload_url"].(string), "application/pdf", valid)
+	readyAfterFailure := f.request(t, http.MethodPost, path+"/files/complete-upload", map[string]any{"file_id": bad["file_id"]}, http.StatusOK)
+	if readyAfterFailure["processing_status"] != "ready" {
+		t.Fatalf("failed file could not be recovered: %#v", readyAfterFailure)
+	}
+	seedProjectAdminUser(t, f.env, "draft-retry-other", "password1")
+	otherClient, otherToken := projectAdminLogin(t, f.env, "draft-retry-other", "password1")
+	req := mustRequest(t.Context(), t, http.MethodPost, f.env.base+path+"/files/retry-upload", jsonBody(t, map[string]any{"file_id": bad["file_id"]}))
+	req.Header.Set("Authorization", "Bearer "+otherToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp := mustDo(t, otherClient, req)
+	resp.Body.Close()
+	assertStatus(t, resp, http.StatusNotFound)
+}
+
+func putProjectDraftFile(t *testing.T, f *draftFixture, url, contentType string, data []byte) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, url, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp := mustDo(t, f.client, req)
+	resp.Body.Close()
+	assertStatus(t, resp, http.StatusOK)
+}

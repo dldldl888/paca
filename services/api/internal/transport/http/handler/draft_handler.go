@@ -478,6 +478,36 @@ func (h *DraftHandler) ProjectFileComplete(w http.ResponseWriter, r *http.Reques
 	presenter.OK(w, r, file)
 }
 
+func (h *DraftHandler) ProjectFileRetry(w http.ResponseWriter, r *http.Request) {
+	id, err := projectDraftID(r)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	var in struct {
+		FileID uuid.UUID `json:"file_id"`
+	}
+	if err = draftBody(w, r, &in); err != nil {
+		draftError(w, r, err)
+		return
+	}
+	if in.FileID == uuid.Nil {
+		draftError(w, r, apierr.New(apierr.CodeBadRequest, "file_id is required"))
+		return
+	}
+	r, leave := enterJSONDelivery(h.gate, w, r)
+	if r == nil {
+		return
+	}
+	defer leave()
+	session, err := h.svc.RetryProjectDraftFile(r.Context(), id, in.FileID)
+	if err != nil {
+		draftError(w, r, err)
+		return
+	}
+	presenter.OK(w, r, session)
+}
+
 func (h *DraftHandler) ProjectCreate(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		draftdom.ProjectDraftContent
