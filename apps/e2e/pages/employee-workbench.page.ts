@@ -36,6 +36,7 @@ export class EmployeeWorkbenchPage {
 			.getByRole("button", {
 				name: new RegExp(taskTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
 			})
+			.first()
 			.click();
 		await expect(
 			this.page.getByRole("heading", { name: taskTitle, exact: true }),
