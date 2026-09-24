@@ -2572,9 +2572,11 @@ func (s *Service) ValidatePrivateGlobalChatSession(ctx context.Context, sessionI
 }
 
 // PreparePrivateGlobalDraftGeneration validates the draft's private global
-// session and snapshots the latest visible event boundary. A finished latest
-// conversation will be replaced by SendGlobalChatMessage, so its boundary is
-// -1; a paused conversation is resumed and uses its current tail index.
+// session and snapshots the latest visible event boundary. ACP conversations
+// keep the same conversation ID when a terminal Paca turn is followed by a
+// new turn, so their existing event tail must be excluded from generation
+// parsing. LLM conversations are replaced after a terminal turn; paused
+// conversations are resumed in place for both agent types.
 func (s *Service) PreparePrivateGlobalDraftGeneration(ctx context.Context, sessionID, userID, agentID uuid.UUID) (*agentdom.AgentConversation, int, error) {
 	if err := s.ValidatePrivateGlobalChatSession(ctx, sessionID, userID); err != nil {
 		return nil, 0, err
@@ -2590,7 +2592,15 @@ func (s *Service) PreparePrivateGlobalDraftGeneration(ctx context.Context, sessi
 	if _, err = s.GetGlobalConversation(ctx, latest.ID, userID); err != nil {
 		return nil, 0, err
 	}
-	if agentdom.ConversationStatus(latest.Status) != agentdom.ConversationStatusPaused {
+	status := agentdom.ConversationStatus(latest.Status)
+	if latest.AgentType == agentdom.AgentTypeACP && status.IsTerminal() {
+		_, total, err := s.repo.ListConversationEvents(ctx, latest.ID, agentdom.ConversationEventWindow{Limit: 1})
+		if err != nil {
+			return nil, 0, err
+		}
+		return latest, int(total) - 1, nil
+	}
+	if status != agentdom.ConversationStatusPaused {
 		return latest, -1, nil
 	}
 	_, total, err := s.repo.ListConversationEvents(ctx, latest.ID, agentdom.ConversationEventWindow{Limit: 1})

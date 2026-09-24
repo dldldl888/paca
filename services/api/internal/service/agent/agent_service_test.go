@@ -2111,6 +2111,54 @@ func TestGetGlobalConversation_RejectsProjectScopedConversation(t *testing.T) {
 	assert.ErrorIs(t, err, agentdom.ErrConversationNotFound)
 }
 
+func TestPreparePrivateGlobalDraftGeneration_FinishedACPUsesExistingEventTail(t *testing.T) {
+	userID := uuid.New()
+	agentID := uuid.New()
+	sessionID := uuid.New()
+	conversationID := uuid.New()
+	session := &agentdom.AgentChatSession{
+		ID:          sessionID,
+		AgentID:     agentID,
+		ActorUserID: &userID,
+	}
+	conversation := &agentdom.AgentConversation{
+		ID:            conversationID,
+		AgentID:       agentID,
+		ChatSessionID: &sessionID,
+		ActorUserID:   &userID,
+		AgentType:     agentdom.AgentTypeACP,
+		Status:        string(agentdom.ConversationStatusFinished),
+	}
+
+	var gotWindow agentdom.ConversationEventWindow
+	repo := &mockAgentRepo{
+		findChatSessionByID: func(_ context.Context, _ uuid.UUID) (*agentdom.AgentChatSession, error) {
+			return session, nil
+		},
+		findAgentByID: func(_ context.Context, id uuid.UUID) (*agentdom.Agent, error) {
+			return &agentdom.Agent{ID: id, AgentScope: agentdom.AgentScopeGlobal, AgentType: agentdom.AgentTypeACP}, nil
+		},
+		findLatestConversationBySession: func(_ context.Context, _ uuid.UUID) (*agentdom.AgentConversation, error) {
+			return conversation, nil
+		},
+		findConversationByID: func(_ context.Context, _ uuid.UUID) (*agentdom.AgentConversation, error) {
+			return conversation, nil
+		},
+		listConversationEvents: func(_ context.Context, _ uuid.UUID, window agentdom.ConversationEventWindow) ([]*agentdom.AgentConversationEvent, int64, error) {
+			gotWindow = window
+			return nil, 9, nil
+		},
+	}
+	svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{})
+
+	got, baseIndex, err := svc.PreparePrivateGlobalDraftGeneration(context.Background(), sessionID, userID, agentID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, conversationID, got.ID)
+	assert.Equal(t, 8, baseIndex)
+	assert.Equal(t, 1, gotWindow.Limit)
+}
+
 // TestGlobalConversationMutators_RejectWrongActor covers
 // Stop/Pause/GlobalHeartbeat/SendGlobalConversationMessage — all four funnel
 // through GetGlobalConversation for their existence+ownership gate, so a
