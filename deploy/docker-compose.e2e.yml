@@ -18,7 +18,8 @@ services:
       POSTGRES_PASSWORD: e2e-postgres-password
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../services/api/migrations:/docker-entrypoint-initdb.d:ro
+      # The API owns schema migrations through its embedded ledger; do not
+      # execute the same migration files in Postgres initdb first.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U paca -d paca"]
       interval: 5s

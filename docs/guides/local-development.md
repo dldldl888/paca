@@ -114,7 +114,7 @@ See [agent-runner-service.md](../ai-agent/agent-runner-service.md#environment-va
 
 ## Migrations
 
-Migrations are plain SQL files under `services/api/migrations/` named in lexicographic order. They run automatically when the Postgres container first starts (mounted at `/docker-entrypoint-initdb.d`).
+Migrations are plain SQL files under `services/api/migrations/` named in lexicographic order. The API embeds these files and applies them automatically on startup, recording each applied file in the migration ledger. The Postgres container does not run the files through `/docker-entrypoint-initdb.d`.
 
 To apply migrations manually against a running instance:
 

@@ -20,7 +20,9 @@ services:
       POSTGRES_DB: paca
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../services/api/migrations:/docker-entrypoint-initdb.d:ro
+      # The API owns schema migrations through its embedded ledger. Mounting
+      # the same files into Postgres initdb runs them once before the ledger
+      # exists, then the API runs them again and can fail on one-shot DDL.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U paca -d paca"]
       interval: 5s
