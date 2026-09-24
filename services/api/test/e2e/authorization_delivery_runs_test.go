@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
@@ -190,7 +191,10 @@ func TestAuthorizationDeliveryCommitFailsRevokedRunsAndRecoversQueue(t *testing.
 		t.Fatal("lawful B did not advance", count, e)
 	}
 	assertState(b.ID, "running")
-	if _, e = env.agentSvc.GetConversation(authz.WithActorID(env.ctx, users[0]), pid, a.ID, members[0]); e != nil {
-		t.Fatal("lawful owner history lost", e)
+	if _, e = env.agentRepo.FindConversationByID(env.ctx, a.ID); e != nil {
+		t.Fatal("revoked history row was deleted", e)
+	}
+	if _, e = env.agentSvc.GetConversation(authz.WithActorID(env.ctx, users[0]), pid, a.ID, members[0]); !errors.Is(e, agentdom.ErrConversationNotFound) {
+		t.Fatalf("revoked source history returned unexpected error: %v", e)
 	}
 }
