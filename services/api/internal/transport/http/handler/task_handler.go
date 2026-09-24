@@ -827,10 +827,18 @@ func (h *TaskHandler) ListAssignedToMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projects, _, err := h.projectSvc.ListAccessible(r.Context(), userID, 1, 10000)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
+	const projectPageSize = 10000
+	projects := make([]*projectdom.Project, 0)
+	for page := 1; ; page++ {
+		pageProjects, total, err := h.projectSvc.ListAccessible(r.Context(), userID, page, projectPageSize)
+		if err != nil {
+			presenter.Error(w, r, err)
+			return
+		}
+		projects = append(projects, pageProjects...)
+		if len(pageProjects) == 0 || int64(len(projects)) >= total || len(pageProjects) < projectPageSize {
+			break
+		}
 	}
 	if len(projects) == 0 {
 		empty()

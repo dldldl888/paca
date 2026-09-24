@@ -997,6 +997,56 @@ func TestTaskHandler_ListAssignedToMe_NoProjectsReturnsEmptyList(t *testing.T) {
 	}
 }
 
+func TestTaskHandler_ListAssignedToMe_PaginatesAccessibleProjects(t *testing.T) {
+	userID := uuid.New()
+	firstPage := make([]*projectdom.Project, 10000)
+	for i := range firstPage {
+		firstPage[i] = &projectdom.Project{ID: uuid.New(), Name: fmt.Sprintf("first page %d", i)}
+	}
+	late := &projectdom.Project{ID: uuid.New(), Name: "late page"}
+	var calls []int
+	projectSvc := &mockProjectSvc{
+		listAccessible: func(_ context.Context, uid uuid.UUID, page, pageSize int) ([]*projectdom.Project, int64, error) {
+			if uid != userID {
+				t.Fatalf("unexpected userID passed to ListAccessible: %s", uid)
+			}
+			calls = append(calls, page)
+			if page == 1 {
+				return firstPage, 10001, nil
+			}
+			if page == 2 {
+				return []*projectdom.Project{late}, 10001, nil
+			}
+			return nil, 10001, nil
+		},
+	}
+	taskSvc := newFakeTaskSvc()
+	_, _ = taskSvc.CreateTask(context.Background(), taskdom.CreateTaskInput{
+		ProjectID: late.ID, Title: "Late assigned task", AssigneeIDs: []uuid.UUID{uuid.New()},
+	})
+	r := buildAssignedToMeRouter(taskSvc, projectSvc, userID)
+	w := doTaskRequest(r, http.MethodGet, "/users/me/tasks", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Items []struct {
+				Title string `json:"title"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(env.Data.Items) != 1 || env.Data.Items[0].Title != "Late assigned task" {
+		t.Fatalf("late accessible project task was omitted: %+v", env.Data.Items)
+	}
+	if !reflect.DeepEqual(calls, []int{1, 2}) {
+		t.Fatalf("expected accessible project pages 1 and 2, got %v", calls)
+	}
+}
+
 func TestTaskHandler_ListAssignedToMe_UnauthenticatedReturns401(t *testing.T) {
 	h := handler.NewTaskHandler(newFakeTaskSvc(), &fakeViewSvcTask{}, newFakeActivitySvc()).WithDeliveryGate(openTaskDeliveryGate())
 	r := chi.NewRouter()
