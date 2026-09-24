@@ -99,6 +99,23 @@ func (c *PublicWebSearchClient) Search(ctx context.Context, query string, limit 
 	if err := json.Unmarshal(rawResults, &decoded.Results); err != nil {
 		return nil, ErrPublicWebSearchUnavailable
 	}
+	if len(decoded.Results) == 0 {
+		upstreamFailure := false
+		for _, key := range []string{"unresponsive_engines", "errors"} {
+			raw, ok := envelope[key]
+			if !ok || len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+				continue
+			}
+			var entries []json.RawMessage
+			if err := json.Unmarshal(raw, &entries); err != nil {
+				return nil, ErrPublicWebSearchUnavailable
+			}
+			upstreamFailure = upstreamFailure || len(entries) > 0
+		}
+		if upstreamFailure {
+			return nil, ErrPublicWebSearchUnavailable
+		}
+	}
 	items := make([]*draftdom.ProjectDraftWebCandidate, 0, min(limit, len(decoded.Results)))
 	accessed := time.Now().UTC()
 	for _, result := range decoded.Results {

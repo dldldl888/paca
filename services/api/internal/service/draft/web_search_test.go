@@ -90,6 +90,33 @@ func TestPublicWebSearchClientRejectsMissingOrNullResultsOnHTTP200(t *testing.T)
 	}
 }
 
+func TestPublicWebSearchClientRejectsEmptyResultsWhenUpstreamEnginesFail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"number_of_results":0,"results":[],"unresponsive_engines":[["google","timeout"]]}`))
+	}))
+	defer server.Close()
+
+	client := &PublicWebSearchClient{Endpoint: server.URL, Client: server.Client()}
+	if _, err := client.Search(t.Context(), "query", 5); !errors.Is(err, ErrPublicWebSearchUnavailable) {
+		t.Fatalf("expected upstream failure to be unavailable, got %v", err)
+	}
+}
+
+func TestPublicWebSearchClientKeepsResultsWhenDiagnosticsUseUnknownShape(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"title":"Public page","url":"https://example.com/page"}],"errors":{"engine":"warning"}}`))
+	}))
+	defer server.Close()
+
+	client := &PublicWebSearchClient{Endpoint: server.URL, Client: server.Client()}
+	items, err := client.Search(t.Context(), "query", 5)
+	if err != nil || len(items) != 1 || items[0].URL != "https://example.com/page" {
+		t.Fatalf("valid results must survive unknown diagnostics: items=%#v err=%v", items, err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
