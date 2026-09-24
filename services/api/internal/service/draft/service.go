@@ -919,9 +919,11 @@ func (s *Service) ImportProjectDraft(ctx context.Context, id uuid.UUID, expected
 		var content draftdom.ProjectDraftContent
 		content, err = ParseProjectDraftGeneration(events, g.BaseEventIndex)
 		if err == nil {
-			var materialIssues []draftdom.ProjectDraftPreviewIssue
-			materialIssues, err = s.projectDraftMaterialAccessIssues(ctx, content.Materials, true)
-			if err == nil && len(materialIssues) > 0 {
+			materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, content.Materials, true)
+			if materialErr != nil {
+				return nil, materialErr
+			}
+			if len(materialIssues) > 0 {
 				err = &draftdom.ProjectDraftValidationError{Message: materialIssues[0].Message}
 			}
 			if err == nil {

@@ -1,6 +1,8 @@
 package e2e_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	pg "github.com/Paca-AI/api/internal/repository/postgres"
@@ -679,6 +682,69 @@ func TestPrivateProjectDraftImportRejectsRevokedInternalMaterial(t *testing.T) {
 	current := f.request(t, http.MethodGet, path, nil, http.StatusOK)
 	if current["version"] != float64(1) || current["name"] != "导入撤权" || current["generation"].(map[string]any)["status"] != "failed" {
 		t.Fatalf("revoked material import changed the draft: %#v", current)
+	}
+}
+
+type transientDraftDocumentService struct{ err error }
+
+func (f transientDraftDocumentService) CheckDocumentAccess(context.Context, uuid.UUID, uuid.UUID, docdom.AccessAction) (*docdom.Document, error) {
+	return nil, f.err
+}
+func (transientDraftDocumentService) ListDocuments(context.Context, uuid.UUID, *uuid.UUID, *string, *string, *int) ([]*docdom.Document, bool, error) {
+	return nil, false, nil
+}
+func (f transientDraftDocumentService) GetDocument(context.Context, uuid.UUID) (*docdom.Document, error) {
+	return nil, f.err
+}
+func (f transientDraftDocumentService) CreateDocument(context.Context, docdom.CreateDocumentInput) (*docdom.Document, error) {
+	return nil, f.err
+}
+func (f transientDraftDocumentService) UpdateDocument(context.Context, uuid.UUID, uuid.UUID, docdom.UpdateDocumentInput) (*docdom.Document, error) {
+	return nil, f.err
+}
+func (f transientDraftDocumentService) DeleteDocument(context.Context, uuid.UUID, uuid.UUID) error {
+	return f.err
+}
+
+func TestPrivateProjectDraftImportKeepsGenerationRunningOnTransientMaterialError(t *testing.T) {
+	f, owner, session, agentID := newProjectDraftFixture(t)
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "导入重试", "goal": "权限服务短暂不可用", "chat_session_id": session,
+	}, http.StatusCreated)
+	path := f.base + "/" + d["id"].(string)
+	started := f.request(t, http.MethodPost, path+"/generate", map[string]any{
+		"expected_version": 1, "agent_id": agentID, "message": "整理成项目草稿",
+	}, http.StatusOK)
+	generation := started["generation"].(map[string]any)
+	conversationID := uuid.MustParse(generation["conversation_id"].(string))
+	itemID, documentID := uuid.NewString(), uuid.NewString()
+	valid := fmt.Sprintf(`{"name":"可重试项目","goal":"完成目标","items":[{"id":"%s","title":"资料任务","requirements":"要求","criteria":"标准","assignee_user_id":"%s","dependencies":[]}],"participants":[{"user_id":"%s","role":"负责人"}],"materials":[{"id":"%s","kind":"document","source_type":"internal","processed_status":"ready","task_ids":["%s"],"required":true}]}`,
+		itemID, owner, owner, documentID, itemID)
+	events := []*agentdom.AgentConversationEvent{
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 0, EventType: "user_message", EventSource: "user", Payload: map[string]any{"content": map[string]any{"type": "text", "text": "整理"}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 1, EventType: "agent_message_chunk", EventSource: "agent", Payload: map[string]any{"content": map[string]any{"type": "text", "text": valid}}},
+		{ID: uuid.New(), ConversationID: conversationID, EventIndex: 2, EventType: "turn_end", EventSource: "system", Payload: map[string]any{"stopReason": "end_turn"}},
+	}
+	for _, event := range events {
+		if err := f.env.agentRepo.CreateConversationEvent(f.env.ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.env.agentRepo.UpdateConversationStatus(f.env.ctx, conversationID, "finished"); err != nil {
+		t.Fatal(err)
+	}
+	transient := errors.New("temporary document authorization outage")
+	authorizer := authz.NewAuthorizer(pg.NewAuthzPermissionStore(f.env.db)).WithAgentRoleResolver(pg.NewAuthzPermissionStore(f.env.db))
+	service := draftsvc.New(pg.NewDraftRepository(f.env.db), f.env.agentSvc, f.env.projectRepo).
+		WithAuthorizer(authorizer).
+		WithDocuments(transientDraftDocumentService{err: transient})
+	ctx := authz.WithHumanSession(authz.WithActorID(f.env.ctx, owner))
+	if _, err := service.ImportProjectDraft(ctx, uuid.MustParse(d["id"].(string)), 1, uuid.MustParse(generation["id"].(string))); !errors.Is(err, transient) {
+		t.Fatalf("transient material error was not returned for retry: %v", err)
+	}
+	current := f.request(t, http.MethodGet, path, nil, http.StatusOK)
+	if current["version"] != float64(1) || current["generation"].(map[string]any)["status"] != "running" {
+		t.Fatalf("transient material error made generation terminal: %#v", current)
 	}
 }
 
