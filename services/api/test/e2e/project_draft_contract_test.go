@@ -12,8 +12,10 @@ import (
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
+	projectdom "github.com/Paca-AI/api/internal/domain/project"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	pg "github.com/Paca-AI/api/internal/repository/postgres"
+	docsvc "github.com/Paca-AI/api/internal/service/doc"
 	draftsvc "github.com/Paca-AI/api/internal/service/draft"
 	"github.com/google/uuid"
 )
@@ -57,6 +59,41 @@ func TestPrivateProjectDraftMaterialSearchOnlyReturnsReadableDocuments(t *testin
 	}
 	if items[0].(map[string]any)["project_id"] != projectID || items[0].(map[string]any)["source_type"] != "internal" {
 		t.Fatalf("material metadata missing: %#v", items[0])
+	}
+}
+
+func TestPrivateProjectDraftMaterialSearchPaginatesAccessibleProjects(t *testing.T) {
+	f, owner, _, _ := newProjectDraftFixture(t)
+	ownerCtx := authz.WithActorID(f.env.ctx, owner)
+	for i := 0; i < 100; i++ {
+		prefix := fmt.Sprintf("P%03d", i)
+		if _, err := f.env.projectSvc.Create(ownerCtx, projectdom.CreateProjectInput{
+			Name:         fmt.Sprintf("page-project-%03d", i),
+			TaskIDPrefix: prefix,
+			CreatedBy:    &owner,
+		}); err != nil {
+			t.Fatalf("create accessible project %d: %v", i, err)
+		}
+	}
+	last, err := f.env.projectSvc.Create(ownerCtx, projectdom.CreateProjectInput{
+		Name:         "page-project-late",
+		TaskIDPrefix: "LATE",
+		CreatedBy:    &owner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.env.db.Exec(`INSERT INTO documents(id,project_id,title,content,visibility,owner_user_id) VALUES($1,$2,'late page material','[]','project',$3)`, uuid.New(), last.ID, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	docService := docsvc.New(pg.NewDocumentRepository(f.env.db), f.env.projectRepo)
+	service := draftsvc.New(pg.NewDraftRepository(f.env.db), f.env.agentSvc, f.env.projectRepo).
+		WithDocuments(docService).
+		WithAuthorizer(authz.NewAuthorizer(pg.NewAuthzPermissionStore(f.env.db)))
+	items, err := service.SearchProjectDraftMaterials(authz.WithHumanSession(ownerCtx), "late page material", 20)
+	if err != nil || len(items) != 1 || items[0].Title != "late page material" {
+		t.Fatalf("material search did not scan beyond the first project page: items=%#v err=%v", items, err)
 	}
 }
 

@@ -615,39 +615,45 @@ func (s *Service) SearchProjectDraftMaterials(ctx context.Context, query string,
 	if limit > 50 {
 		limit = 50
 	}
-	projects, _, err := s.members.ListAccessible(ctx, user, 0, 100)
-	if err != nil {
-		return nil, err
-	}
 	var search *string
 	if q := strings.TrimSpace(query); q != "" {
 		search = &q
 	}
 	items := make([]*draftdom.ProjectDraftMaterialCandidate, 0, limit)
 	seen := make(map[uuid.UUID]struct{})
-	for _, project := range projects {
-		docs, _, err := s.documents.ListDocuments(ctx, project.ID, nil, search, nil, &limit)
+	const projectPageSize = 100
+	for offset := 0; ; {
+		projects, total, err := s.members.ListAccessible(ctx, user, offset, projectPageSize)
 		if err != nil {
 			return nil, err
 		}
-		for _, doc := range docs {
-			if _, exists := seen[doc.ID]; exists {
-				continue
+		for _, project := range projects {
+			docs, _, err := s.documents.ListDocuments(ctx, project.ID, nil, search, nil, &limit)
+			if err != nil {
+				return nil, err
 			}
-			seen[doc.ID] = struct{}{}
-			items = append(items, &draftdom.ProjectDraftMaterialCandidate{
-				ID: doc.ID, ProjectID: doc.ProjectID, Title: doc.Title,
-				SourceType:      "internal",
-				SourceLocation:  fmt.Sprintf("/projects/%s/docs/%s", doc.ProjectID, doc.ID),
-				SourceVersion:   doc.UpdatedAt.UTC().Format(time.RFC3339),
-				ProcessedStatus: "ready", Visibility: doc.Visibility,
-			})
-			if len(items) == limit {
-				return items, nil
+			for _, doc := range docs {
+				if _, exists := seen[doc.ID]; exists {
+					continue
+				}
+				seen[doc.ID] = struct{}{}
+				items = append(items, &draftdom.ProjectDraftMaterialCandidate{
+					ID: doc.ID, ProjectID: doc.ProjectID, Title: doc.Title,
+					SourceType:      "internal",
+					SourceLocation:  fmt.Sprintf("/projects/%s/docs/%s", doc.ProjectID, doc.ID),
+					SourceVersion:   doc.UpdatedAt.UTC().Format(time.RFC3339),
+					ProcessedStatus: "ready", Visibility: doc.Visibility,
+				})
+				if len(items) == limit {
+					return items, nil
+				}
 			}
 		}
+		offset += len(projects)
+		if len(projects) < projectPageSize || int64(offset) >= total {
+			return items, nil
+		}
 	}
-	return items, nil
 }
 
 func draftFileName(name string) string {
