@@ -95,6 +95,61 @@ func TestPrivateProjectDraftPreviewBindsVersionAndReportsIssues(t *testing.T) {
 	f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusConflict)
 }
 
+func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	projectID := createProjectForTasksViaAPI(t, f.env, f.client, f.token)
+	seedUser(t, f.env, "draft-material-owner", "password1", "Material owner")
+	materialUser, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-material-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docPath := f.env.base + "/api/v1/projects/" + projectID + "/docs"
+	docID := uuid.New()
+	if _, err := f.env.db.Exec(`INSERT INTO documents(id,project_id,title,content,visibility,owner_user_id) VALUES($1,$2,'可撤权资料','[]','project',$3)`, docID, projectID, materialUser.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	itemID := uuid.NewString()
+	draft := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name":            "资料撤权预览",
+		"goal":            "撤权后不能继续发布",
+		"chat_session_id": session,
+		"items": []any{map[string]any{
+			"id": itemID, "title": "引用资料", "requirements": "核验", "criteria": "通过",
+			"assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials": []any{map[string]any{
+			"id": docID, "kind": "document", "source_type": "internal", "processed_status": "ready",
+			"task_ids": []any{itemID}, "required": true,
+		}},
+	}, http.StatusCreated)
+	previewPath := f.base + "/" + draft["id"].(string) + "/preview"
+	allowed := f.request(t, http.MethodPost, previewPath, map[string]any{"expected_version": 1}, http.StatusOK)
+	if allowed["can_publish"] != true {
+		t.Fatalf("readable material should allow preview: %#v", allowed)
+	}
+
+	accessReq := mustRequest(f.env.ctx, t, http.MethodPatch, docPath+"/"+docID.String()+"/access", jsonBody(t, map[string]any{
+		"expected_access_version": 1,
+		"visibility":              "private",
+	}))
+	accessReq.Header.Set("Authorization", "Bearer "+f.token)
+	accessResp := mustDo(t, f.client, accessReq)
+	defer accessResp.Body.Close()
+	assertStatus(t, accessResp, http.StatusOK)
+
+	blocked := f.request(t, http.MethodPost, previewPath, map[string]any{"expected_version": 1}, http.StatusOK)
+	if blocked["can_publish"] != false {
+		t.Fatalf("preview reused revoked internal material: %#v", blocked)
+	}
+	issues, ok := blocked["issues"].([]any)
+	if !ok || len(issues) == 0 {
+		t.Fatalf("preview did not explain revoked material: %#v", blocked)
+	}
+}
+
 func TestPrivateProjectDraftPublishIsAtomicAndIdempotent(t *testing.T) {
 	f, owner, session, _ := newProjectDraftFixture(t)
 	seedTaskMemberUser(t, f.env, "draft-publish-peer", "password1")

@@ -42,7 +42,10 @@ func TestPrivateProjectDraftStaysOutsideProjectsAndUsesVersionCAS(t *testing.T) 
 		"name":            "私有项目草稿",
 		"goal":            "在正式创建项目之前完成范围确认",
 		"manager_user_id": owner.ID.String(),
-		"participants":    []any{},
+		"participants": []any{map[string]any{
+			"user_id": owner.ID.String(),
+			"role":    "负责人",
+		}},
 		"materials":       []any{},
 		"chat_session_id": session.ID.String(),
 	})
@@ -75,10 +78,10 @@ func TestPrivateProjectDraftStaysOutsideProjectsAndUsesVersionCAS(t *testing.T) 
 		"name":            "私有项目草稿（已编辑）",
 		"goal":            "在正式创建项目之前完成范围确认",
 		"manager_user_id": owner.ID.String(),
-		"participants": []any{map[string]any{
-			"user_id": other.ID.String(),
-			"role":    "协作人",
-		}},
+		"participants": []any{
+			map[string]any{"user_id": owner.ID.String(), "role": "负责人"},
+			map[string]any{"user_id": other.ID.String(), "role": "协作人"},
+		},
 		"materials": []any{map[string]any{
 			"id":       uuid.NewString(),
 			"kind":     "document",

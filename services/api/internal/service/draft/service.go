@@ -27,12 +27,15 @@ import (
 )
 
 type Service struct {
-	gate       *delivery.Gate
-	publisher  *messaging.Publisher
-	Repo       *pg.DraftRepository
-	agents     *agentsvc.Service
-	members    *pg.ProjectRepository
-	documents  docdom.DocumentService
+	gate      *delivery.Gate
+	publisher *messaging.Publisher
+	Repo      *pg.DraftRepository
+	agents    *agentsvc.Service
+	members   *pg.ProjectRepository
+	documents interface {
+		docdom.AccessChecker
+		docdom.DocumentService
+	}
 	store      storage.Client
 	bucket     string
 	webSearch  *PublicWebSearchClient
@@ -525,7 +528,33 @@ func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expecte
 	if d.Version != expected {
 		return nil, draftdom.ErrConflict
 	}
-	return d.Preview(), nil
+	preview := d.Preview()
+	if len(d.Materials) > 0 {
+		if s.documents == nil {
+			preview.Issues = append(preview.Issues, draftdom.ProjectDraftPreviewIssue{
+				Field:   "materials",
+				Message: "资料权限服务不可用",
+			})
+		} else {
+			for i, material := range d.Materials {
+				if material.SourceType != "internal" {
+					continue
+				}
+				documentID, parseErr := uuid.Parse(material.ID)
+				if parseErr != nil {
+					continue
+				}
+				if _, accessErr := s.documents.CheckDocumentAccess(ctx, uuid.Nil, documentID, docdom.AccessRead); accessErr != nil {
+					preview.Issues = append(preview.Issues, draftdom.ProjectDraftPreviewIssue{
+						Field:   fmt.Sprintf("materials[%d]", i),
+						Message: "资料已不可读，请移除或重新选择当前可读资料",
+					})
+				}
+			}
+		}
+	}
+	preview.CanPublish = len(preview.Issues) == 0
+	return preview, nil
 }
 
 func (s *Service) PublishProjectDraft(ctx context.Context, id uuid.UUID, expected int, publication uuid.UUID) (*draftdom.ProjectDraftPublication, error) {
@@ -840,7 +869,10 @@ func (s *Service) WithAuthorizer(authorizer *authz.Authorizer) *Service {
 	return s
 }
 
-func (s *Service) WithDocuments(documents docdom.DocumentService) *Service {
+func (s *Service) WithDocuments(documents interface {
+	docdom.AccessChecker
+	docdom.DocumentService
+}) *Service {
 	s.documents = documents
 	return s
 }
