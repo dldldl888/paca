@@ -137,162 +137,158 @@ describe("composer cancellation", () => {
 			"/projects/project-1/conversations/conv-1/stop",
 			true,
 		],
-	] as const)(
-		"clicking Stop generating uses the correct control in %s",
-		async (_label, projectId, agentType, floating, controlPath, delayAgent: boolean = false) => {
-			const agent: Agent = {
-				...baseAgent,
-				agent_type: agentType as AgentType,
-				agent_scope: projectId ? "project" : "global",
-				project_id: projectId ?? null,
-			};
-			let conversation: AgentConversation = {
-				id: "conv-1",
-				agent_id: agent.id,
-				project_id: projectId ?? null,
-				actor_user_id: "employee-1",
-				trigger_type: "chat_message",
-				chat_session_id: "chat-1",
-				status: "running",
-				iteration_count: 0,
-				input_tokens: 0,
-				output_tokens: 0,
-				total_tokens: 0,
-				created_at: "2026-09-17T00:00:00Z",
-				updated_at: "2026-09-17T00:00:00Z",
-			};
-			const envelope = (data: unknown) => ({ data: { success: true, data } });
-			let pauseRequested = false;
-			let refetchStarted = false;
-			let releaseRefetch = () => {};
-			const refetchGate = new Promise<void>((resolve) => {
-				releaseRefetch = resolve;
-			});
-			let queryClient: QueryClient;
-			let releaseAgent = () => {};
-			const agentResponse = new Promise<ReturnType<typeof envelope>>(
-				(resolve) => {
-					releaseAgent = () =>
-						resolve(envelope(projectId ? agent : { items: [agent] }));
-				},
-			);
-			get.mockImplementation(async (path: string) => {
-				if (path === "/agents" || path.endsWith("/agents/hermes"))
-					return agentResponse;
-				if (path.endsWith("/events"))
-					return envelope({
-						items: [],
-						total: 0,
-						next_cursor: null,
-						prev_cursor: null,
-					});
-				if (path.endsWith("/conv-1")) {
-					if (pauseRequested && !refetchStarted) {
-						refetchStarted = true;
-						await refetchGate;
-					}
-					return envelope(conversation);
+	] as const)("clicking Stop generating uses the correct control in %s", async (_label, projectId, agentType, floating, controlPath, delayAgent: boolean = false) => {
+		const agent: Agent = {
+			...baseAgent,
+			agent_type: agentType as AgentType,
+			agent_scope: projectId ? "project" : "global",
+			project_id: projectId ?? null,
+		};
+		let conversation: AgentConversation = {
+			id: "conv-1",
+			agent_id: agent.id,
+			project_id: projectId ?? null,
+			actor_user_id: "employee-1",
+			trigger_type: "chat_message",
+			chat_session_id: "chat-1",
+			status: "running",
+			iteration_count: 0,
+			input_tokens: 0,
+			output_tokens: 0,
+			total_tokens: 0,
+			created_at: "2026-09-17T00:00:00Z",
+			updated_at: "2026-09-17T00:00:00Z",
+		};
+		const envelope = (data: unknown) => ({ data: { success: true, data } });
+		let pauseRequested = false;
+		let refetchStarted = false;
+		let releaseRefetch = () => {};
+		const refetchGate = new Promise<void>((resolve) => {
+			releaseRefetch = resolve;
+		});
+		let queryClient: QueryClient;
+		let releaseAgent = () => {};
+		const agentResponse = new Promise<ReturnType<typeof envelope>>(
+			(resolve) => {
+				releaseAgent = () =>
+					resolve(envelope(projectId ? agent : { items: [agent] }));
+			},
+		);
+		get.mockImplementation(async (path: string) => {
+			if (path === "/agents" || path.endsWith("/agents/hermes"))
+				return agentResponse;
+			if (path.endsWith("/events"))
+				return envelope({
+					items: [],
+					total: 0,
+					next_cursor: null,
+					prev_cursor: null,
+				});
+			if (path.endsWith("/conv-1")) {
+				if (pauseRequested && !refetchStarted) {
+					refetchStarted = true;
+					await refetchGate;
 				}
-				throw new Error(`Unexpected GET ${path}`);
-			});
-			post.mockImplementation(async (path: string) => {
-				if (path.endsWith("/chat-sessions"))
-					return envelope({
-						session: {
-							id: "chat-1",
-							agent_id: agent.id,
-							project_id: projectId ?? null,
-							member_id: projectId ? "member-1" : null,
-							actor_user_id: projectId ? null : "employee-1",
-							title: "Hello",
-							last_message_at: "2026-09-17T00:00:00Z",
-							created_at: "2026-09-17T00:00:00Z",
-							updated_at: "2026-09-17T00:00:00Z",
-						},
-						conversation,
-					});
-				if (path.endsWith("/stop"))
-					conversation = { ...conversation, status: "stopped" };
-				if (path.endsWith("/pause") && agentType === "llm")
-					pauseRequested = true;
 				return envelope(conversation);
-			});
-			const client = new QueryClient({
-				defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-			});
-			queryClient = client;
-			client.setQueryData(myPermissionsQueryOptions.queryKey, []);
+			}
+			throw new Error(`Unexpected GET ${path}`);
+		});
+		post.mockImplementation(async (path: string) => {
+			if (path.endsWith("/chat-sessions"))
+				return envelope({
+					session: {
+						id: "chat-1",
+						agent_id: agent.id,
+						project_id: projectId ?? null,
+						member_id: projectId ? "member-1" : null,
+						actor_user_id: projectId ? null : "employee-1",
+						title: "Hello",
+						last_message_at: "2026-09-17T00:00:00Z",
+						created_at: "2026-09-17T00:00:00Z",
+						updated_at: "2026-09-17T00:00:00Z",
+					},
+					conversation,
+				});
+			if (path.endsWith("/stop"))
+				conversation = { ...conversation, status: "stopped" };
+			if (path.endsWith("/pause") && agentType === "llm") pauseRequested = true;
+			return envelope(conversation);
+		});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient = client;
+		client.setQueryData(myPermissionsQueryOptions.queryKey, []);
+		if (!delayAgent)
+			client.setQueryData(chattableAgentsQueryOptions.queryKey, [agent]);
+		const conversationOptions = projectId
+			? conversationQueryOptions(projectId, conversation.id)
+			: globalConversationQueryOptions(conversation.id);
+		client.setQueryData(conversationOptions.queryKey, conversation);
+		if (projectId) {
+			client.setQueryData(agentsQueryOptions(projectId).queryKey, [agent]);
 			if (!delayAgent)
-				client.setQueryData(chattableAgentsQueryOptions.queryKey, [agent]);
-			const conversationOptions = projectId
-				? conversationQueryOptions(projectId, conversation.id)
-				: globalConversationQueryOptions(conversation.id);
-			client.setQueryData(conversationOptions.queryKey, conversation);
-			if (projectId) {
-				client.setQueryData(agentsQueryOptions(projectId).queryKey, [agent]);
-				if (!delayAgent)
-					client.setQueryData(
-						agentQueryOptions(projectId, agent.id).queryKey,
-						agent,
-					);
 				client.setQueryData(
-					myProjectPermissionsQueryOptions(projectId).queryKey,
-					{ "conversations.write": true },
+					agentQueryOptions(projectId, agent.id).queryKey,
+					agent,
 				);
-			}
-			render(
-				<QueryClientProvider client={client}>
-					{floating ? (
-						projectId ? (
-							<AIChatFloat projectId={projectId} />
-						) : (
-							<GlobalAIChatFloat />
-						)
+			client.setQueryData(
+				myProjectPermissionsQueryOptions(projectId).queryKey,
+				{ "conversations.write": true },
+			);
+		}
+		render(
+			<QueryClientProvider client={client}>
+				{floating ? (
+					projectId ? (
+						<AIChatFloat projectId={projectId} />
 					) : (
-						<ConversationView
-							projectId={projectId}
-							conversationId={conversation.id}
-						/>
-					)}
-				</QueryClientProvider>,
-			);
-			const user = userEvent.setup();
-			if (floating) {
-				await user.click(
-					screen.getByRole("button", { name: /Chat with AI agent/i }),
-				);
-				await user.type(screen.getByRole("textbox"), "Hello");
-				await user.click(screen.getByRole("button", { name: "Send message" }));
-			}
+						<GlobalAIChatFloat />
+					)
+				) : (
+					<ConversationView
+						projectId={projectId}
+						conversationId={conversation.id}
+					/>
+				)}
+			</QueryClientProvider>,
+		);
+		const user = userEvent.setup();
+		if (floating) {
 			await user.click(
-				await screen.findByRole("button", { name: "Stop generating" }),
+				screen.getByRole("button", { name: /Chat with AI agent/i }),
 			);
-			if (delayAgent) {
-				expect(post.mock.calls.some(([path]) => path.endsWith("/pause"))).toBe(
-					false,
-				);
-				releaseAgent();
-			}
-			await waitFor(() => expect(post).toHaveBeenCalledWith(controlPath));
-			if (agentType === "llm") {
-				await waitFor(() => expect(refetchStarted).toBe(true));
-				releaseRefetch();
-				await waitFor(() =>
-					expect(
-						screen.queryByRole("button", { name: "Stop generating" }),
-					).not.toBeInTheDocument(),
-				);
-				const key = projectId
-					? conversationQueryOptions(projectId, conversation.id).queryKey
-					: globalConversationQueryOptions(conversation.id).queryKey;
-				queryClient.setQueryData(key, { ...conversation, status: "paused" });
-			}
+			await user.type(screen.getByRole("textbox"), "Hello");
+			await user.click(screen.getByRole("button", { name: "Send message" }));
+		}
+		await user.click(
+			await screen.findByRole("button", { name: "Stop generating" }),
+		);
+		if (delayAgent) {
+			expect(post.mock.calls.some(([path]) => path.endsWith("/pause"))).toBe(
+				false,
+			);
+			releaseAgent();
+		}
+		await waitFor(() => expect(post).toHaveBeenCalledWith(controlPath));
+		if (agentType === "llm") {
+			await waitFor(() => expect(refetchStarted).toBe(true));
+			releaseRefetch();
 			await waitFor(() =>
 				expect(
 					screen.queryByRole("button", { name: "Stop generating" }),
 				).not.toBeInTheDocument(),
 			);
-			expect(screen.getByRole("textbox")).toBeEnabled();
-		},
-	);
+			const key = projectId
+				? conversationQueryOptions(projectId, conversation.id).queryKey
+				: globalConversationQueryOptions(conversation.id).queryKey;
+			queryClient.setQueryData(key, { ...conversation, status: "paused" });
+		}
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("button", { name: "Stop generating" }),
+			).not.toBeInTheDocument(),
+		);
+		expect(screen.getByRole("textbox")).toBeEnabled();
+	});
 });
