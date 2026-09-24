@@ -499,6 +499,9 @@ func (c Content) ValidateStructure() error {
 func (d *Draft) Project() Preview {
 	p := Preview{ID: d.ID, ProjectID: d.ProjectID, Version: d.Version, Items: append([]Item{}, d.Items...), Issues: []Issue{}}
 	add := func(field, msg string) { p.Issues = append(p.Issues, Issue{field, msg}) }
+	if err := d.Content.ValidateStructure(); err != nil {
+		add("draft", err.Error())
+	}
 	if len(d.Items) == 0 {
 		add("items", "至少添加一项任务")
 	}

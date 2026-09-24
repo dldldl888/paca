@@ -135,6 +135,29 @@ func TestDraftLifecycleAndEmployeeProjection(t *testing.T) {
 	pub["publication_id"] = uuid.NewString()
 	f.request(t, "POST", path+"/publish", pub, 409)
 }
+
+func TestDraftPublishRejectsPersistedInvalidSemanticContent(t *testing.T) {
+	f := newDraftFixture(t)
+	d := f.request(t, "POST", f.base, f.content(), 201)
+	if _, err := f.env.db.Exec("UPDATE task_drafts SET content = jsonb_set(content, '{items,0,importance}', '5'::jsonb) WHERE id=$1", d["id"]); err != nil {
+		t.Fatal(err)
+	}
+	path := f.base + "/" + d["id"].(string)
+	before := f.request(t, "GET", path, nil, 200)
+	counts := f.counts(t)
+	f.request(t, "POST", path+"/publish", map[string]any{
+		"expected_version": 1,
+		"publication_id":   uuid.NewString(),
+		"confirmed":        true,
+	}, 400)
+	if after := f.request(t, "GET", path, nil, 200); !reflect.DeepEqual(before, after) {
+		t.Fatalf("invalid draft changed after rejected publish: before=%v after=%v", before, after)
+	}
+	if after := f.counts(t); !reflect.DeepEqual(counts, after) {
+		t.Fatalf("invalid draft created formal rows: before=%v after=%v", counts, after)
+	}
+}
+
 func TestPublishRollsBackEveryWriteStage(t *testing.T) {
 	f := newDraftFixture(t)
 	for _, table := range []string{"tasks", "task_assignees", "task_links", "task_activities", "notifications", "task_drafts"} {
