@@ -51,6 +51,11 @@ export interface ProjectDraft {
 	updated_at: string;
 }
 
+export type ProjectDraftContent = Pick<
+	ProjectDraft,
+	"name" | "goal" | "manager_user_id" | "items" | "participants" | "materials"
+>;
+
 export interface ProjectDraftMaterialCandidate {
 	id: string;
 	project_id: string;
@@ -181,6 +186,19 @@ export const projectDraftPreviewQueryOptions = (
 				)
 			).data.data,
 	});
+
+export async function updateProjectDraft(
+	draftId: string,
+	expectedVersion: number,
+	content: ProjectDraftContent,
+): Promise<ProjectDraft> {
+	return (
+		await apiClient.instance.patch<SuccessEnvelope<ProjectDraft>>(
+			`/project-drafts/${draftId}`,
+			{ ...content, expected_version: expectedVersion },
+		)
+	).data.data;
+}
 
 export async function publishProjectDraft(
 	draftId: string,

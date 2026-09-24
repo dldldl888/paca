@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProjectDraft, ProjectDraftFile } from "@/lib/project-draft-api";
 
 const mocks = vi.hoisted(() => ({ canCreate: true }));
 
@@ -31,6 +32,7 @@ vi.mock("@/lib/project-draft-api", async () => {
 	return {
 		...actual,
 		publishProjectDraft: vi.fn(),
+		updateProjectDraft: vi.fn(),
 		uploadProjectDraftFile: vi.fn(),
 	};
 });
@@ -56,6 +58,12 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.materialLoading": "资料加载中",
 				"home.privateDrafts.materialError": "资料暂时无法加载",
 				"home.privateDrafts.materialEmpty": "没有找到当前可读取的内部资料",
+				"home.privateDrafts.materialAttach": "关联到当前草稿",
+				"home.privateDrafts.materialTask": "资料任务关联",
+				"home.privateDrafts.materialTaskRequired":
+					"至少选择一项任务后才能关联资料",
+				"home.privateDrafts.materialAttachError":
+					"资料关联保存失败，请刷新后重试。",
 				"home.privateDrafts.upload": "上传文件",
 				"home.privateDrafts.uploading": "上传中…",
 				"home.privateDrafts.uploadError": "上传或解析失败，请重试。",
@@ -96,6 +104,7 @@ function renderCard(
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
+
 	queryClient.setQueryData(["private-project-drafts"], items);
 	queryClient.setQueryData(["private-project-draft-materials", ""], materials);
 	return render(
@@ -105,7 +114,312 @@ function renderCard(
 	);
 }
 
+const materialDraft: ProjectDraft = {
+	id: "draft-material",
+	name: "资料关联项目",
+	goal: "目标",
+	items: [
+		{
+			id: "item-1",
+			title: "准备报告",
+			requirements: "整理数据",
+			criteria: "交付报告",
+			importance: 1,
+			dependencies: [],
+		},
+		{
+			id: "item-2",
+			title: "审核报告",
+			requirements: "审核",
+			criteria: "签收",
+			importance: 1,
+			dependencies: [],
+		},
+	],
+	participants: [],
+	materials: [],
+	chat_session_id: "session-1",
+	version: 1,
+	state: "editable",
+	created_at: "2026-09-24T00:00:00Z",
+	updated_at: "2026-09-24T00:00:00Z",
+};
+const readyFile: ProjectDraftFile = {
+	id: "draft-file-1",
+	draft_id: materialDraft.id,
+	file_id: "file-1",
+	file_name: "brief.pdf",
+	content_type: "application/pdf",
+	file_size: 12,
+	upload_status: "uploaded",
+	processing_status: "ready",
+	created_at: "2026-09-24T00:00:00Z",
+	updated_at: "2026-09-24T00:00:00Z",
+};
+
+function renderMaterialDraft(
+	draft = materialDraft,
+	files: ProjectDraftFile[] = [],
+	otherDrafts: ProjectDraft[] = [],
+) {
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+	});
+	queryClient.setQueryData(["private-project-drafts"], [draft, ...otherDrafts]);
+	for (const entry of [draft, ...otherDrafts]) {
+		queryClient.setQueryData(
+			["private-project-draft-preview", entry.id, entry.version],
+			{ ...entry, can_publish: false, issues: [], employee_views: [] },
+		);
+		queryClient.setQueryData(["private-project-draft-files", entry.id], files);
+	}
+	queryClient.setQueryData(
+		["private-project-draft-materials", ""],
+		[
+			{
+				id: "doc-1",
+				title: "可读路线图",
+				source_type: "internal",
+				project_id: "source-project",
+				source_location: "/projects/source-project/docs/doc-1",
+				source_version: "2026-09-24T00:00:00Z",
+				processed_status: "ready",
+				visibility: "project",
+			},
+		],
+	);
+	render(
+		<QueryClientProvider client={queryClient}>
+			<PrivateProjectDraftsCard />
+		</QueryClientProvider>,
+	);
+	fireEvent.click(screen.getAllByRole("button", { name: "预览" })[0]);
+	fireEvent.click(screen.getByRole("button", { name: "查找内部资料" }));
+	return queryClient;
+}
+
+describe("PrivateProjectDraftsCard material association", () => {
+	beforeEach(() => vi.clearAllMocks());
+	it("requires a task before attaching an internal material using the current draft version", async () => {
+		const { updateProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockResolvedValue({ ...materialDraft, version: 2 });
+		renderMaterialDraft();
+		const attach = screen.getByRole("button", {
+			name: "关联到当前草稿: 可读路线图",
+		});
+		expect(attach).toBeDisabled();
+		fireEvent.click(attach);
+		expect(updateProjectDraft).not.toHaveBeenCalled();
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: "资料任务关联: 可读路线图: 准备报告",
+			}),
+		);
+		fireEvent.click(attach);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				1,
+				expect.objectContaining({
+					materials: [
+						expect.objectContaining({
+							id: "doc-1",
+							kind: "document",
+							task_ids: ["item-1"],
+						}),
+					],
+				}),
+			),
+		);
+	});
+
+	it("preserves existing material purpose, required flag, and source when changing task association", async () => {
+		const { updateProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockResolvedValue({ ...materialDraft, version: 2 });
+		const material: ProjectDraft["materials"][number] = {
+			id: "doc-1",
+			kind: "document",
+			source_type: "internal",
+			source_version: "pinned-version",
+			source_location: "pinned-location",
+			processed_status: "ready",
+			purpose: "验收依据",
+			required: true,
+			task_ids: ["item-1"],
+		};
+		renderMaterialDraft({ ...materialDraft, materials: [material] });
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: /可读路线图: 审核报告/ }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "关联到当前草稿: 可读路线图" }),
+		);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				1,
+				expect.objectContaining({
+					materials: [{ ...material, task_ids: ["item-1", "item-2"] }],
+				}),
+			),
+		);
+	});
+
+	it("does not carry unsaved material selections to another draft", async () => {
+		renderMaterialDraft(
+			materialDraft,
+			[],
+			[{ ...materialDraft, id: "another-draft" }],
+		);
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: /可读路线图: 准备报告/ }),
+		);
+		fireEvent.click(screen.getAllByRole("button", { name: "预览" })[1]);
+		expect(
+			screen.getByRole("checkbox", { name: /可读路线图: 准备报告/ }),
+		).not.toBeChecked();
+		expect(
+			screen.getByRole("button", { name: "关联到当前草稿: 可读路线图" }),
+		).toBeDisabled();
+	});
+
+	it("lists a parsed uploaded file privately until its task association is explicitly saved", async () => {
+		const { updateProjectDraft, uploadProjectDraftFile } = await import(
+			"@/lib/project-draft-api"
+		);
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockResolvedValue({ ...materialDraft, version: 2 });
+		vi.mocked(uploadProjectDraftFile).mockReset();
+		renderMaterialDraft(materialDraft, [readyFile]);
+		const attach = screen.getByRole("button", {
+			name: "关联到当前草稿: brief.pdf",
+		});
+		expect(attach).toBeDisabled();
+		expect(updateProjectDraft).not.toHaveBeenCalled();
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: "资料任务关联: brief.pdf: 准备报告",
+			}),
+		);
+		fireEvent.click(attach);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				1,
+				expect.objectContaining({
+					materials: [
+						expect.objectContaining({
+							id: "file-1",
+							kind: "file",
+							source_type: "upload",
+							processed_status: "ready",
+							task_ids: ["item-1"],
+						}),
+					],
+				}),
+			),
+		);
+		expect(uploadProjectDraftFile).not.toHaveBeenCalled();
+	});
+
+	it("refreshes a conflicted association and lets a persisted file be attached without uploading again", async () => {
+		const { updateProjectDraft, uploadProjectDraftFile } = await import(
+			"@/lib/project-draft-api"
+		);
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockRejectedValueOnce({ response: { status: 409 } })
+			.mockResolvedValueOnce({ ...materialDraft, version: 3 });
+		vi.mocked(uploadProjectDraftFile).mockReset();
+		const qc = renderMaterialDraft(materialDraft, [readyFile]);
+		const invalidate = vi
+			.spyOn(qc, "invalidateQueries")
+			.mockImplementation(async () => {
+				qc.setQueryData(
+					["private-project-draft-preview", materialDraft.id, 2],
+					{
+						...materialDraft,
+						version: 2,
+						can_publish: false,
+						issues: [],
+						employee_views: [],
+					},
+				);
+				qc.setQueryData(
+					["private-project-drafts"],
+					[{ ...materialDraft, version: 2 }],
+				);
+			});
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: /brief.pdf: 准备报告/ }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "关联到当前草稿: brief.pdf" }),
+		);
+		expect(
+			await screen.findByText("资料关联保存失败，请刷新后重试。"),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(
+				screen.getByRole("checkbox", { name: /brief.pdf: 准备报告/ }),
+			).not.toBeChecked(),
+		);
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ["private-project-drafts"],
+		});
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: /brief.pdf: 准备报告/ }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "关联到当前草稿: brief.pdf" }),
+		);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenLastCalledWith(
+				materialDraft.id,
+				2,
+				expect.anything(),
+			),
+		);
+		expect(uploadProjectDraftFile).not.toHaveBeenCalled();
+	});
+
+	it("does not automatically share a successful upload", async () => {
+		const { updateProjectDraft, uploadProjectDraftFile } = await import(
+			"@/lib/project-draft-api"
+		);
+		vi.mocked(updateProjectDraft).mockReset();
+		vi.mocked(uploadProjectDraftFile).mockReset().mockResolvedValue(readyFile);
+		const qc = renderMaterialDraft();
+		vi.spyOn(qc, "invalidateQueries").mockImplementation(async () => {
+			qc.setQueryData(
+				["private-project-draft-files", materialDraft.id],
+				[readyFile],
+			);
+		});
+		fireEvent.change(screen.getByLabelText("上传文件"), {
+			target: {
+				files: [
+					new File(["pdf bytes"], "brief.pdf", { type: "application/pdf" }),
+				],
+			},
+		});
+		expect(
+			await screen.findByRole("button", { name: "关联到当前草稿: brief.pdf" }),
+		).toBeDisabled();
+		expect(updateProjectDraft).not.toHaveBeenCalled();
+		expect(
+			screen.queryByRole("button", { name: "重试上传" }),
+		).not.toBeInTheDocument();
+	});
+});
+
 describe("PrivateProjectDraftsCard", () => {
+	beforeEach(() => vi.clearAllMocks());
 	it("shows draft versions and generation status with a chat continuation link", async () => {
 		renderCard([
 			{

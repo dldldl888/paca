@@ -16,6 +16,7 @@ import {
 	projectDraftsQueryOptions,
 	projectDraftWebSearchQueryOptions,
 	publishProjectDraft,
+	updateProjectDraft,
 	uploadProjectDraftFile,
 } from "@/lib/project-draft-api";
 
@@ -66,6 +67,11 @@ export function PrivateProjectDraftsCard({
 	const [previewDraftId, setPreviewDraftId] = useState<string>();
 	const [selectedEmployeeViewID, setSelectedEmployeeViewID] =
 		useState<string>();
+	const [materialTaskSelection, setMaterialTaskSelection] = useState<
+		Record<string, string[]>
+	>({});
+	const [materialUpdating, setMaterialUpdating] = useState(false);
+	const [materialError, setMaterialError] = useState("");
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
 	const [failedUploads, setFailedUploads] = useState<
 		Record<string, { file: File; fileId?: string }>
@@ -109,12 +115,34 @@ export function PrivateProjectDraftsCard({
 	const selectedEmployeeView =
 		employeeViews.find((view) => view.user_id === selectedEmployeeViewID) ??
 		employeeViews[0];
+	const materialCandidates = [
+		...(materials.data ?? []).map((material) => ({
+			...material,
+			kind: "document" as const,
+		})),
+		...(previewFiles.data ?? [])
+			.filter(
+				(file) =>
+					file.upload_status === "uploaded" &&
+					file.processing_status === "ready",
+			)
+			.map((file) => ({
+				id: file.file_id,
+				title: file.file_name,
+				kind: "file" as const,
+				source_type: "upload" as const,
+				source_location: file.file_name,
+				source_version: file.updated_at,
+				processed_status: file.processing_status,
+			})),
+	];
 	async function uploadDraftFile(
 		draftId: string,
 		file: File,
 		retryFileId?: string,
 	) {
 		setUploadError("");
+		setMaterialError("");
 		setUploadingDraftId(draftId);
 		setFailedUploads((current) => {
 			const next = { ...current };
@@ -138,6 +166,84 @@ export function PrivateProjectDraftsCard({
 			}));
 		} finally {
 			setUploadingDraftId(undefined);
+		}
+	}
+	async function associateMaterial(material: {
+		id: string;
+		kind: "document" | "file";
+		source_type?: "internal" | "upload";
+		source_location?: string;
+		source_version?: string;
+		processed_status?: "pending" | "ready" | "failed" | "unverified";
+		title?: string;
+	}) {
+		if (!previewDraft || previewDraft.state !== "editable") return;
+		const taskIDs = materialTaskSelection[material.id] ?? [];
+		if (!taskIDs.length) {
+			setMaterialError(t("home.privateDrafts.materialTaskRequired"));
+			return;
+		}
+		setMaterialError("");
+		setMaterialUpdating(true);
+		const existing = (previewDraft.materials ?? []).find(
+			(item) => item.id === material.id,
+		);
+		const nextMaterials = (previewDraft.materials ?? []).filter(
+			(item) => item.id !== material.id,
+		);
+		nextMaterials.push({
+			...existing,
+			id: material.id,
+			kind: existing?.kind ?? material.kind,
+			source_type: existing?.source_type ?? material.source_type,
+			source_location: existing?.source_location ?? material.source_location,
+			source_version: existing?.source_version ?? material.source_version,
+			processed_status: existing?.processed_status ?? material.processed_status,
+			purpose: existing?.purpose ?? "",
+			task_ids: taskIDs,
+			required: existing?.required ?? false,
+		});
+		try {
+			const next = await updateProjectDraft(
+				previewDraft.id,
+				previewDraft.version,
+				{
+					name: previewDraft.name,
+					goal: previewDraft.goal,
+					manager_user_id: previewDraft.manager_user_id,
+					items: previewDraft.items,
+					participants: previewDraft.participants,
+					materials: nextMaterials,
+				},
+			);
+			qc.setQueryData<ProjectDraft[]>(
+				projectDraftsQueryOptions.queryKey,
+				(current) =>
+					(current ?? []).map((draft) => (draft.id === next.id ? next : draft)),
+			);
+			setMaterialTaskSelection((current) => {
+				const nextSelection = { ...current };
+				delete nextSelection[material.id];
+				return nextSelection;
+			});
+		} catch {
+			setMaterialError(t("home.privateDrafts.materialAttachError"));
+			setMaterialTaskSelection((current) => {
+				const next = { ...current };
+				delete next[material.id];
+				return next;
+			});
+			await qc.invalidateQueries({
+				queryKey: projectDraftsQueryOptions.queryKey,
+			});
+			await qc.invalidateQueries({
+				queryKey: projectDraftPreviewQueryOptions(
+					previewDraft.id,
+					previewDraft.version,
+				).queryKey,
+			});
+		} finally {
+			setMaterialUpdating(false);
 		}
 	}
 	const publish = useMutation({
@@ -289,11 +395,12 @@ export function PrivateProjectDraftsCard({
 									<button
 										type="button"
 										className="mt-2 ml-3 text-xs text-primary underline-offset-4 hover:underline"
-										onClick={() =>
+										onClick={() => {
+											setMaterialTaskSelection({});
 											setPreviewDraftId((current) =>
 												current === draft.id ? undefined : draft.id,
-											)
-										}
+											);
+										}}
 									>
 										{t("home.privateDrafts.preview")}
 									</button>
@@ -502,19 +609,76 @@ export function PrivateProjectDraftsCard({
 								<p className="text-sm text-muted-foreground">
 									{t("home.privateDrafts.materialError")}
 								</p>
-							) : materials.data?.length ? (
+							) : materialCandidates.length ? (
 								<ul className="space-y-1 text-sm">
-									{materials.data.map((material) => (
-										<li
-											key={material.id}
-											className="flex items-center justify-between gap-2 rounded-md border border-border/40 px-2 py-1.5"
-										>
-											<span className="truncate">{material.title}</span>
-											<span className="shrink-0 text-xs text-muted-foreground">
-												{material.processed_status}
-											</span>
-										</li>
-									))}
+									{materialCandidates.map((material) => {
+										const existing = (previewDraft?.materials ?? []).find(
+											(item) => item.id === material.id,
+										);
+										const selected =
+											materialTaskSelection[material.id] ??
+											existing?.task_ids ??
+											[];
+										return (
+											<li
+												key={material.id}
+												className="space-y-2 rounded-md border border-border/40 px-2 py-1.5"
+											>
+												<div className="flex items-center justify-between gap-2">
+													<span className="truncate">{material.title}</span>
+													<span className="shrink-0 text-xs text-muted-foreground">
+														{material.processed_status}
+													</span>
+												</div>
+												{previewDraft?.state === "editable" && (
+													<fieldset className="space-y-1">
+														<legend className="text-xs font-medium">
+															{t("home.privateDrafts.materialTask")}
+														</legend>
+														{(previewDraft.items ?? []).map((item) => (
+															<label
+																key={item.id}
+																className="flex items-center gap-2 text-xs"
+															>
+																<input
+																	type="checkbox"
+																	aria-label={`${t("home.privateDrafts.materialTask")}: ${material.title}: ${item.title}`}
+																	checked={selected.includes(item.id)}
+																	onChange={(event) =>
+																		setMaterialTaskSelection((current) => ({
+																			...current,
+																			[material.id]: event.target.checked
+																				? [...selected, item.id]
+																				: selected.filter(
+																						(id) => id !== item.id,
+																					),
+																		}))
+																	}
+																/>
+																{item.title}
+															</label>
+														))}
+														<button
+															type="button"
+															className="text-xs text-primary underline-offset-4 hover:underline"
+															disabled={
+																materialUpdating || selected.length === 0
+															}
+															aria-label={`${t("home.privateDrafts.materialAttach")}: ${material.title}`}
+															onClick={() => void associateMaterial(material)}
+														>
+															{t("home.privateDrafts.materialAttach")}
+														</button>
+														{selected.length === 0 && (
+															<p className="text-xs text-muted-foreground">
+																{t("home.privateDrafts.materialTaskRequired")}
+															</p>
+														)}
+													</fieldset>
+												)}
+											</li>
+										);
+									})}
 								</ul>
 							) : (
 								<p className="text-sm text-muted-foreground">
@@ -522,6 +686,11 @@ export function PrivateProjectDraftsCard({
 								</p>
 							)}
 						</div>
+					)}
+					{materialError && (
+						<p className="mt-2 text-xs text-destructive" role="alert">
+							{materialError}
+						</p>
 					)}
 				</div>
 				<div className="mt-3 border-t border-border/50 pt-3">
