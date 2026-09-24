@@ -87,8 +87,16 @@ func (c *PublicWebSearchClient) Search(ctx context.Context, query string, limit 
 	if err != nil || len(body) > maxPublicSearchBody {
 		return nil, ErrPublicWebSearchUnavailable
 	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, ErrPublicWebSearchUnavailable
+	}
+	rawResults, ok := envelope["results"]
+	if !ok || len(rawResults) == 0 || strings.TrimSpace(string(rawResults)) == "null" {
+		return nil, ErrPublicWebSearchUnavailable
+	}
 	var decoded searxngResponse
-	if err := json.Unmarshal(body, &decoded); err != nil {
+	if err := json.Unmarshal(rawResults, &decoded.Results); err != nil {
 		return nil, ErrPublicWebSearchUnavailable
 	}
 	items := make([]*draftdom.ProjectDraftWebCandidate, 0, min(limit, len(decoded.Results)))

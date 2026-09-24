@@ -63,6 +63,33 @@ func TestPublicWebSearchClientRejectsMalformedAndBoundsInput(t *testing.T) {
 	}
 }
 
+func TestPublicWebSearchClientRejectsMissingOrNullResultsOnHTTP200(t *testing.T) {
+	for _, payload := range []string{`{}`, `{"results":null}`} {
+		t.Run(payload, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(payload))
+			}))
+			defer server.Close()
+			client := &PublicWebSearchClient{Endpoint: server.URL, Client: server.Client()}
+			if _, err := client.Search(t.Context(), "query", 5); !errors.Is(err, ErrPublicWebSearchUnavailable) {
+				t.Fatalf("expected missing result array to be unavailable, got %v", err)
+			}
+		})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+	client := &PublicWebSearchClient{Endpoint: server.URL, Client: server.Client()}
+	items, err := client.Search(t.Context(), "query", 5)
+	if err != nil || items == nil || len(items) != 0 {
+		t.Fatalf("valid empty result set should remain an empty success: items=%#v err=%v", items, err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
