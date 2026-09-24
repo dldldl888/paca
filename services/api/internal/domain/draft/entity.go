@@ -84,6 +84,8 @@ type ProjectDraftMaterial struct {
 	SourceLocation  string   `json:"source_location,omitempty"`
 	SourceVersion   string   `json:"source_version,omitempty"`
 	ProcessedStatus string   `json:"processed_status,omitempty"`
+	AccessedAt      string   `json:"accessed_at,omitempty"`
+	ReadStatus      string   `json:"read_status,omitempty"`
 	Purpose         string   `json:"purpose,omitempty"`
 	TaskIDs         []string `json:"task_ids,omitempty"`
 	Required        bool     `json:"required"`
@@ -286,6 +288,14 @@ func (c ProjectDraftContent) ValidateStructure() error {
 		}
 		if material.ProcessedStatus != "" && material.ProcessedStatus != "pending" && material.ProcessedStatus != "ready" && material.ProcessedStatus != "failed" && material.ProcessedStatus != "unverified" {
 			return invalid("material processed_status is invalid")
+		}
+		if material.ReadStatus != "" && material.ReadStatus != "unverified" && material.ReadStatus != "verified" {
+			return invalid("material read_status is invalid")
+		}
+		if material.AccessedAt != "" {
+			if _, err := time.Parse(time.RFC3339, material.AccessedAt); err != nil {
+				return invalid("material accessed_at must contain a valid timestamp")
+			}
 		}
 		if utf8.RuneCountInString(material.SourceLocation) > 2000 || utf8.RuneCountInString(material.SourceVersion) > 200 || utf8.RuneCountInString(material.Purpose) > 500 {
 			return invalid("material source metadata exceeds limit")

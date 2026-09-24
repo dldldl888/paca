@@ -416,6 +416,72 @@ describe("PrivateProjectDraftsCard material association", () => {
 			screen.queryByRole("button", { name: "重试上传" }),
 		).not.toBeInTheDocument();
 	});
+
+	it("records an explicitly selected public result with its URL and verification metadata", async () => {
+		const { updateProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockResolvedValue({ ...materialDraft, version: 2 });
+		const qc = renderMaterialDraft();
+		qc.setQueryData(
+			["private-project-draft-web-search", "public"],
+			[
+				{
+					title: "Public source",
+					url: "https://example.com/source",
+					snippet: "Public result",
+					source_type: "web",
+					accessed_at: "2026-09-24T08:00:00Z",
+					read_status: "unverified",
+					processed_status: "unverified",
+				},
+			],
+		);
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		fireEvent.change(screen.getByRole("textbox", { name: "搜索公开网页" }), {
+			target: { value: "public" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		expect(await screen.findByText("Public source")).toBeInTheDocument();
+		const attach = screen.getByRole("button", {
+			name: "关联到当前草稿: Public source",
+		});
+		expect(attach).toBeDisabled();
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: "资料任务关联: Public source: 准备报告",
+			}),
+		);
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: "关联到当前草稿: Public source",
+			}),
+		);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				1,
+				expect.objectContaining({
+					materials: [
+						expect.objectContaining({
+							id: expect.stringMatching(
+								/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+							),
+							kind: "document",
+							source_type: "web",
+							source_location: "https://example.com/source",
+							source_version: "2026-09-24T08:00:00Z",
+							accessed_at: "2026-09-24T08:00:00Z",
+							read_status: "unverified",
+							processed_status: "unverified",
+							purpose: "Public result",
+							task_ids: ["item-1"],
+						}),
+					],
+				}),
+			),
+		);
+	});
 });
 
 describe("PrivateProjectDraftsCard", () => {

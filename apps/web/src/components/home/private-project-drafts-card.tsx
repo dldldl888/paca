@@ -48,6 +48,12 @@ function statusKey(draft: ProjectDraft) {
 	}
 }
 
+function webMaterialID(url: string) {
+	let hash = 2166136261;
+	for (const char of url) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+	return `00000000-0000-4000-8000-${(hash >>> 0).toString(16).padStart(12, "0")}`;
+}
+
 export function PrivateProjectDraftsCard({
 	chatSessionId,
 }: {
@@ -168,17 +174,23 @@ export function PrivateProjectDraftsCard({
 			setUploadingDraftId(undefined);
 		}
 	}
-	async function associateMaterial(material: {
-		id: string;
-		kind: "document" | "file";
-		source_type?: "internal" | "upload";
-		source_location?: string;
-		source_version?: string;
-		processed_status?: "pending" | "ready" | "failed" | "unverified";
-		title?: string;
-	}) {
+	async function associateMaterial(
+		material: {
+			id: string;
+			kind: "document" | "file";
+			source_type?: "internal" | "upload" | "web";
+			source_location?: string;
+			source_version?: string;
+			processed_status?: "pending" | "ready" | "failed" | "unverified";
+			accessed_at?: string;
+			read_status?: string;
+			purpose?: string;
+			title?: string;
+		},
+		selectionKey = material.id,
+	) {
 		if (!previewDraft || previewDraft.state !== "editable") return;
-		const taskIDs = materialTaskSelection[material.id] ?? [];
+		const taskIDs = materialTaskSelection[selectionKey] ?? [];
 		if (!taskIDs.length) {
 			setMaterialError(t("home.privateDrafts.materialTaskRequired"));
 			return;
@@ -186,10 +198,20 @@ export function PrivateProjectDraftsCard({
 		setMaterialError("");
 		setMaterialUpdating(true);
 		const existing = (previewDraft.materials ?? []).find(
-			(item) => item.id === material.id,
+			(item) =>
+				item.id === material.id ||
+				(material.source_type === "web" &&
+					item.source_type === "web" &&
+					item.source_location === material.source_location),
 		);
 		const nextMaterials = (previewDraft.materials ?? []).filter(
-			(item) => item.id !== material.id,
+			(item) =>
+				item.id !== material.id &&
+				!(
+					material.source_type === "web" &&
+					item.source_type === "web" &&
+					item.source_location === material.source_location
+				),
 		);
 		nextMaterials.push({
 			...existing,
@@ -199,7 +221,9 @@ export function PrivateProjectDraftsCard({
 			source_location: existing?.source_location ?? material.source_location,
 			source_version: existing?.source_version ?? material.source_version,
 			processed_status: existing?.processed_status ?? material.processed_status,
-			purpose: existing?.purpose ?? "",
+			accessed_at: existing?.accessed_at ?? material.accessed_at,
+			read_status: existing?.read_status ?? material.read_status,
+			purpose: existing?.purpose ?? material.purpose ?? "",
 			task_ids: taskIDs,
 			required: existing?.required ?? false,
 		});
@@ -223,14 +247,14 @@ export function PrivateProjectDraftsCard({
 			);
 			setMaterialTaskSelection((current) => {
 				const nextSelection = { ...current };
-				delete nextSelection[material.id];
+				delete nextSelection[selectionKey];
 				return nextSelection;
 			});
 		} catch {
 			setMaterialError(t("home.privateDrafts.materialAttachError"));
 			setMaterialTaskSelection((current) => {
 				const next = { ...current };
-				delete next[material.id];
+				delete next[selectionKey];
 				return next;
 			});
 			await qc.invalidateQueries({
@@ -755,6 +779,68 @@ export function PrivateProjectDraftsCard({
 												<p className="mt-1 text-xs text-muted-foreground">
 													{result.snippet}
 												</p>
+											)}
+											{previewDraft?.state === "editable" && (
+												<fieldset className="mt-2 space-y-1">
+													<legend className="text-xs font-medium">
+														{t("home.privateDrafts.materialTask")}
+													</legend>
+													{(previewDraft.items ?? []).map((item) => {
+														const selected =
+															materialTaskSelection[result.url] ?? [];
+														return (
+															<label
+																key={item.id}
+																className="flex items-center gap-2 text-xs"
+															>
+																<input
+																	type="checkbox"
+																	aria-label={`${t("home.privateDrafts.materialTask")}: ${result.title || result.url}: ${item.title}`}
+																	checked={selected.includes(item.id)}
+																	onChange={(event) =>
+																		setMaterialTaskSelection((current) => ({
+																			...current,
+																			[result.url]: event.target.checked
+																				? [...selected, item.id]
+																				: selected.filter(
+																						(id) => id !== item.id,
+																					),
+																		}))
+																	}
+																/>
+																{item.title}
+															</label>
+														);
+													})}
+													<button
+														type="button"
+														className="text-xs text-primary underline-offset-4 hover:underline"
+														disabled={
+															materialUpdating ||
+															(materialTaskSelection[result.url] ?? [])
+																.length === 0
+														}
+														aria-label={`${t("home.privateDrafts.materialAttach")}: ${result.title || result.url}`}
+														onClick={() =>
+															void associateMaterial(
+																{
+																	id: webMaterialID(result.url),
+																	kind: "document",
+																	source_type: "web",
+																	source_location: result.url,
+																	source_version: result.accessed_at,
+																	accessed_at: result.accessed_at,
+																	read_status: result.read_status,
+																	processed_status: result.processed_status,
+																	purpose: result.snippet ?? "",
+																},
+																result.url,
+															)
+														}
+													>
+														{t("home.privateDrafts.materialAttach")}
+													</button>
+												</fieldset>
 											)}
 											<p className="mt-1 text-xs text-muted-foreground">
 												{result.read_status} · {result.accessed_at}

@@ -37,6 +37,8 @@ export interface ProjectDraft {
 		source_location?: string;
 		source_version?: string;
 		processed_status?: "pending" | "ready" | "failed" | "unverified";
+		accessed_at?: string;
+		read_status?: string;
 		purpose?: string;
 		task_ids?: string[];
 		required: boolean;

@@ -52,6 +52,8 @@ func TestProjectDraftContentValidateStructure(t *testing.T) {
 		{name: "task assignee", mut: func(c *ProjectDraftContent) { c.Items[0].AssigneeUserID = "not-a-user" }, want: "assignee_user_id"},
 		{name: "material kind", mut: func(c *ProjectDraftContent) { c.Materials[0].Kind = "copy" }, want: "kind"},
 		{name: "material id", mut: func(c *ProjectDraftContent) { c.Materials[0].ID = uuid.NewString() + "-extra" }, want: "material"},
+		{name: "material read status", mut: func(c *ProjectDraftContent) { c.Materials[0].ReadStatus = "maybe" }, want: "read_status"},
+		{name: "material accessed timestamp", mut: func(c *ProjectDraftContent) { c.Materials[0].AccessedAt = "tomorrow" }, want: "accessed_at"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -98,5 +100,23 @@ func TestProjectDraftPreviewProjectsMaterialsByAssignee(t *testing.T) {
 	}
 	if preview.EmployeeViews[0].Items[0].ID == preview.EmployeeViews[1].Items[0].ID || preview.EmployeeViews[0].Materials[0].ID == preview.EmployeeViews[1].Materials[0].ID {
 		t.Fatalf("task-limited scope crossed employee views: %#v", preview.EmployeeViews)
+	}
+}
+
+func TestProjectDraftPreviewPreservesWebMaterialVerificationMetadata(t *testing.T) {
+	draft := ProjectDraft{ProjectDraftContent: ProjectDraftContent{
+		Name: "公共资料", Goal: "验证来源元数据",
+		Items:        []ProjectDraftItem{{ID: "30000000-0000-4000-8000-000000000001", Title: "核验", Requirements: "核验", Criteria: "通过", AssigneeUserID: "10000000-0000-4000-8000-000000000001"}},
+		Participants: []ProjectDraftParticipant{{UserID: "10000000-0000-4000-8000-000000000001"}},
+		Materials: []ProjectDraftMaterial{{
+			ID: "20000000-0000-4000-8000-000000000001", Kind: "document", SourceType: "web",
+			SourceLocation: "https://example.com/source", SourceVersion: "2026-09-24T08:00:00Z",
+			AccessedAt: "2026-09-24T08:00:00Z", ReadStatus: "unverified", ProcessedStatus: "unverified",
+			TaskIDs: []string{"30000000-0000-4000-8000-000000000001"},
+		}},
+	}}
+	got := draft.Preview().Materials[0]
+	if got.AccessedAt != "2026-09-24T08:00:00Z" || got.ReadStatus != "unverified" {
+		t.Fatalf("web verification metadata was not preserved: %#v", got)
 	}
 }
