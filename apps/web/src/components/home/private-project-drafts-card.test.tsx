@@ -453,4 +453,97 @@ describe("PrivateProjectDraftsCard", () => {
 			),
 		);
 	});
+
+	it("switches the preview to a selected employee view", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(
+			["private-project-drafts"],
+			[{ id: "draft-scope", name: "按人预览", version: 1, state: "editable" }],
+		);
+		queryClient.setQueryData(
+			["private-project-draft-preview", "draft-scope", 1],
+			{
+				id: "draft-scope",
+				version: 1,
+				name: "按人预览",
+				goal: "目标",
+				items: [],
+				participants: [{ user_id: "user-a" }, { user_id: "user-b" }],
+				materials: [],
+				can_publish: true,
+				issues: [],
+				employee_views: [
+					{
+						user_id: "user-a",
+						items: [{ id: "item-a", title: "甲任务" }],
+						materials: [
+							{ id: "material-a", kind: "document", required: false },
+						],
+					},
+					{
+						user_id: "user-b",
+						items: [{ id: "item-b", title: "乙任务" }],
+						materials: [
+							{ id: "material-b", kind: "document", required: false },
+						],
+					},
+				],
+			},
+		);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "预览" }));
+		const selector = await screen.findByRole("combobox", { name: "参与人" });
+		expect(screen.getByText("甲任务")).toBeInTheDocument();
+		fireEvent.change(selector, { target: { value: "user-b" } });
+		expect(screen.getByText("乙任务")).toBeInTheDocument();
+		expect(screen.queryByText("甲任务")).not.toBeInTheDocument();
+		expect(screen.getByText(/资料: 1/)).toBeInTheDocument();
+	});
+
+	it("keeps the employee view available while preview issues are shown", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		queryClient.setQueryData(
+			["private-project-drafts"],
+			[{ id: "draft-issues", name: "待补充", version: 1, state: "editable" }],
+		);
+		queryClient.setQueryData(
+			["private-project-draft-preview", "draft-issues", 1],
+			{
+				id: "draft-issues",
+				version: 1,
+				name: "待补充",
+				goal: "目标",
+				items: [],
+				participants: [{ user_id: "user-a" }],
+				materials: [],
+				can_publish: false,
+				issues: [{ field: "items", message: "缺少任务" }],
+				employee_views: [
+					{
+						user_id: "user-a",
+						items: [{ id: "item-a", title: "待补充任务" }],
+						materials: [],
+					},
+				],
+			},
+		);
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PrivateProjectDraftsCard />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "预览" }));
+		expect(
+			await screen.findByRole("combobox", { name: "参与人" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("待补充任务")).toBeInTheDocument();
+	});
 });

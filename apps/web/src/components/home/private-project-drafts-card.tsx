@@ -64,6 +64,8 @@ export function PrivateProjectDraftsCard({
 	const [webSearch, setWebSearch] = useState("");
 	const [submittedWebSearch, setSubmittedWebSearch] = useState("");
 	const [previewDraftId, setPreviewDraftId] = useState<string>();
+	const [selectedEmployeeViewID, setSelectedEmployeeViewID] =
+		useState<string>();
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
 	const [failedUploads, setFailedUploads] = useState<
 		Record<string, { file: File; fileId?: string }>
@@ -103,6 +105,10 @@ export function PrivateProjectDraftsCard({
 		...projectDraftFilesQueryOptions(previewDraftId ?? ""),
 		enabled: allowed && !!previewDraft,
 	});
+	const employeeViews = preview.data?.employee_views ?? [];
+	const selectedEmployeeView =
+		employeeViews.find((view) => view.user_id === selectedEmployeeViewID) ??
+		employeeViews[0];
 	async function uploadDraftFile(
 		draftId: string,
 		file: File,
@@ -409,6 +415,40 @@ export function PrivateProjectDraftsCard({
 								</ul>
 							</>
 						)}
+					</div>
+				)}
+				{selectedEmployeeView && (
+					<div className="space-y-1 rounded-md border border-border/40 p-2">
+						<label className="flex items-center gap-2 text-xs text-foreground">
+							<span>{t("home.privateDrafts.previewParticipants")}</span>
+							<select
+								aria-label={t("home.privateDrafts.previewParticipants")}
+								className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1"
+								value={selectedEmployeeView.user_id}
+								onChange={(event) =>
+									setSelectedEmployeeViewID(event.target.value)
+								}
+							>
+								{employeeViews.map((view) => (
+									<option key={view.user_id} value={view.user_id}>
+										{view.user_id}
+									</option>
+								))}
+							</select>
+						</label>
+						<p>
+							{t("home.privateDrafts.previewItems")}:{" "}
+							{selectedEmployeeView.items.length}
+						</p>
+						<ul className="list-disc pl-4">
+							{selectedEmployeeView.items.map((item) => (
+								<li key={item.id}>{item.title}</li>
+							))}
+						</ul>
+						<p>
+							{t("home.privateDrafts.previewMaterials")}:{" "}
+							{selectedEmployeeView.materials.length}
+						</p>
 					</div>
 				)}
 				{uploadError && (
