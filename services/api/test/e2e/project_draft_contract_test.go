@@ -191,8 +191,30 @@ func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) 
 	}, http.StatusCreated)
 	previewPath := f.base + "/" + draft["id"].(string) + "/preview"
 	allowed := f.request(t, http.MethodPost, previewPath, map[string]any{"expected_version": 1}, http.StatusOK)
-	if allowed["can_publish"] != true {
-		t.Fatalf("readable material should allow preview: %#v", allowed)
+	if allowed["can_publish"] != false {
+		t.Fatalf("material without a confirmed sharing policy must block publication: %#v", allowed)
+	}
+	previewIssues, previewIssuesOK := allowed["issues"].([]any)
+	if !previewIssuesOK || len(previewIssues) == 0 {
+		t.Fatalf("blocked material preview did not explain the publication boundary: %#v", allowed)
+	}
+	policyIssue := false
+	for _, raw := range previewIssues {
+		issue, ok := raw.(map[string]any)
+		if ok && issue["field"] == "materials" && strings.Contains(issue["message"].(string), "共享") {
+			policyIssue = true
+		}
+	}
+	if !policyIssue {
+		t.Fatalf("preview did not report the unconfirmed material policy: %#v", previewIssues)
+	}
+	beforePublish := projectBusinessCounts(t, f.env)
+	f.request(t, http.MethodPost, f.base+"/"+draft["id"].(string)+"/publish", map[string]any{
+		"expected_version": 1,
+		"publication_id":  uuid.New(),
+	}, http.StatusBadRequest)
+	if afterPublish := projectBusinessCounts(t, f.env); !reflect.DeepEqual(beforePublish, afterPublish) {
+		t.Fatalf("blocked material publish left formal objects: %v -> %v", beforePublish, afterPublish)
 	}
 
 	accessReq := mustRequest(f.env.ctx, t, http.MethodPatch, docPath+"/"+docID.String()+"/access", jsonBody(t, map[string]any{
@@ -211,6 +233,16 @@ func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) 
 	issues, ok := blocked["issues"].([]any)
 	if !ok || len(issues) == 0 {
 		t.Fatalf("preview did not explain revoked material: %#v", blocked)
+	}
+	revokedIssue := false
+	for _, raw := range issues {
+		issue, ok := raw.(map[string]any)
+		if ok && issue["field"] == "materials[0]" && strings.Contains(issue["message"].(string), "不可读") {
+			revokedIssue = true
+		}
+	}
+	if !revokedIssue {
+		t.Fatalf("preview did not report the revoked source material: %#v", issues)
 	}
 }
 

@@ -389,6 +389,12 @@ func (d *ProjectDraft) Preview() *ProjectDraftPreview {
 			add(fmt.Sprintf("materials[%d]", i), "必要资料必须可读取且已处理")
 		}
 	}
+	// Material publication remains blocked until the confirmed sharing and
+	// task-association policy is available; never show a misleading publishable
+	// preview that the atomic publisher will reject later.
+	if len(d.Materials) > 0 {
+		add("materials", "资料共享和任务关联策略尚未确认，暂不能发布")
+	}
 	p.CanPublish = len(p.Issues) == 0
 	return p
 }
