@@ -473,6 +473,19 @@ func TestPrivateProjectDraftRejectsDependencyCycle(t *testing.T) {
 	}, http.StatusBadRequest)
 }
 
+func TestPrivateProjectDraftRejectsUnselectedAssignee(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "未选负责人", "goal": "验证任务归属", "chat_session_id": session,
+		"items": []any{map[string]any{
+			"id": uuid.NewString(), "title": "任务", "requirements": "要求", "criteria": "标准",
+			"assignee_user_id": uuid.NewString(), "dependencies": []string{},
+		}},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials":    []any{},
+	}, http.StatusBadRequest)
+}
+
 func TestPrivateProjectDraftServiceRechecksAuthorityAndSession(t *testing.T) {
 	f, owner, session, _ := newProjectDraftFixture(t)
 	authorizer := authz.NewAuthorizer(pg.NewAuthzPermissionStore(f.env.db)).WithAgentRoleResolver(pg.NewAuthzPermissionStore(f.env.db))

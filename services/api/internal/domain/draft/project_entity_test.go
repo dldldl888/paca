@@ -50,6 +50,9 @@ func TestProjectDraftContentValidateStructure(t *testing.T) {
 			c.Participants = append(c.Participants, c.Participants[0])
 		}, want: "participant"},
 		{name: "task assignee", mut: func(c *ProjectDraftContent) { c.Items[0].AssigneeUserID = "not-a-user" }, want: "assignee_user_id"},
+		{name: "assignee must be participant", mut: func(c *ProjectDraftContent) {
+			c.Items[0].AssigneeUserID = "10000000-0000-4000-8000-000000000002"
+		}, want: "participant"},
 		{name: "dependency cycle", mut: func(c *ProjectDraftContent) {
 			secondID := "30000000-0000-4000-8000-000000000002"
 			c.Items = append(c.Items, ProjectDraftItem{ID: secondID})

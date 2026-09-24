@@ -299,6 +299,11 @@ func (c ProjectDraftContent) ValidateStructure() error {
 			return invalid("participant role is unsupported")
 		}
 	}
+	for _, item := range c.Items {
+		if item.AssigneeUserID != "" && !seenUsers[item.AssigneeUserID] {
+			return invalid("project item assignee_user_id must be a selected participant")
+		}
+	}
 	if c.ManagerUserID != "" && !seenUsers[c.ManagerUserID] {
 		return invalid("manager_user_id must be one of the participants")
 	}
