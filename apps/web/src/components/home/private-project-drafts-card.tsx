@@ -212,7 +212,7 @@ export function PrivateProjectDraftsCard({
 					<p className="text-sm text-muted-foreground">
 						{t("home.privateDrafts.loading")}
 					</p>
-				) : drafts.isError ? (
+				) : drafts.isError && drafts.data == null ? (
 					<p className="text-sm text-muted-foreground">
 						{t("home.privateDrafts.error")}
 					</p>
@@ -345,7 +345,7 @@ export function PrivateProjectDraftsCard({
 							<p className="text-muted-foreground">
 								{t("home.privateDrafts.materialLoading")}
 							</p>
-						) : preview.isError ? (
+						) : preview.isError && preview.data == null ? (
 							<p className="text-destructive">
 								{t("home.privateDrafts.materialError")}
 							</p>
