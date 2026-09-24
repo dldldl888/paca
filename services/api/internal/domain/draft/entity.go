@@ -120,6 +120,15 @@ type ProjectDraftPreviewIssue struct {
 	Message string `json:"message"`
 }
 
+// ProjectDraftEmployeeView is the assignee-scoped metadata projection used by
+// preview consumers. It does not grant the employee access to the draft or
+// material content; those checks remain part of the employee read path.
+type ProjectDraftEmployeeView struct {
+	UserID    string                 `json:"user_id"`
+	Items     []ProjectDraftItem     `json:"items"`
+	Materials []ProjectDraftMaterial `json:"materials"`
+}
+
 type ProjectDraftPreview struct {
 	ID            uuid.UUID                  `json:"id"`
 	Version       int                        `json:"version"`
@@ -129,6 +138,7 @@ type ProjectDraftPreview struct {
 	Items         []ProjectDraftItem         `json:"items"`
 	Participants  []ProjectDraftParticipant  `json:"participants"`
 	Materials     []ProjectDraftMaterial     `json:"materials"`
+	EmployeeViews []ProjectDraftEmployeeView `json:"employee_views"`
 	Issues        []ProjectDraftPreviewIssue `json:"issues"`
 	CanPublish    bool                       `json:"can_publish"`
 }
@@ -297,7 +307,37 @@ func (d *ProjectDraft) Preview() *ProjectDraftPreview {
 	p := &ProjectDraftPreview{
 		ID: d.ID, Version: d.Version, Name: d.Name, Goal: d.Goal, ManagerUserID: d.ManagerUserID,
 		Items: append([]ProjectDraftItem{}, d.Items...), Participants: append([]ProjectDraftParticipant{}, d.Participants...), Materials: append([]ProjectDraftMaterial{}, d.Materials...),
-		Issues: []ProjectDraftPreviewIssue{}, CanPublish: true,
+		EmployeeViews: []ProjectDraftEmployeeView{},
+		Issues:        []ProjectDraftPreviewIssue{}, CanPublish: true,
+	}
+	itemsByUser := map[string][]ProjectDraftItem{}
+	for _, item := range d.Items {
+		if item.AssigneeUserID != "" {
+			itemsByUser[item.AssigneeUserID] = append(itemsByUser[item.AssigneeUserID], item)
+		}
+	}
+	for _, participant := range d.Participants {
+		taskIDs := map[string]struct{}{}
+		for _, item := range itemsByUser[participant.UserID] {
+			taskIDs[item.ID] = struct{}{}
+		}
+		materials := make([]ProjectDraftMaterial, 0, len(d.Materials))
+		for _, material := range d.Materials {
+			shared := len(material.TaskIDs) == 0
+			for _, taskID := range material.TaskIDs {
+				if _, ok := taskIDs[taskID]; ok {
+					shared = true
+					break
+				}
+			}
+			if shared {
+				materials = append(materials, material)
+			}
+		}
+		p.EmployeeViews = append(p.EmployeeViews, ProjectDraftEmployeeView{
+			UserID: participant.UserID,
+			Items:  append([]ProjectDraftItem{}, itemsByUser[participant.UserID]...), Materials: materials,
+		})
 	}
 	add := func(field, message string) {
 		p.Issues = append(p.Issues, ProjectDraftPreviewIssue{Field: field, Message: message})

@@ -95,6 +95,11 @@ export interface ProjectDraftPreview {
 	items: ProjectDraft["items"];
 	participants: ProjectDraft["participants"];
 	materials: ProjectDraft["materials"];
+	employee_views: Array<{
+		user_id: string;
+		items: ProjectDraft["items"];
+		materials: ProjectDraft["materials"];
+	}>;
 	issues: Array<{ field: string; message: string }>;
 	can_publish: boolean;
 }

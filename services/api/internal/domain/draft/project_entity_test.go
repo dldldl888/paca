@@ -67,3 +67,36 @@ func TestProjectDraftContentValidateStructure(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectDraftPreviewProjectsMaterialsByAssignee(t *testing.T) {
+	owner := "10000000-0000-4000-8000-000000000001"
+	peer := "10000000-0000-4000-8000-000000000002"
+	firstItem := "30000000-0000-4000-8000-000000000001"
+	secondItem := "30000000-0000-4000-8000-000000000002"
+	draft := ProjectDraft{ProjectDraftContent: ProjectDraftContent{
+		Name: "预览项目", Goal: "按员工检查范围",
+		Items: []ProjectDraftItem{
+			{ID: firstItem, Title: "甲任务", Requirements: "甲要求", Criteria: "甲标准", AssigneeUserID: owner, DueDate: "2026-12-01T18:00:00+08:00"},
+			{ID: secondItem, Title: "乙任务", Requirements: "乙要求", Criteria: "乙标准", AssigneeUserID: peer, DueDate: "2026-12-02T18:00:00+08:00"},
+		},
+		Participants: []ProjectDraftParticipant{{UserID: owner}, {UserID: peer}},
+		Materials: []ProjectDraftMaterial{
+			{ID: "20000000-0000-4000-8000-000000000001", Kind: "document", ProcessedStatus: "ready", TaskIDs: []string{firstItem}},
+			{ID: "20000000-0000-4000-8000-000000000002", Kind: "document", ProcessedStatus: "ready", TaskIDs: []string{secondItem}},
+			{ID: "20000000-0000-4000-8000-000000000003", Kind: "document", ProcessedStatus: "ready"},
+		},
+	}}
+	preview := draft.Preview()
+	if len(preview.EmployeeViews) != 2 {
+		t.Fatalf("expected two employee views, got %#v", preview.EmployeeViews)
+	}
+	if preview.EmployeeViews[0].UserID != owner || len(preview.EmployeeViews[0].Items) != 1 || len(preview.EmployeeViews[0].Materials) != 2 {
+		t.Fatalf("owner projection leaked or omitted scope: %#v", preview.EmployeeViews[0])
+	}
+	if preview.EmployeeViews[1].UserID != peer || len(preview.EmployeeViews[1].Items) != 1 || len(preview.EmployeeViews[1].Materials) != 2 {
+		t.Fatalf("peer projection leaked or omitted scope: %#v", preview.EmployeeViews[1])
+	}
+	if preview.EmployeeViews[0].Items[0].ID == preview.EmployeeViews[1].Items[0].ID || preview.EmployeeViews[0].Materials[0].ID == preview.EmployeeViews[1].Materials[0].ID {
+		t.Fatalf("task-limited scope crossed employee views: %#v", preview.EmployeeViews)
+	}
+}

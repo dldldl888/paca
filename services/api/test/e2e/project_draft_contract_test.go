@@ -95,6 +95,70 @@ func TestPrivateProjectDraftPreviewBindsVersionAndReportsIssues(t *testing.T) {
 	f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusConflict)
 }
 
+func TestPrivateProjectDraftPreviewProjectsMaterialsByAssignee(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	seedTaskMemberUser(t, f.env, "draft-preview-peer", "password1")
+	peer, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-preview-peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstItem, secondItem := uuid.NewString(), uuid.NewString()
+	draft := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "员工范围预览", "goal": "验证任务资料投影", "chat_session_id": session,
+		"items": []any{
+			map[string]any{"id": firstItem, "title": "甲任务", "requirements": "甲要求", "criteria": "甲标准", "assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "dependencies": []any{}},
+			map[string]any{"id": secondItem, "title": "乙任务", "requirements": "乙要求", "criteria": "乙标准", "assignee_user_id": peer.ID.String(), "due_date": "2026-12-02T18:00:00+08:00", "dependencies": []any{}},
+		},
+		"participants": []any{
+			map[string]any{"user_id": owner.String(), "role": "负责人"},
+			map[string]any{"user_id": peer.ID.String(), "role": "执行人"},
+		},
+		"materials": []any{
+			map[string]any{"id": uuid.NewString(), "kind": "document", "processed_status": "ready", "task_ids": []any{firstItem}},
+			map[string]any{"id": uuid.NewString(), "kind": "document", "processed_status": "ready", "task_ids": []any{secondItem}},
+			map[string]any{"id": uuid.NewString(), "kind": "document", "processed_status": "ready"},
+		},
+	}, http.StatusCreated)
+	preview := f.request(t, http.MethodPost, f.base+"/"+draft["id"].(string)+"/preview", map[string]any{"expected_version": 1}, http.StatusOK)
+	views, ok := preview["employee_views"].([]any)
+	if !ok || len(views) != 2 {
+		t.Fatalf("preview did not expose two employee projections: %#v", preview)
+	}
+	byUser := map[string]map[string]any{}
+	for _, raw := range views {
+		view, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("invalid employee projection: %#v", raw)
+		}
+		byUser[view["user_id"].(string)] = view
+	}
+	for _, userID := range []string{owner.String(), peer.ID.String()} {
+		view, ok := byUser[userID]
+		if !ok || len(view["items"].([]any)) != 1 || len(view["materials"].([]any)) != 2 {
+			t.Fatalf("employee projection has incorrect scope for %s: %#v", userID, view)
+		}
+	}
+	ownerItem := byUser[owner.String()]["items"].([]any)[0].(map[string]any)["id"]
+	peerItem := byUser[peer.ID.String()]["items"].([]any)[0].(map[string]any)["id"]
+	if ownerItem == peerItem {
+		t.Fatalf("task item crossed employee projections: %#v", views)
+	}
+	ownerMaterials := byUser[owner.String()]["materials"].([]any)
+	peerMaterials := byUser[peer.ID.String()]["materials"].([]any)
+	for _, raw := range ownerMaterials {
+		material := raw.(map[string]any)
+		if ids, ok := material["task_ids"].([]any); ok && len(ids) > 0 && ids[0] == secondItem {
+			t.Fatalf("owner projection included peer-only material: %#v", ownerMaterials)
+		}
+	}
+	for _, raw := range peerMaterials {
+		material := raw.(map[string]any)
+		if ids, ok := material["task_ids"].([]any); ok && len(ids) > 0 && ids[0] == firstItem {
+			t.Fatalf("peer projection included owner-only material: %#v", peerMaterials)
+		}
+	}
+}
+
 func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) {
 	f, owner, session, _ := newProjectDraftFixture(t)
 	projectID := createProjectForTasksViaAPI(t, f.env, f.client, f.token)
