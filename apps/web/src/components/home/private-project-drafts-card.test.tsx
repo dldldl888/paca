@@ -31,6 +31,7 @@ vi.mock("@/lib/project-draft-api", async () => {
 	return {
 		...actual,
 		publishProjectDraft: vi.fn(),
+		uploadProjectDraftFile: vi.fn(),
 	};
 });
 vi.mock("react-i18next", () => ({
@@ -55,6 +56,10 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.materialLoading": "资料加载中",
 				"home.privateDrafts.materialError": "资料暂时无法加载",
 				"home.privateDrafts.materialEmpty": "没有找到当前可读取的内部资料",
+				"home.privateDrafts.upload": "上传文件",
+				"home.privateDrafts.uploading": "上传中…",
+				"home.privateDrafts.uploadError": "上传或解析失败，请重试。",
+				"home.privateDrafts.retryUpload": "重试上传",
 				"home.privateDrafts.showWebSearch": "搜索公开网页",
 				"home.privateDrafts.hideWebSearch": "收起公开网页",
 				"home.privateDrafts.webSearch": "搜索公开网页",
@@ -362,5 +367,32 @@ describe("PrivateProjectDraftsCard", () => {
 		expect(
 			screen.queryByText("结果待核实，刷新后可恢复"),
 		).not.toBeInTheDocument();
+	});
+
+	it("keeps a failed file available for manual retry", async () => {
+		const { uploadProjectDraftFile } = await import("@/lib/project-draft-api");
+		vi.mocked(uploadProjectDraftFile)
+			.mockRejectedValueOnce(new Error("upload failed"))
+			.mockResolvedValueOnce({} as never);
+		renderCard([
+			{
+				id: "draft-upload",
+				name: "上传重试",
+				version: 1,
+				state: "editable",
+			},
+		]);
+		const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+		fireEvent.change(screen.getByLabelText("上传文件"), {
+			target: { files: [file] },
+		});
+
+		expect(
+			await screen.findByText("上传或解析失败，请重试。"),
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "重试上传" }));
+		await waitFor(() =>
+			expect(uploadProjectDraftFile).toHaveBeenCalledTimes(2),
+		);
 	});
 });

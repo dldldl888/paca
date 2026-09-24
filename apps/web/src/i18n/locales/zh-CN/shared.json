@@ -84,6 +84,7 @@
 			"upload": "上传文件",
 			"uploading": "上传中…",
 			"uploadError": "上传或解析失败，请重试。",
+			"retryUpload": "重试上传",
 			"showWebSearch": "搜索公开网页",
 			"hideWebSearch": "收起公开网页",
 			"webSearch": "搜索公开网页",

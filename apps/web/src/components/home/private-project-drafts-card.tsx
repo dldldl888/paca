@@ -64,6 +64,7 @@ export function PrivateProjectDraftsCard({
 	const [submittedWebSearch, setSubmittedWebSearch] = useState("");
 	const [previewDraftId, setPreviewDraftId] = useState<string>();
 	const [uploadingDraftId, setUploadingDraftId] = useState<string>();
+	const [failedUploads, setFailedUploads] = useState<Record<string, File>>({});
 	const [uploadError, setUploadError] = useState("");
 	const [publishedDraftId, setPublishedDraftId] = useState<string>();
 	const [publishedProjectIDs, setPublishedProjectIDs] = useState<
@@ -95,6 +96,26 @@ export function PrivateProjectDraftsCard({
 		),
 		enabled: allowed && !!previewDraft,
 	});
+	async function uploadDraftFile(draftId: string, file: File) {
+		setUploadError("");
+		setUploadingDraftId(draftId);
+		setFailedUploads((current) => {
+			const next = { ...current };
+			delete next[draftId];
+			return next;
+		});
+		try {
+			await uploadProjectDraftFile(draftId, file);
+			await qc.invalidateQueries({
+				queryKey: projectDraftFilesQueryOptions(draftId).queryKey,
+			});
+		} catch {
+			setUploadError(t("home.privateDrafts.uploadError"));
+			setFailedUploads((current) => ({ ...current, [draftId]: file }));
+		} finally {
+			setUploadingDraftId(undefined);
+		}
+	}
 	const publish = useMutation({
 		mutationFn: async (draft: ProjectDraft) =>
 			publishProjectDraft(draft.id, draft.version, stablePublicationID(draft)),
@@ -212,26 +233,28 @@ export function PrivateProjectDraftsCard({
 											type="file"
 											className="sr-only"
 											disabled={!!uploadingDraftId}
-											onChange={async (event) => {
+											onChange={(event) => {
 												const file = event.target.files?.[0];
 												if (!file) return;
-												setUploadError("");
-												setUploadingDraftId(draft.id);
-												try {
-													await uploadProjectDraftFile(draft.id, file);
-													await qc.invalidateQueries({
-														queryKey: projectDraftFilesQueryOptions(draft.id)
-															.queryKey,
-													});
-												} catch {
-													setUploadError(t("home.privateDrafts.uploadError"));
-												} finally {
-													setUploadingDraftId(undefined);
-													event.currentTarget.value = "";
-												}
+												const input = event.currentTarget;
+												void uploadDraftFile(draft.id, file).finally(() => {
+													input.value = "";
+												});
 											}}
 										/>
 									</label>
+									{failedUploads[draft.id] && (
+										<button
+											type="button"
+											className="mt-2 ml-3 text-xs text-primary underline-offset-4 hover:underline"
+											disabled={!!uploadingDraftId}
+											onClick={() =>
+												void uploadDraftFile(draft.id, failedUploads[draft.id])
+											}
+										>
+											{t("home.privateDrafts.retryUpload")}
+										</button>
+									)}
 									<button
 										type="button"
 										className="mt-2 ml-3 text-xs text-primary underline-offset-4 hover:underline"

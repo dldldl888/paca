@@ -84,6 +84,7 @@
 			"upload": "Upload file",
 			"uploading": "Uploading…",
 			"uploadError": "Upload or parsing failed. Try again.",
+			"retryUpload": "Retry upload",
 			"showWebSearch": "Search public web",
 			"hideWebSearch": "Hide public web",
 			"webSearch": "Search public web",
