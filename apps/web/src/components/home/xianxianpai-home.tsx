@@ -91,7 +91,7 @@ export function XianxianpaiHome() {
 				<CardContent className="pt-0 text-sm text-muted-foreground">
 					{notificationsPending
 						? t("home.workbench.notificationsLoading")
-						: notificationsError
+						: notificationsError && notifications == null
 							? t("home.workbench.notificationsOffline")
 							: hasNotifications
 								? t("home.workbench.unreadNotifications", {

@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => ({
 		<div data-testid="organization-navigation" />
 	)),
 	notificationBell: vi.fn(() => <button type="button">通知铃</button>),
+	notificationsQueryFn: vi.fn(async () => ({
+		items: [],
+		unread_count: 0,
+		next_cursor: null,
+	})),
 	newConversation: vi.fn(() => <div data-testid="new-conversation" />),
 }));
 
@@ -82,7 +87,7 @@ vi.mock("@/lib/notification-api", () => ({
 		initialPageParam: undefined,
 		getNextPageParam: (page: { next_cursor?: string | null }) =>
 			page.next_cursor ?? undefined,
-		queryFn: async () => ({ items: [], unread_count: 0, next_cursor: null }),
+		queryFn: mocks.notificationsQueryFn,
 	},
 }));
 vi.mock("@tanstack/react-router", () => ({
@@ -110,6 +115,12 @@ vi.mock("@tanstack/react-router", () => ({
 	),
 }));
 beforeEach(async () => {
+	mocks.notificationsQueryFn.mockReset();
+	mocks.notificationsQueryFn.mockResolvedValue({
+		items: [],
+		unread_count: 0,
+		next_cursor: null,
+	});
 	await loadLanguage("zh-CN");
 	await i18next.changeLanguage("zh-CN");
 });
@@ -122,9 +133,10 @@ function renderHome(component: ReactNode, cache: Record<string, unknown> = {}) {
 	});
 	for (const [key, value] of Object.entries(cache))
 		queryClient.setQueryData(key.split(","), value);
-	return render(
+	const view = render(
 		<QueryClientProvider client={queryClient}>{component}</QueryClientProvider>,
 	);
+	return { ...view, queryClient };
 }
 
 describe("XianxianpaiHome", () => {
@@ -243,5 +255,32 @@ describe("XianxianpaiHome", () => {
 		expect(screen.getByText("公司资料加载中")).toBeInTheDocument();
 		expect(screen.getByText("通知加载中")).toBeInTheDocument();
 		expect(screen.getByText("小派连接中")).toBeInTheDocument();
+	});
+
+	it("keeps cached notifications visible when a background refresh fails", async () => {
+		const { queryClient } = renderHome(<XianxianpaiHome />, {
+			"auth,me": { full_name: "员工甲" },
+			projects: { items: [], total: 0 },
+			notifications: {
+				pages: [
+					{
+						items: [{ id: "notification-1" }],
+						unread_count: 2,
+					},
+				],
+				pageParams: [undefined],
+			},
+			"global-agents,chattable": [],
+		});
+		mocks.notificationsQueryFn.mockRejectedValueOnce(new Error("offline"));
+
+		await queryClient.invalidateQueries({ queryKey: ["notifications"] });
+
+		expect(mocks.notificationsQueryFn).toHaveBeenCalled();
+		expect(queryClient.getQueryState(["notifications"])?.status).toBe("error");
+		expect(await screen.findByText("2 条未读通知")).toBeInTheDocument();
+		expect(
+			screen.queryByText("通知暂时无法加载，请稍后再试。"),
+		).not.toBeInTheDocument();
 	});
 });
