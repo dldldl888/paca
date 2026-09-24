@@ -235,6 +235,7 @@ func (c ProjectDraftContent) ValidateStructure() error {
 		}
 		itemIDs[item.ID] = true
 	}
+	dependenciesByItem := make(map[string][]string, len(c.Items))
 	for _, item := range c.Items {
 		if utf8.RuneCountInString(item.Title) > 200 || utf8.RuneCountInString(item.Requirements)+utf8.RuneCountInString(item.Criteria) > 10000 || len(item.DueDate) > 64 || len(item.StartDate) > 64 || item.Importance < 0 || item.Importance > 4 {
 			return invalid("project item exceeds field limits")
@@ -252,6 +253,34 @@ func (c ProjectDraftContent) ValidateStructure() error {
 				return invalid("project item dependencies must reference unique canonical UUIDs")
 			}
 			seenDependencies[dependencyID] = true
+		}
+		dependenciesByItem[item.ID] = append([]string{}, item.Dependencies...)
+	}
+	const (
+		dependencyVisiting uint8 = iota + 1
+		dependencyVisited
+	)
+	dependencyState := make(map[string]uint8, len(c.Items))
+	var hasCycle func(string) bool
+	hasCycle = func(itemID string) bool {
+		switch dependencyState[itemID] {
+		case dependencyVisiting:
+			return true
+		case dependencyVisited:
+			return false
+		}
+		dependencyState[itemID] = dependencyVisiting
+		for _, dependencyID := range dependenciesByItem[itemID] {
+			if hasCycle(dependencyID) {
+				return true
+			}
+		}
+		dependencyState[itemID] = dependencyVisited
+		return false
+	}
+	for itemID := range dependenciesByItem {
+		if hasCycle(itemID) {
+			return invalid("project item dependencies contain a cycle")
 		}
 	}
 	seenUsers := map[string]bool{}

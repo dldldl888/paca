@@ -50,6 +50,12 @@ func TestProjectDraftContentValidateStructure(t *testing.T) {
 			c.Participants = append(c.Participants, c.Participants[0])
 		}, want: "participant"},
 		{name: "task assignee", mut: func(c *ProjectDraftContent) { c.Items[0].AssigneeUserID = "not-a-user" }, want: "assignee_user_id"},
+		{name: "dependency cycle", mut: func(c *ProjectDraftContent) {
+			secondID := "30000000-0000-4000-8000-000000000002"
+			c.Items = append(c.Items, ProjectDraftItem{ID: secondID})
+			c.Items[0].Dependencies = []string{secondID}
+			c.Items[1].Dependencies = []string{c.Items[0].ID}
+		}, want: "cycle"},
 		{name: "material kind", mut: func(c *ProjectDraftContent) { c.Materials[0].Kind = "copy" }, want: "kind"},
 		{name: "material id", mut: func(c *ProjectDraftContent) { c.Materials[0].ID = uuid.NewString() + "-extra" }, want: "material"},
 		{name: "material read status", mut: func(c *ProjectDraftContent) { c.Materials[0].ReadStatus = "maybe" }, want: "read_status"},

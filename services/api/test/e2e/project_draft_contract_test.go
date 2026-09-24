@@ -211,7 +211,7 @@ func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) 
 	beforePublish := projectBusinessCounts(t, f.env)
 	f.request(t, http.MethodPost, f.base+"/"+draft["id"].(string)+"/publish", map[string]any{
 		"expected_version": 1,
-		"publication_id":  uuid.New(),
+		"publication_id":   uuid.New(),
 	}, http.StatusBadRequest)
 	if afterPublish := projectBusinessCounts(t, f.env); !reflect.DeepEqual(beforePublish, afterPublish) {
 		t.Fatalf("blocked material publish left formal objects: %v -> %v", beforePublish, afterPublish)
@@ -450,6 +450,27 @@ func TestPrivateProjectDraftInvalidContentIsBadRequest(t *testing.T) {
 	if got := f.request(t, "GET", path, nil, 200); got["version"] != float64(1) || got["name"] != "有效" {
 		t.Fatal("invalid update modified draft")
 	}
+}
+
+func TestPrivateProjectDraftRejectsDependencyCycle(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	firstID := uuid.NewString()
+	secondID := uuid.NewString()
+	f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "循环依赖", "goal": "验证依赖图", "chat_session_id": session,
+		"items": []any{
+			map[string]any{
+				"id": firstID, "title": "第一项", "requirements": "要求", "criteria": "标准",
+				"assignee_user_id": owner.String(), "dependencies": []string{secondID},
+			},
+			map[string]any{
+				"id": secondID, "title": "第二项", "requirements": "要求", "criteria": "标准",
+				"assignee_user_id": owner.String(), "dependencies": []string{firstID},
+			},
+		},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials":    []any{},
+	}, http.StatusBadRequest)
 }
 
 func TestPrivateProjectDraftServiceRechecksAuthorityAndSession(t *testing.T) {
