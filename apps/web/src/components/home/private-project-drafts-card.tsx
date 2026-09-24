@@ -231,6 +231,7 @@ export function PrivateProjectDraftsCard({
 											: t("home.privateDrafts.upload")}
 										<input
 											type="file"
+											accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 											className="sr-only"
 											disabled={!!uploadingDraftId}
 											onChange={(event) => {

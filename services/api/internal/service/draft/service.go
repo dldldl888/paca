@@ -640,8 +640,13 @@ func draftFileName(name string) string {
 	return name
 }
 
-func draftFileParseable(contentType string) bool {
-	return contentType == "text/plain" || contentType == "text/markdown"
+func draftFileParseable(fileName, contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	ext := strings.ToLower(path.Ext(fileName))
+	return contentType == "text/plain" || contentType == "text/markdown" ||
+		contentType == "application/pdf" ||
+		contentType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+		ext == ".pdf" || ext == ".docx"
 }
 
 func (s *Service) InitiateProjectDraftFile(ctx context.Context, draftID uuid.UUID, fileName, contentType string, fileSize int64) (*attachmentdom.UploadSession, error) {
@@ -699,8 +704,8 @@ func (s *Service) CompleteProjectDraftFile(ctx context.Context, draftID, fileID 
 	if file.UploadStatus != attachmentdom.UploadStatusPending {
 		return nil, attachmentdom.ErrUploadNotPending
 	}
-	if !draftFileParseable(file.ContentType) {
-		return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusUploaded), "failed", "当前环境不支持解析此文件格式；可保留为未解析附件或重新上传纯文本/Markdown", nil)
+	if !draftFileParseable(file.FileName, file.ContentType) {
+		return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusUploaded), "failed", "当前环境不支持解析此文件格式；可保留为未解析附件或重新上传纯文本/Markdown/PDF/DOCX", nil)
 	}
 	data, err := s.store.GetObject(ctx, s.bucket, file.StorageKey, 2<<20+1)
 	if err != nil {
@@ -709,7 +714,10 @@ func (s *Service) CompleteProjectDraftFile(ctx context.Context, draftID, fileID 
 	if len(data) > 2<<20 {
 		return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusFailed), "failed", "文件解析内容超过 2 MiB 限制", nil)
 	}
-	text := string(data)
+	text, parseErr := parseProjectDraftFile(file.FileName, file.ContentType, data)
+	if parseErr != nil {
+		return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusUploaded), "failed", "文件解析失败，请检查文件内容后重试", nil)
+	}
 	return s.Repo.UpdateProjectDraftFile(ctx, draftID, fileID, string(attachmentdom.UploadStatusUploaded), "ready", "", &text)
 }
 
