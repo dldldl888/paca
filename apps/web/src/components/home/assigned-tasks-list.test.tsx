@@ -66,6 +66,18 @@ vi.mock("@/lib/project-api", async () => {
 				page_size: 50,
 			}),
 		}),
+		projectQueryOptions: (projectId: string) => ({
+			queryKey: ["test", "project", projectId],
+			queryFn: async () => ({
+				id: projectId,
+				name: projectId === "proj-late" ? "Project Late" : projectId,
+				description: "",
+				is_public: false,
+				task_id_prefix: "LATE",
+				settings: {},
+				created_at: "2026-01-01T00:00:00Z",
+			}),
+		}),
 		taskStatusesQueryOptions: (projectId: string) => ({
 			queryKey: ["test", "statuses", projectId],
 			queryFn: async () => [],
@@ -200,6 +212,25 @@ describe("AssignedTasksList", () => {
 			to: "/projects/$projectId/tasks/$taskId",
 			params: { projectId: "proj-b", taskId: "task-b1" },
 		});
+	});
+
+	it("resolves a project name when the assigned task is outside the first project page", async () => {
+		mocks.listAssignedTasksMock.mockResolvedValue({
+			items: [
+				makeTask({
+					id: "task-late",
+					project_id: "proj-late",
+					title: "Late project task",
+				}),
+			],
+			page_size: 10,
+			next_cursor: null,
+		});
+
+		renderWidget();
+
+		const group = await screen.findByTestId("list-group-proj-late");
+		expect(within(group).getByText("Project Late")).toBeInTheDocument();
 	});
 
 	it("loads the next page on 'Load more' and hides the button once exhausted", async () => {

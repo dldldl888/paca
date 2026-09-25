@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { assignedTasksQueryOptions, type Task } from "@/lib/interaction-api";
 import {
 	projectMembersQueryOptions,
+	projectQueryOptions,
 	projectsQueryOptions,
 	taskStatusesQueryOptions,
 	taskTypesQueryOptions,
@@ -87,10 +88,24 @@ export function AssignedTasksList() {
 		queries: projectIds.map((id) => projectMembersQueryOptions(id)),
 	});
 
-	const projectsById = useMemo(
+	const listedProjectsById = useMemo(
 		() => new Map((projectsResult?.items ?? []).map((p) => [p.id, p])),
 		[projectsResult],
 	);
+	const missingProjectIds = useMemo(
+		() => projectIds.filter((id) => !listedProjectsById.has(id)),
+		[listedProjectsById, projectIds],
+	);
+	const missingProjectQueries = useQueries({
+		queries: missingProjectIds.map((id) => projectQueryOptions(id)),
+	});
+	const projectsById = useMemo(() => {
+		const map = new Map(listedProjectsById);
+		for (const query of missingProjectQueries) {
+			if (query.data) map.set(query.data.id, query.data);
+		}
+		return map;
+	}, [listedProjectsById, missingProjectQueries]);
 
 	if (isLoading) {
 		return <AssignedTasksListSkeleton />;
