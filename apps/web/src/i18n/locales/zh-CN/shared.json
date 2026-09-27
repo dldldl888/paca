@@ -45,6 +45,7 @@
 			"unreadNotifications": "{{count}} 条未读通知",
 			"notificationsEmpty": "暂无新通知",
 			"notificationsOffline": "通知暂时无法加载，请稍后再试。",
+			"notificationsRetry": "重试通知",
 			"xiaopai": "小派",
 			"xiaopaiDescription": "询问公司资料，获得工作帮助。",
 			"xiaopaiLoading": "小派连接中",

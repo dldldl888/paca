@@ -45,6 +45,7 @@
 			"unreadNotifications": "{{count}} unread notifications",
 			"notificationsEmpty": "No new notifications",
 			"notificationsOffline": "Notifications are temporarily unavailable. Try again later.",
+			"notificationsRetry": "Retry notifications",
 			"xiaopai": "小派",
 			"xiaopaiDescription": "Ask about company materials and get help with your work.",
 			"xiaopaiLoading": "Connecting to 小派",

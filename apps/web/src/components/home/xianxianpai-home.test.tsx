@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import i18next from "i18next";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -282,5 +283,30 @@ describe("XianxianpaiHome", () => {
 		expect(
 			screen.queryByText("通知暂时无法加载，请稍后再试。"),
 		).not.toBeInTheDocument();
+	});
+
+	it("offers a notification retry when the initial load is offline", async () => {
+		mocks.notificationsQueryFn.mockRejectedValueOnce(new Error("offline"));
+		renderHome(<XianxianpaiHome />, {
+			projects: { items: [], total: 0 },
+			"global-agents,chattable": [],
+		});
+
+		expect(
+			await screen.findByText("通知暂时无法加载，请稍后再试。"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "重试通知" }),
+		).toBeInTheDocument();
+
+		mocks.notificationsQueryFn.mockResolvedValueOnce({
+			items: [],
+			unread_count: 0,
+			next_cursor: null,
+		});
+		await userEvent
+			.setup()
+			.click(screen.getByRole("button", { name: "重试通知" }));
+		expect(await screen.findByText("暂无新通知")).toBeInTheDocument();
 	});
 });

@@ -6,6 +6,7 @@ import { NotificationBell } from "@/components/app-shell/notification-bell";
 import { OrganizationNavigation } from "@/components/company/organization-navigation";
 import { AssignedTasksList } from "@/components/home/assigned-tasks-list";
 import { isCompanyAssistant } from "@/components/projects/agents/agent-picker";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { chattableAgentsQueryOptions } from "@/lib/agent-api";
 import { currentUserQueryOptions } from "@/lib/auth-api";
@@ -25,6 +26,7 @@ export function XianxianpaiHome() {
 		data: notifications,
 		isPending: notificationsPending,
 		isError: notificationsError,
+		refetch: refetchNotifications,
 	} = useInfiniteQuery(notificationsQueryOptions);
 	const {
 		data: chattableAgents,
@@ -89,15 +91,27 @@ export function XianxianpaiHome() {
 					<NotificationBell />
 				</CardHeader>
 				<CardContent className="pt-0 text-sm text-muted-foreground">
-					{notificationsPending
-						? t("home.workbench.notificationsLoading")
-						: notificationsError && notifications == null
-							? t("home.workbench.notificationsOffline")
-							: hasNotifications
-								? t("home.workbench.unreadNotifications", {
-										count: unreadCount,
-									})
-								: t("home.workbench.notificationsEmpty")}
+					{notificationsPending ? (
+						t("home.workbench.notificationsLoading")
+					) : notificationsError && notifications == null ? (
+						<span className="flex flex-wrap items-center gap-2">
+							<span>{t("home.workbench.notificationsOffline")}</span>
+							<Button
+								variant="link"
+								size="sm"
+								className="h-auto p-0"
+								onClick={() => void refetchNotifications()}
+							>
+								{t("home.workbench.notificationsRetry")}
+							</Button>
+						</span>
+					) : hasNotifications ? (
+						t("home.workbench.unreadNotifications", {
+							count: unreadCount,
+						})
+					) : (
+						t("home.workbench.notificationsEmpty")
+					)}
 				</CardContent>
 			</Card>
 
