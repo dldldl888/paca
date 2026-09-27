@@ -55,6 +55,7 @@ export function AssignedTasksList() {
 		fetchNextPage,
 		hasNextPage,
 		isFetchingNextPage,
+		refetch: refetchAssignedTasks,
 	} = useInfiniteQuery(assignedTasksQueryOptions());
 	const { data: projectsResult } = useQuery(projectsQueryOptions());
 
@@ -118,6 +119,13 @@ export function AssignedTasksList() {
 				<p className="text-sm font-medium text-destructive">
 					{t("home.myTasks.loadError")}
 				</p>
+				<button
+					type="button"
+					onClick={() => void refetchAssignedTasks()}
+					className="text-sm text-primary underline underline-offset-4 hover:text-primary/80"
+				>
+					{t("home.myTasks.retry")}
+				</button>
 			</div>
 		);
 	}

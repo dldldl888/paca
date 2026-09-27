@@ -172,6 +172,22 @@ describe("AssignedTasksList", () => {
 		expect(screen.queryByTestId(/^list-group-/)).not.toBeInTheDocument();
 	});
 
+	it("offers a retry action when the assigned task fetch is offline", async () => {
+		mocks.listAssignedTasksMock
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce({
+				items: [makeTask({ title: "Recovered task" })],
+				page_size: 10,
+				next_cursor: null,
+			});
+
+		renderWidget();
+
+		await screen.findByText("Couldn't load your tasks. Please try again.");
+		await userEvent.click(screen.getByRole("button", { name: "Retry tasks" }));
+		expect(await screen.findByText("Recovered task")).toBeInTheDocument();
+	});
+
 	it("shows the empty state when there are no assigned tasks", async () => {
 		mocks.listAssignedTasksMock.mockResolvedValue({
 			items: [],
