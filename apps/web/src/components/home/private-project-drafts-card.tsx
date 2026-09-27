@@ -6,12 +6,15 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
 	createProjectDraft,
 	generateProjectDraft,
 	importProjectDraft,
 	type ProjectDraft,
+	type ProjectDraftContent,
 	ProjectDraftUploadError,
 	projectDraftFilesQueryOptions,
 	projectDraftMaterialsQueryOptions,
@@ -97,6 +100,10 @@ export function PrivateProjectDraftsCard({
 	const [publishError, setPublishError] = useState("");
 	const [draftName, setDraftName] = useState("");
 	const [draftActionError, setDraftActionError] = useState("");
+	const [editingDraftId, setEditingDraftId] = useState<string>();
+	const [editingDraftName, setEditingDraftName] = useState("");
+	const [editingDraftGoal, setEditingDraftGoal] = useState("");
+	const [editingDraftSaving, setEditingDraftSaving] = useState(false);
 	const materials = useQuery({
 		...projectDraftMaterialsQueryOptions(submittedSearch),
 		enabled: allowed && materialsOpen,
@@ -230,6 +237,42 @@ export function PrivateProjectDraftsCard({
 			);
 		} catch {
 			setDraftActionError(t("home.privateDrafts.draftActionError"));
+		}
+	}
+	function beginDraftEdit(draft: ProjectDraft) {
+		setDraftActionError("");
+		setEditingDraftId(draft.id);
+		setEditingDraftName(draft.name);
+		setEditingDraftGoal(draft.goal);
+	}
+	async function saveDraftEdit(draft: ProjectDraft) {
+		const name = editingDraftName.trim();
+		if (!name || editingDraftSaving) return;
+		setEditingDraftSaving(true);
+		setDraftActionError("");
+		const content: ProjectDraftContent = {
+			name,
+			goal: editingDraftGoal,
+			manager_user_id: draft.manager_user_id,
+			items: draft.items,
+			participants: draft.participants,
+			materials: draft.materials,
+		};
+		try {
+			const next = await updateProjectDraft(draft.id, draft.version, content);
+			qc.setQueryData<ProjectDraft[]>(
+				projectDraftsQueryOptions.queryKey,
+				(current) =>
+					(current ?? []).map((item) => (item.id === next.id ? next : item)),
+			);
+			setEditingDraftId(undefined);
+		} catch {
+			setDraftActionError(t("home.privateDrafts.draftActionError"));
+			await qc.invalidateQueries({
+				queryKey: projectDraftsQueryOptions.queryKey,
+			});
+		} finally {
+			setEditingDraftSaving(false);
 		}
 	}
 	async function associateMaterial(
@@ -436,7 +479,72 @@ export function PrivateProjectDraftsCard({
 								className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2"
 							>
 								<div className="min-w-0">
-									<p className="truncate text-sm font-medium">{draft.name}</p>
+									{editingDraftId === draft.id ? (
+										<div className="space-y-2 rounded-md border border-border/50 p-2">
+											<label
+												htmlFor={`private-draft-${draft.id}-name`}
+												className="block space-y-1 text-xs font-medium"
+											>
+												{t("home.privateDrafts.draftName")}
+												<Input
+													id={`private-draft-${draft.id}-name`}
+													aria-label={t("home.privateDrafts.draftName")}
+													value={editingDraftName}
+													onChange={(event) =>
+														setEditingDraftName(event.target.value)
+													}
+												/>
+											</label>
+											<label
+												htmlFor={`private-draft-${draft.id}-goal`}
+												className="block space-y-1 text-xs font-medium"
+											>
+												{t("home.privateDrafts.draftGoal")}
+												<Textarea
+													id={`private-draft-${draft.id}-goal`}
+													aria-label={t("home.privateDrafts.draftGoal")}
+													value={editingDraftGoal}
+													onChange={(event) =>
+														setEditingDraftGoal(event.target.value)
+													}
+												/>
+											</label>
+											<div className="flex flex-wrap gap-2">
+												<button
+													type="button"
+													className="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+													disabled={
+														!editingDraftName.trim() || editingDraftSaving
+													}
+													onClick={() => void saveDraftEdit(draft)}
+												>
+													{t("home.privateDrafts.saveDraft")}
+												</button>
+												<button
+													type="button"
+													className="rounded-md border px-2 py-1 text-xs"
+													onClick={() => setEditingDraftId(undefined)}
+												>
+													{t("home.privateDrafts.cancelEdit")}
+												</button>
+											</div>
+										</div>
+									) : (
+										<>
+											<p className="truncate text-sm font-medium">
+												{draft.name}
+											</p>
+											{draft.state === "editable" && (
+												<button
+													type="button"
+													className="mt-1 text-xs text-primary underline-offset-4 hover:underline"
+													onClick={() => beginDraftEdit(draft)}
+												>
+													{t("home.privateDrafts.editDraft")}
+												</button>
+											)}
+										</>
+									)}
 									<p className="text-xs text-muted-foreground">
 										{t("home.privateDrafts.version", {
 											version: draft.version,

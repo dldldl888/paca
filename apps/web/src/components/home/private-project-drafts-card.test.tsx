@@ -48,6 +48,11 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.createFromChat": "从当前讨论创建草稿",
 				"home.privateDrafts.draftNamePlaceholder": "项目草稿名称",
 				"home.privateDrafts.createDraft": "创建私人草稿",
+				"home.privateDrafts.editDraft": "编辑草稿",
+				"home.privateDrafts.saveDraft": "保存草稿",
+				"home.privateDrafts.cancelEdit": "取消编辑",
+				"home.privateDrafts.draftName": "草稿名称",
+				"home.privateDrafts.draftGoal": "项目目标",
 				"home.privateDrafts.empty": "还没有私人项目草稿",
 				"home.privateDrafts.loading": "草稿加载中",
 				"home.privateDrafts.error": "草稿暂时无法加载",
@@ -571,6 +576,42 @@ describe("PrivateProjectDraftsCard", () => {
 		);
 		expect(screen.getByText("当前会话草稿")).toBeInTheDocument();
 		expect(screen.queryByText("别的会话")).not.toBeInTheDocument();
+	});
+
+	it("edits a private draft with its current version and preserves the other fields", async () => {
+		const { updateProjectDraft } = await import("@/lib/project-draft-api");
+		const updatedDraft = {
+			...materialDraft,
+			name: "已编辑项目",
+			goal: "新的项目目标",
+			version: 2,
+		};
+		vi.mocked(updateProjectDraft).mockReset().mockResolvedValue(updatedDraft);
+		renderCard([materialDraft]);
+
+		fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
+		fireEvent.change(screen.getByRole("textbox", { name: "草稿名称" }), {
+			target: { value: "已编辑项目" },
+		});
+		fireEvent.change(screen.getByRole("textbox", { name: "项目目标" }), {
+			target: { value: "新的项目目标" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+		await waitFor(() => {
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				materialDraft.version,
+				expect.objectContaining({
+					name: "已编辑项目",
+					goal: "新的项目目标",
+					items: materialDraft.items,
+					participants: materialDraft.participants,
+					materials: materialDraft.materials,
+				}),
+			);
+			expect(screen.getByText("已编辑项目")).toBeInTheDocument();
+		});
 	});
 
 	it("reveals readable material search with source status", async () => {
