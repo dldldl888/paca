@@ -96,6 +96,7 @@
 			"retryMaterials": "重试资料",
 			"materialEmpty": "没有找到当前可读取的内部资料",
 			"materialAttach": "关联到当前草稿",
+			"materialRemove": "移除资料",
 			"materialTask": "资料任务关联",
 			"materialTaskRequired": "至少选择一项任务后才能关联资料",
 			"materialAttachError": "资料关联保存失败，请刷新后重试。",

@@ -96,6 +96,7 @@
 			"retryMaterials": "Retry materials",
 			"materialEmpty": "No readable internal materials found",
 			"materialAttach": "Attach to current draft",
+			"materialRemove": "Remove material",
 			"materialTask": "Material task scope",
 			"materialTaskRequired": "Select at least one task before attaching this material",
 			"materialAttachError": "Couldn't save the material association. Refresh and try again.",

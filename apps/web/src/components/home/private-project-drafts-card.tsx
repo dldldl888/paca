@@ -320,13 +320,6 @@ export function PrivateProjectDraftsCard({
 		selectionKey = material.id,
 	) {
 		if (!previewDraft || previewDraft.state !== "editable") return;
-		const taskIDs = materialTaskSelection[selectionKey] ?? [];
-		if (!taskIDs.length) {
-			setMaterialError(t("home.privateDrafts.materialTaskRequired"));
-			return;
-		}
-		setMaterialError("");
-		setMaterialUpdating(true);
 		const existing = (previewDraft.materials ?? []).find(
 			(item) =>
 				item.id === material.id ||
@@ -334,6 +327,14 @@ export function PrivateProjectDraftsCard({
 					item.source_type === "web" &&
 					item.source_location === material.source_location),
 		);
+		const taskIDs =
+			materialTaskSelection[selectionKey] ?? existing?.task_ids ?? [];
+		if (!taskIDs.length && !existing) {
+			setMaterialError(t("home.privateDrafts.materialTaskRequired"));
+			return;
+		}
+		setMaterialError("");
+		setMaterialUpdating(true);
 		const nextMaterials = (previewDraft.materials ?? []).filter(
 			(item) =>
 				item.id !== material.id &&
@@ -343,20 +344,23 @@ export function PrivateProjectDraftsCard({
 					item.source_location === material.source_location
 				),
 		);
-		nextMaterials.push({
-			...existing,
-			id: material.id,
-			kind: existing?.kind ?? material.kind,
-			source_type: existing?.source_type ?? material.source_type,
-			source_location: existing?.source_location ?? material.source_location,
-			source_version: existing?.source_version ?? material.source_version,
-			processed_status: existing?.processed_status ?? material.processed_status,
-			accessed_at: existing?.accessed_at ?? material.accessed_at,
-			read_status: existing?.read_status ?? material.read_status,
-			purpose: existing?.purpose ?? material.purpose ?? "",
-			task_ids: taskIDs,
-			required: existing?.required ?? false,
-		});
+		if (taskIDs.length) {
+			nextMaterials.push({
+				...existing,
+				id: material.id,
+				kind: existing?.kind ?? material.kind,
+				source_type: existing?.source_type ?? material.source_type,
+				source_location: existing?.source_location ?? material.source_location,
+				source_version: existing?.source_version ?? material.source_version,
+				processed_status:
+					existing?.processed_status ?? material.processed_status,
+				accessed_at: existing?.accessed_at ?? material.accessed_at,
+				read_status: existing?.read_status ?? material.read_status,
+				purpose: existing?.purpose ?? material.purpose ?? "",
+				task_ids: taskIDs,
+				required: existing?.required ?? false,
+			});
+		}
 		try {
 			const next = await updateProjectDraft(
 				previewDraft.id,
@@ -907,6 +911,11 @@ export function PrivateProjectDraftsCard({
 											materialTaskSelection[material.id] ??
 											existing?.task_ids ??
 											[];
+										const actionLabel = t(
+											existing && !selected.length
+												? "home.privateDrafts.materialRemove"
+												: "home.privateDrafts.materialAttach",
+										);
 										return (
 											<li
 												key={material.id}
@@ -950,14 +959,15 @@ export function PrivateProjectDraftsCard({
 															type="button"
 															className="text-xs text-primary underline-offset-4 hover:underline"
 															disabled={
-																materialUpdating || selected.length === 0
+																materialUpdating ||
+																(!selected.length && !existing)
 															}
-															aria-label={`${t("home.privateDrafts.materialAttach")}: ${material.title}`}
+															aria-label={`${actionLabel}: ${material.title}`}
 															onClick={() => void associateMaterial(material)}
 														>
-															{t("home.privateDrafts.materialAttach")}
+															{actionLabel}
 														</button>
-														{selected.length === 0 && (
+														{selected.length === 0 && !existing && (
 															<p className="text-xs text-muted-foreground">
 																{t("home.privateDrafts.materialTaskRequired")}
 															</p>
@@ -1033,33 +1043,47 @@ export function PrivateProjectDraftsCard({
 								</div>
 							) : webResults.data?.length ? (
 								<ul className="space-y-2 text-sm">
-									{webResults.data.map((result) => (
-										<li
-											key={result.url}
-											className="rounded-md border border-border/40 px-2 py-1.5"
-										>
-											<a
-												href={result.url}
-												target="_blank"
-												rel="noreferrer"
-												className="font-medium text-primary underline-offset-4 hover:underline"
+									{webResults.data.map((result) => {
+										const webID = webMaterialID(result.url);
+										const existing = (previewDraft?.materials ?? []).find(
+											(item) =>
+												item.id === webID ||
+												(item.source_type === "web" &&
+													item.source_location === result.url),
+										);
+										const selected =
+											materialTaskSelection[result.url] ??
+											existing?.task_ids ??
+											[];
+										const actionLabel = t(
+											existing && !selected.length
+												? "home.privateDrafts.materialRemove"
+												: "home.privateDrafts.materialAttach",
+										);
+										return (
+											<li
+												key={result.url}
+												className="rounded-md border border-border/40 px-2 py-1.5"
 											>
-												{result.title || result.url}
-											</a>
-											{result.snippet && (
-												<p className="mt-1 text-xs text-muted-foreground">
-													{result.snippet}
-												</p>
-											)}
-											{previewDraft?.state === "editable" && (
-												<fieldset className="mt-2 space-y-1">
-													<legend className="text-xs font-medium">
-														{t("home.privateDrafts.materialTask")}
-													</legend>
-													{(previewDraft.items ?? []).map((item) => {
-														const selected =
-															materialTaskSelection[result.url] ?? [];
-														return (
+												<a
+													href={result.url}
+													target="_blank"
+													rel="noreferrer"
+													className="font-medium text-primary underline-offset-4 hover:underline"
+												>
+													{result.title || result.url}
+												</a>
+												{result.snippet && (
+													<p className="mt-1 text-xs text-muted-foreground">
+														{result.snippet}
+													</p>
+												)}
+												{previewDraft?.state === "editable" && (
+													<fieldset className="mt-2 space-y-1">
+														<legend className="text-xs font-medium">
+															{t("home.privateDrafts.materialTask")}
+														</legend>
+														{(previewDraft.items ?? []).map((item) => (
 															<label
 																key={item.id}
 																className="flex items-center gap-2 text-xs"
@@ -1081,43 +1105,42 @@ export function PrivateProjectDraftsCard({
 																/>
 																{item.title}
 															</label>
-														);
-													})}
-													<button
-														type="button"
-														className="text-xs text-primary underline-offset-4 hover:underline"
-														disabled={
-															materialUpdating ||
-															(materialTaskSelection[result.url] ?? [])
-																.length === 0
-														}
-														aria-label={`${t("home.privateDrafts.materialAttach")}: ${result.title || result.url}`}
-														onClick={() =>
-															void associateMaterial(
-																{
-																	id: webMaterialID(result.url),
-																	kind: "document",
-																	source_type: "web",
-																	source_location: result.url,
-																	source_version: result.accessed_at,
-																	accessed_at: result.accessed_at,
-																	read_status: result.read_status,
-																	processed_status: result.processed_status,
-																	purpose: result.snippet ?? "",
-																},
-																result.url,
-															)
-														}
-													>
-														{t("home.privateDrafts.materialAttach")}
-													</button>
-												</fieldset>
-											)}
-											<p className="mt-1 text-xs text-muted-foreground">
-												{result.read_status} · {result.accessed_at}
-											</p>
-										</li>
-									))}
+														))}
+														<button
+															type="button"
+															className="text-xs text-primary underline-offset-4 hover:underline"
+															disabled={
+																materialUpdating ||
+																(!selected.length && !existing)
+															}
+															aria-label={`${actionLabel}: ${result.title || result.url}`}
+															onClick={() =>
+																void associateMaterial(
+																	{
+																		id: webID,
+																		kind: "document",
+																		source_type: "web",
+																		source_location: result.url,
+																		source_version: result.accessed_at,
+																		accessed_at: result.accessed_at,
+																		read_status: result.read_status,
+																		processed_status: result.processed_status,
+																		purpose: result.snippet ?? "",
+																	},
+																	result.url,
+																)
+															}
+														>
+															{actionLabel}
+														</button>
+													</fieldset>
+												)}
+												<p className="mt-1 text-xs text-muted-foreground">
+													{result.read_status} · {result.accessed_at}
+												</p>
+											</li>
+										);
+									})}
 								</ul>
 							) : (
 								<p className="text-sm text-muted-foreground">

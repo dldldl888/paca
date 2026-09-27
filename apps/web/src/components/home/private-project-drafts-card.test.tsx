@@ -86,6 +86,7 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.retryMaterials": "重试资料",
 				"home.privateDrafts.materialEmpty": "没有找到当前可读取的内部资料",
 				"home.privateDrafts.materialAttach": "关联到当前草稿",
+				"home.privateDrafts.materialRemove": "移除资料",
 				"home.privateDrafts.materialTask": "资料任务关联",
 				"home.privateDrafts.materialTaskRequired":
 					"至少选择一项任务后才能关联资料",
@@ -357,6 +358,72 @@ describe("PrivateProjectDraftsCard material association", () => {
 		);
 	});
 
+	it("keeps stored associations when saving without editing the selection", async () => {
+		const { updateProjectDraft } = await import("@/lib/project-draft-api");
+		const material: ProjectDraft["materials"][number] = {
+			id: "doc-1",
+			kind: "document",
+			source_type: "internal",
+			task_ids: ["item-1"],
+			required: false,
+		};
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockResolvedValue({
+				...materialDraft,
+				materials: [material],
+				version: 2,
+			});
+		renderMaterialDraft({ ...materialDraft, materials: [material] });
+		fireEvent.click(
+			screen.getByRole("button", { name: "关联到当前草稿: 可读路线图" }),
+		);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				1,
+				expect.objectContaining({
+					materials: [
+						expect.objectContaining({ id: material.id, task_ids: ["item-1"] }),
+					],
+				}),
+			),
+		);
+	});
+
+	it("removes an existing material when all task associations are cleared", async () => {
+		const { updateProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockResolvedValue({ ...materialDraft, version: 2 });
+		const material: ProjectDraft["materials"][number] = {
+			id: "doc-1",
+			kind: "document",
+			source_type: "internal",
+			processed_status: "ready",
+			required: false,
+			task_ids: ["item-1"],
+		};
+		renderMaterialDraft({ ...materialDraft, materials: [material] });
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: "资料任务关联: 可读路线图: 准备报告",
+			}),
+		);
+		const remove = screen.getByRole("button", {
+			name: "移除资料: 可读路线图",
+		});
+		expect(remove).toBeEnabled();
+		fireEvent.click(remove);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				1,
+				expect.objectContaining({ materials: [] }),
+			),
+		);
+	});
+
 	it("does not carry unsaved material selections to another draft", async () => {
 		renderMaterialDraft(
 			materialDraft,
@@ -567,6 +634,62 @@ describe("PrivateProjectDraftsCard material association", () => {
 						}),
 					],
 				}),
+			),
+		);
+	});
+
+	it("rehydrates existing public material task associations", async () => {
+		const { updateProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(updateProjectDraft)
+			.mockReset()
+			.mockResolvedValue({ ...materialDraft, version: 2 });
+		const existing = {
+			id: "web-existing",
+			kind: "document" as const,
+			source_type: "web" as const,
+			source_location: "https://example.com/existing",
+			processed_status: "unverified" as const,
+			task_ids: ["item-1"],
+			required: false,
+		};
+		const qc = renderMaterialDraft({
+			...materialDraft,
+			materials: [existing],
+		});
+		qc.setQueryData(
+			["private-project-draft-web-search", "public"],
+			[
+				{
+					title: "Existing public source",
+					url: existing.source_location,
+					snippet: "Existing result",
+					source_type: "web",
+					accessed_at: "2026-09-24T08:00:00Z",
+					read_status: "unverified",
+					processed_status: "unverified",
+				},
+			],
+		);
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		fireEvent.change(screen.getByRole("textbox", { name: "搜索公开网页" }), {
+			target: { value: "public" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		const checkbox = await screen.findByRole("checkbox", {
+			name: "资料任务关联: Existing public source: 准备报告",
+		});
+		expect(checkbox).toBeChecked();
+		fireEvent.click(checkbox);
+		const remove = screen.getByRole("button", {
+			name: "移除资料: Existing public source",
+		});
+		expect(remove).toBeEnabled();
+		fireEvent.click(remove);
+		await waitFor(() =>
+			expect(updateProjectDraft).toHaveBeenCalledWith(
+				materialDraft.id,
+				1,
+				expect.objectContaining({ materials: [] }),
 			),
 		);
 	});
