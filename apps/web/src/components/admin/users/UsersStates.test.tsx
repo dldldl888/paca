@@ -51,6 +51,15 @@ describe("UsersErrorState", () => {
 		expect(screen.getByText(/failed to load users/i)).toBeInTheDocument();
 		expect(screen.getByText(/please refresh/i)).toBeInTheDocument();
 	});
+
+	it("calls onRetry from the error state", async () => {
+		const onRetry = vi.fn();
+		render(<UsersErrorState onRetry={onRetry} />);
+
+		await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+
+		expect(onRetry).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("UsersNoPermissionState", () => {

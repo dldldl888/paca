@@ -61,6 +61,7 @@ function UsersManagementPage() {
 		isLoading,
 		isError,
 		isFetching,
+		refetch: refetchUsers,
 	} = useQuery({ ...usersQueryOptions(page, pageSize), enabled: canRead });
 	const {
 		data: allUsersData,
@@ -137,7 +138,7 @@ function UsersManagementPage() {
 			) : isLoading ? (
 				<UsersTableSkeleton />
 			) : isError ? (
-				<UsersErrorState />
+				<UsersErrorState onRetry={() => void refetchUsers()} />
 			) : users.length === 0 ? (
 				<EmptyUsersState
 					canWrite={canWrite}

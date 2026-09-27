@@ -10,10 +10,12 @@ import { Route } from "@/routes/_authenticated/admin/users/index";
 
 const UsersManagementPage = Route.options.component as ComponentType;
 let users: User[];
+let failFirstPage: boolean;
 let failSecondPage: boolean;
 
 beforeEach(() => {
 	vi.restoreAllMocks();
+	failFirstPage = false;
 	failSecondPage = false;
 	users = Array.from({ length: 40 }, (_, i) => ({
 		id: `user-${i + 1}`,
@@ -53,7 +55,7 @@ beforeEach(() => {
 					page?: number;
 					page_size?: number;
 				};
-				if (failSecondPage && page === 2)
+				if ((failFirstPage && page === 1) || (failSecondPage && page === 2))
 					throw new Error("Network unavailable");
 				data = {
 					items: users.slice((page - 1) * pageSize, page * pageSize),
@@ -107,6 +109,15 @@ it("keeps a way back when loading the second page fails", async () => {
 	expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
 	await user.click(screen.getByRole("button", { name: "Previous page" }));
 	await screen.findByText("employee_1");
+});
+
+it("retries the initial user list after a load failure", async () => {
+	failFirstPage = true;
+	const user = await renderPage();
+	await screen.findByText("Failed to load users");
+	failFirstPage = false;
+	await user.click(screen.getByRole("button", { name: "Try again" }));
+	await screen.findByText("employee_20");
 });
 
 it("does not show partial role coverage when the full list fails", async () => {

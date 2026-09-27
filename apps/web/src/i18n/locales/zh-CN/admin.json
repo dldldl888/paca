@@ -36,7 +36,8 @@
 		},
 		"errors": {
 			"loadFailed": "加载用户失败",
-			"tryAgain": "请刷新页面后重试。"
+			"tryAgain": "请刷新页面后重试。",
+			"retry": "重试"
 		},
 		"noPermission": {
 			"title": "您没有权限查看用户",

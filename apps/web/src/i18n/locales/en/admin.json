@@ -48,7 +48,8 @@
 		},
 		"errors": {
 			"loadFailed": "Failed to load users",
-			"tryAgain": "Please refresh the page and try again."
+			"tryAgain": "Please refresh the page and try again.",
+			"retry": "Try again"
 		},
 		"noPermission": {
 			"title": "You don't have permission to view users",

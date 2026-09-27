@@ -32,7 +32,7 @@ export function EmptyUsersState({ canWrite, onCreate }: EmptyUsersStateProps) {
 	);
 }
 
-export function UsersErrorState() {
+export function UsersErrorState({ onRetry }: { onRetry?: () => void }) {
 	const { t } = useTranslation("admin");
 
 	return (
@@ -46,6 +46,11 @@ export function UsersErrorState() {
 					{t("users.errors.tryAgain")}
 				</p>
 			</div>
+			{onRetry ? (
+				<Button variant="outline" size="sm" onClick={onRetry}>
+					{t("users.errors.retry")}
+				</Button>
+			) : null}
 		</div>
 	);
 }
