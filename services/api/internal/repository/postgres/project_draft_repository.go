@@ -12,6 +12,7 @@ import (
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	"github.com/Paca-AI/api/internal/platform/database"
 	"github.com/google/uuid"
@@ -138,6 +139,11 @@ func (r *DraftRepository) CreateProjectDraft(ctx context.Context, content draftd
 		UpdatedAt:           now,
 	}
 	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
+		if content.TargetProjectID != "" {
+			if _, err := existingDraftTarget(ctx, tx, content); err != nil {
+				return err
+			}
+		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO project_drafts(id,owner_user_id,chat_session_id,version,state,content,generation,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, d.ID, user, chatSessionID, d.Version, d.State, b, nil, now, now)
 		return err
 	})
@@ -388,8 +394,8 @@ func (r *DraftRepository) ListProjectDraftFiles(ctx context.Context, draftID uui
 }
 
 // PublishProjectDraft materializes the validated private draft in one database
-// transaction. Materials are intentionally blocked until their source-sharing
-// checks are implemented; silently dropping them would publish an incomplete plan.
+// transaction. Existing-project batches reuse that project and its members;
+// materials retain their original-source authorization.
 func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID, expected int, publication uuid.UUID) (*draftdom.ProjectDraftPublication, error) {
 	user, err := projectDraftActor(ctx)
 	if err != nil {
@@ -440,90 +446,112 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 		}
 		now := time.Now()
 		projectID := uuid.New()
-		settings, _ := json.Marshal(map[string]any{})
-		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,name,description,task_id_prefix,is_public,settings,created_by,created_at) VALUES($1,$2,$3,$4,false,$5,$6,$7)`, projectID, d.Name, d.Goal, "PRJ", settings, user, now); err != nil {
-			return err
-		}
-		adminRole, editorRole := uuid.New(), uuid.New()
-		adminPerms, _ := json.Marshal(map[string]bool{
-			"projects.read": true, "projects.write": true,
-			"project.members.read": true, "project.members.write": true,
-			"project.roles.read": true, "project.roles.write": true,
-			"tasks.read": true, "tasks.read_all": true, "tasks.write": true, "tasks.manage": true,
-			"sprints.read": true, "sprints.write": true,
-			"docs.read": true, "docs.write": true,
-			"agents.read": true, "agents.write": true,
-			"conversations.read": true, "conversations.write": true,
-			"workflows.read": true, "workflows.write": true,
-			"environments.read": true, "environments.write": true, "environments.connect": true,
-			"annotations.read": true, "annotations.write": true, "annotations.resolve": true,
-		})
-		editorPerms, _ := json.Marshal(map[string]bool{"projects.read": true, "tasks.read": true, "tasks.write": true, "docs.read": true})
-		for _, role := range []struct {
-			id          uuid.UUID
-			name        string
-			permissions []byte
-		}{{adminRole, "Admin", adminPerms}, {editorRole, "Editor", editorPerms}} {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO project_roles(id,project_id,role_name,permissions,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)`, role.id, projectID, role.name, role.permissions, now); err != nil {
-				return err
-			}
-		}
-		members := map[uuid.UUID]uuid.UUID{user: uuid.New()}
-		adminUsers := map[uuid.UUID]bool{user: true}
-		if d.ManagerUserID != "" {
-			managerID, err := uuid.Parse(d.ManagerUserID)
+		members := map[uuid.UUID]uuid.UUID{}
+		var taskTypeID, taskStatusID uuid.UUID
+		if d.TargetProjectID != "" {
+			projectID, err = uuid.Parse(d.TargetProjectID)
 			if err != nil {
-				return &draftdom.ProjectDraftValidationError{Message: "manager user is invalid"}
+				return &draftdom.ProjectDraftValidationError{Message: "target project is invalid"}
 			}
-			var active bool
-			if err := tx.GetContext(ctx, &active, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL)`, managerID); err != nil {
-				return err
-			}
-			if !active {
-				return &draftdom.ProjectDraftValidationError{Message: "manager user is no longer active"}
-			}
-			if _, selected := members[managerID]; !selected {
-				return &draftdom.ProjectDraftValidationError{Message: "manager user must be a selected participant"}
-			}
-			adminUsers[managerID] = true
-		}
-		for _, participant := range d.Participants {
-			participantID, err := uuid.Parse(participant.UserID)
+			members, err = existingDraftTarget(ctx, tx, d.ProjectDraftContent)
 			if err != nil {
-				return &draftdom.ProjectDraftValidationError{Message: "participant user is invalid"}
-			}
-			var active bool
-			if err := tx.GetContext(ctx, &active, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL)`, participantID); err != nil {
 				return err
 			}
-			if !active {
-				return &draftdom.ProjectDraftValidationError{Message: "participant user is no longer active"}
+			if err := tx.GetContext(ctx, &taskTypeID, `SELECT id FROM task_types WHERE project_id=$1 AND is_default=true LIMIT 1`, projectID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
 			}
-			if _, exists := members[participantID]; !exists {
-				members[participantID] = uuid.New()
+			if err := tx.GetContext(ctx, &taskStatusID, `SELECT id FROM task_statuses WHERE project_id=$1 AND is_default=true LIMIT 1`, projectID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
 			}
-			role := strings.ToLower(strings.TrimSpace(participant.Role))
-			if role == "负责人" || role == "项目负责人" || role == "manager" || role == "owner" {
-				adminUsers[participantID] = true
+		} else {
+			settings, _ := json.Marshal(map[string]any{})
+			if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id,name,description,task_id_prefix,is_public,settings,created_by,created_at) VALUES($1,$2,$3,$4,false,$5,$6,$7)`, projectID, d.Name, d.Goal, "PRJ", settings, user, now); err != nil {
+				return err
 			}
-		}
-		for memberUser, memberID := range members {
-			roleID := editorRole
-			if adminUsers[memberUser] {
-				roleID = adminRole
+			adminRole, editorRole := uuid.New(), uuid.New()
+			adminPerms, _ := json.Marshal(map[string]bool{
+				"projects.read": true, "projects.write": true,
+				"project.members.read": true, "project.members.write": true,
+				"project.roles.read": true, "project.roles.write": true,
+				"tasks.read": true, "tasks.read_all": true, "tasks.write": true, "tasks.manage": true,
+				"sprints.read": true, "sprints.write": true,
+				"docs.read": true, "docs.write": true,
+				"agents.read": true, "agents.write": true,
+				"conversations.read": true, "conversations.write": true,
+				"workflows.read": true, "workflows.write": true,
+				"environments.read": true, "environments.write": true, "environments.connect": true,
+				"annotations.read": true, "annotations.write": true, "annotations.resolve": true,
+			})
+			editorPerms, _ := json.Marshal(map[string]bool{"projects.read": true, "tasks.read": true, "tasks.write": true, "docs.read": true})
+			for _, role := range []struct {
+				id          uuid.UUID
+				name        string
+				permissions []byte
+			}{{adminRole, "Admin", adminPerms}, {editorRole, "Editor", editorPerms}} {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO project_roles(id,project_id,role_name,permissions,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)`, role.id, projectID, role.name, role.permissions, now); err != nil {
+					return err
+				}
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type,created_at) VALUES($1,$2,$3,$4,'human',$5)`, memberID, projectID, memberUser, roleID, now); err != nil {
+			members[user] = uuid.New()
+			adminUsers := map[uuid.UUID]bool{user: true}
+			if d.ManagerUserID != "" {
+				managerID, err := uuid.Parse(d.ManagerUserID)
+				if err != nil {
+					return &draftdom.ProjectDraftValidationError{Message: "manager user is invalid"}
+				}
+				var active bool
+				if err := tx.GetContext(ctx, &active, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL)`, managerID); err != nil {
+					return err
+				}
+				if !active {
+					return &draftdom.ProjectDraftValidationError{Message: "manager user is no longer active"}
+				}
+				if _, selected := members[managerID]; !selected {
+					return &draftdom.ProjectDraftValidationError{Message: "manager user must be a selected participant"}
+				}
+				adminUsers[managerID] = true
+			}
+			for _, participant := range d.Participants {
+				participantID, err := uuid.Parse(participant.UserID)
+				if err != nil {
+					return &draftdom.ProjectDraftValidationError{Message: "participant user is invalid"}
+				}
+				var active bool
+				if err := tx.GetContext(ctx, &active, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL)`, participantID); err != nil {
+					return err
+				}
+				if !active {
+					return &draftdom.ProjectDraftValidationError{Message: "participant user is no longer active"}
+				}
+				if _, exists := members[participantID]; !exists {
+					members[participantID] = uuid.New()
+				}
+				role := strings.ToLower(strings.TrimSpace(participant.Role))
+				if role == "负责人" || role == "项目负责人" || role == "manager" || role == "owner" {
+					adminUsers[participantID] = true
+				}
+			}
+			for memberUser, memberID := range members {
+				roleID := editorRole
+				if adminUsers[memberUser] {
+					roleID = adminRole
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type,created_at) VALUES($1,$2,$3,$4,'human',$5)`, memberID, projectID, memberUser, roleID, now); err != nil {
+					return err
+				}
+			}
+			taskTypeID, taskStatusID = uuid.New(), uuid.New()
+			if _, err := tx.ExecContext(ctx, `INSERT INTO task_types(id,project_id,name,is_default,is_system,created_at,updated_at) VALUES($1,$2,'Task',true,false,$3,$3)`, taskTypeID, projectID, now); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO task_statuses(id,project_id,name,position,category,is_default,created_at,updated_at) VALUES($1,$2,'Backlog',1,'backlog',true,$3,$3)`, taskStatusID, projectID, now); err != nil {
 				return err
 			}
 		}
-		taskTypeID, taskStatusID := uuid.New(), uuid.New()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO task_types(id,project_id,name,is_default,is_system,created_at,updated_at) VALUES($1,$2,'Task',true,false,$3,$3)`, taskTypeID, projectID, now); err != nil {
-			return err
+		if taskTypeID == uuid.Nil || taskStatusID == uuid.Nil {
+			return &draftdom.ProjectDraftValidationError{Message: "目标项目缺少默认任务类型或状态"}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO task_statuses(id,project_id,name,position,category,is_default,created_at,updated_at) VALUES($1,$2,'Backlog',1,'backlog',true,$3,$3)`, taskStatusID, projectID, now); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO task_counters(project_id,last_value) VALUES($1,0)`, projectID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_counters(project_id,last_value) VALUES($1,0) ON CONFLICT (project_id) DO NOTHING`, projectID); err != nil {
 			return err
 		}
 		taskIDs := make(map[string]uuid.UUID, len(d.Items))
@@ -722,6 +750,14 @@ func (r *DraftRepository) UpdateProjectDraft(ctx context.Context, id uuid.UUID, 
 		if row.State != "editable" || row.Version != expected {
 			return draftdom.ErrConflict
 		}
+		current, err := decodeProjectDraft(row)
+		if err != nil {
+			return err
+		}
+		if content.TargetProjectID != "" && content.TargetProjectID != current.TargetProjectID {
+			return draftdom.ErrConflict
+		}
+		content.TargetProjectID = current.TargetProjectID
 		b, err := encodeProjectDraft(content)
 		if err != nil {
 			return err
@@ -879,10 +915,6 @@ func (r *DraftRepository) CompleteProjectDraftGeneration(ctx context.Context, id
 	if err := content.ValidateStructure(); err != nil {
 		return nil, err
 	}
-	bContent, err := encodeProjectDraft(content)
-	if err != nil {
-		return nil, err
-	}
 	var result *draftdom.ProjectDraft
 	err = WithTx(ctx, r.db, func(tx *sqlx.Tx) error {
 		var row projectDraftRow
@@ -903,6 +935,18 @@ func (r *DraftRepository) CompleteProjectDraftGeneration(ctx context.Context, id
 		if row.State != "editable" || row.Version != expected || generation.Status != "running" || generation.ConversationID == nil {
 			return draftdom.ErrConflict
 		}
+		current, err := decodeProjectDraft(row)
+		if err != nil {
+			return err
+		}
+		if content.TargetProjectID != "" && content.TargetProjectID != current.TargetProjectID {
+			return draftdom.ErrConflict
+		}
+		content.TargetProjectID = current.TargetProjectID
+		bContent, err := encodeProjectDraft(content)
+		if err != nil {
+			return err
+		}
 		generation.Status = "imported"
 		bGeneration, err := encodeProjectDraftGeneration(&generation)
 		if err != nil {
@@ -918,4 +962,52 @@ func (r *DraftRepository) CompleteProjectDraftGeneration(ctx context.Context, id
 		return err
 	})
 	return result, err
+}
+
+// existingDraftTarget uses the same locked authority as project task drafts.
+// A batch can only assign active existing members; it never grants membership.
+func existingDraftTarget(ctx context.Context, tx *sqlx.Tx, content draftdom.ProjectDraftContent) (map[uuid.UUID]uuid.UUID, error) {
+	pid, err := uuid.Parse(content.TargetProjectID)
+	if err != nil {
+		return nil, draftdom.ErrNotFound
+	}
+	scope, err := draftAuthority(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	if scope.MemberID == uuid.Nil {
+		return nil, taskdom.ErrTaskForbidden
+	}
+	members := map[uuid.UUID]uuid.UUID{scope.UserID: scope.MemberID}
+	for _, participant := range content.Participants {
+		userID, err := uuid.Parse(participant.UserID)
+		if err != nil {
+			return nil, &draftdom.ProjectDraftValidationError{Message: "participant user is invalid"}
+		}
+		var memberID uuid.UUID
+		err = tx.GetContext(ctx, &memberID, `SELECT pm.id FROM project_members pm JOIN users u ON u.id=pm.user_id WHERE pm.project_id=$1 AND pm.user_id=$2 AND pm.member_type='human' AND pm.deleted_at IS NULL AND u.deleted_at IS NULL FOR SHARE OF pm,u`, pid, userID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, &draftdom.ProjectDraftValidationError{Message: "追加任务的参与人必须是项目现有的在职成员"}
+		}
+		if err != nil {
+			return nil, err
+		}
+		members[userID] = memberID
+	}
+	return members, nil
+}
+
+func (r *DraftRepository) ValidateProjectDraftTarget(ctx context.Context, content draftdom.ProjectDraftContent) ([]draftdom.ProjectDraftPreviewIssue, error) {
+	if content.TargetProjectID == "" {
+		return nil, nil
+	}
+	err := WithTx(ctx, r.db, func(tx *sqlx.Tx) error { _, err := existingDraftTarget(ctx, tx, content); return err })
+	if err == nil {
+		return nil, nil
+	}
+	var validation *draftdom.ProjectDraftValidationError
+	if errors.As(err, &validation) || errors.Is(err, taskdom.ErrTaskNotFound) || errors.Is(err, taskdom.ErrTaskForbidden) {
+		return []draftdom.ProjectDraftPreviewIssue{{Field: "target_project_id", Message: "目标项目权限或参与人成员资格已失效，请核对后重试"}}, nil
+	}
+	return nil, err
 }

@@ -64,6 +64,8 @@
 			"title": "私人项目草稿",
 			"openChat": "继续在小派中讨论",
 			"createFromChat": "从当前讨论创建草稿",
+			"targetProject": "发布到已有项目（可选）",
+			"newProject": "创建新项目",
 			"draftNamePlaceholder": "项目草稿名称",
 			"createDraft": "创建私人草稿",
 			"editDraft": "编辑草稿",

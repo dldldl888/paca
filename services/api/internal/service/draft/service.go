@@ -534,6 +534,11 @@ func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expecte
 		return nil, err
 	}
 	preview.Issues = append(preview.Issues, userIssues...)
+	targetIssues, err := s.Repo.ValidateProjectDraftTarget(ctx, d.ProjectDraftContent)
+	if err != nil {
+		return nil, err
+	}
+	preview.Issues = append(preview.Issues, targetIssues...)
 	materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, d.ProjectDraftContent, false)
 	if materialErr != nil {
 		return nil, materialErr

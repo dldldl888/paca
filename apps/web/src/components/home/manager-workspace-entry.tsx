@@ -66,7 +66,7 @@ export function ManagerWorkspaceEntry() {
 
 	return (
 		<div className="space-y-2 px-6 pb-6">
-			{canCreateProjects && <PrivateProjectDraftsCard />}
+			{canCreateProjects && <PrivateProjectDraftsCard projects={projects} />}
 			{projects.map((project) => (
 				<ManagerProjectLinks
 					key={project.id}

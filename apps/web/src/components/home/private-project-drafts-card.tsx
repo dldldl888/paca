@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
+import type { Project } from "@/lib/project-api";
 import {
 	createProjectDraft,
 	generateProjectDraft,
@@ -76,9 +77,11 @@ function webMaterialID(url: string) {
 export function PrivateProjectDraftsCard({
 	chatSessionId,
 	agentId,
+	projects = [],
 }: {
 	chatSessionId?: string;
 	agentId?: string;
+	projects?: Project[];
 } = {}) {
 	const { t } = useTranslation("shared");
 	const { hasPermission } = usePermissions();
@@ -112,6 +115,7 @@ export function PrivateProjectDraftsCard({
 		useState<string>();
 	const [publishError, setPublishError] = useState("");
 	const [draftName, setDraftName] = useState("");
+	const [targetProjectID, setTargetProjectID] = useState("");
 	const [draftActionError, setDraftActionError] = useState("");
 	const [editingDraftId, setEditingDraftId] = useState<string>();
 	const [editingDraftName, setEditingDraftName] = useState("");
@@ -207,12 +211,19 @@ export function PrivateProjectDraftsCard({
 		if (!chatSessionId || !draftName.trim()) return;
 		setDraftActionError("");
 		try {
-			const next = await createProjectDraft(chatSessionId, draftName.trim());
+			const next = targetProjectID
+				? await createProjectDraft(
+						chatSessionId,
+						draftName.trim(),
+						targetProjectID,
+					)
+				: await createProjectDraft(chatSessionId, draftName.trim());
 			qc.setQueryData<ProjectDraft[]>(
 				projectDraftsQueryOptions.queryKey,
 				(current) => [...(current ?? []), next],
 			);
 			setDraftName("");
+			setTargetProjectID("");
 		} catch {
 			setDraftActionError(t("home.privateDrafts.draftActionError"));
 		}
@@ -268,6 +279,7 @@ export function PrivateProjectDraftsCard({
 		const content: ProjectDraftContent = {
 			name,
 			goal: editingDraftGoal,
+			target_project_id: draft.target_project_id,
 			manager_user_id: draft.manager_user_id,
 			items: draft.items,
 			participants: draft.participants,
@@ -467,6 +479,24 @@ export function PrivateProjectDraftsCard({
 								{t("home.privateDrafts.createDraft")}
 							</button>
 						</div>
+						{projects.length > 0 && (
+							<label className="grid gap-1 text-sm">
+								<span>{t("home.privateDrafts.targetProject")}</span>
+								<select
+									aria-label={t("home.privateDrafts.targetProject")}
+									className="h-9 rounded-md border bg-background px-2 text-sm"
+									value={targetProjectID}
+									onChange={(event) => setTargetProjectID(event.target.value)}
+								>
+									<option value="">{t("home.privateDrafts.newProject")}</option>
+									{projects.map((project) => (
+										<option key={project.id} value={project.id}>
+											{project.name}
+										</option>
+									))}
+								</select>
+							</label>
+						)}
 					</div>
 				)}
 				{draftActionError && (

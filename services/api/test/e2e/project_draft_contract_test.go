@@ -352,6 +352,74 @@ func TestPrivateProjectDraftPublishesAuthorizedInternalMaterialReference(t *test
 	f.request(t, http.MethodGet, documentPath, nil, http.StatusNotFound)
 }
 
+func TestPrivateProjectDraftAppendsTasksToExistingProject(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	target, err := f.env.projectSvc.Create(authz.WithActorID(f.env.ctx, owner), projectdom.CreateProjectInput{
+		Name: "已有项目追加目标", TaskIDPrefix: "APPEND", CreatedBy: &owner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeProjects, beforeTasks int
+	if err := f.env.db.Get(&beforeProjects, `SELECT count(*) FROM projects`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.Get(&beforeTasks, `SELECT count(*) FROM tasks WHERE project_id=$1`, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	itemID := uuid.NewString()
+	draft := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "已有项目追加草稿", "goal": "向既有项目追加任务", "chat_session_id": session,
+		"target_project_id": target.ID.String(),
+		"items": []any{map[string]any{
+			"id": itemID, "title": "追加任务", "requirements": "完成追加", "criteria": "任务可见",
+			"assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials":    []any{},
+	}, http.StatusCreated)
+	path := f.base + "/" + draft["id"].(string)
+	preview := f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusOK)
+	if preview["can_publish"] != true {
+		t.Fatalf("existing-project draft should be publishable: %#v", preview)
+	}
+	published := f.request(t, http.MethodPost, path+"/publish", map[string]any{
+		"expected_version": 1, "publication_id": uuid.New(),
+	}, http.StatusOK)
+	if published["project_id"] != target.ID.String() {
+		t.Fatalf("publication created a new project instead of appending: %#v", published)
+	}
+	var afterProjects, afterTasks int
+	if err := f.env.db.Get(&afterProjects, `SELECT count(*) FROM projects`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.Get(&afterTasks, `SELECT count(*) FROM tasks WHERE project_id=$1`, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	if afterProjects != beforeProjects || afterTasks != beforeTasks+1 {
+		t.Fatalf("existing-project publication changed wrong rows: projects %d->%d tasks %d->%d", beforeProjects, afterProjects, beforeTasks, afterTasks)
+	}
+}
+
+func TestPrivateProjectDraftRejectsInaccessibleExistingProject(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	seedProjectAdminUser(t, f.env, "draft-foreign-project-owner", "password1")
+	foreignClient, foreignToken := projectAdminLogin(t, f.env, "draft-foreign-project-owner", "password1")
+	foreignProjectID := createProjectForTasksViaAPI(t, f.env, foreignClient, foreignToken)
+	itemID := uuid.NewString()
+	f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "越权追加草稿", "goal": "不能写入他人项目", "chat_session_id": session,
+		"target_project_id": foreignProjectID,
+		"items": []any{map[string]any{
+			"id": itemID, "title": "越权任务", "requirements": "禁止", "criteria": "拒绝",
+			"assignee_user_id": owner.String(), "due_date": "2026-12-01T18:00:00+08:00", "dependencies": []any{},
+		}},
+		"participants": []any{map[string]any{"user_id": owner.String(), "role": "负责人"}},
+		"materials":    []any{},
+	}, http.StatusNotFound)
+}
+
 func TestPrivateProjectDraftBlocksInternalMaterialUnreadableByAssignee(t *testing.T) {
 	f, owner, session, _ := newProjectDraftFixture(t)
 	seedTaskMemberUser(t, f.env, "draft-material-recipient", "password1")

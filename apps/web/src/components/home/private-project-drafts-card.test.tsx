@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Project } from "@/lib/project-api";
 import type { ProjectDraft, ProjectDraftFile } from "@/lib/project-draft-api";
 
 const mocks = vi.hoisted(() => ({ canCreate: true }));
@@ -48,6 +49,8 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.createFromChat": "从当前讨论创建草稿",
 				"home.privateDrafts.draftNamePlaceholder": "项目草稿名称",
 				"home.privateDrafts.createDraft": "创建私人草稿",
+				"home.privateDrafts.targetProject": "发布到已有项目（可选）",
+				"home.privateDrafts.newProject": "创建新项目",
 				"home.privateDrafts.editDraft": "编辑草稿",
 				"home.privateDrafts.saveDraft": "保存草稿",
 				"home.privateDrafts.cancelEdit": "取消编辑",
@@ -114,6 +117,7 @@ function renderCard(
 	items: unknown[],
 	chatSessionId?: string,
 	materials: unknown[] = [],
+	projects: Project[] = [],
 ) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -123,7 +127,10 @@ function renderCard(
 	queryClient.setQueryData(["private-project-draft-materials", ""], materials);
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<PrivateProjectDraftsCard chatSessionId={chatSessionId} />
+			<PrivateProjectDraftsCard
+				chatSessionId={chatSessionId}
+				projects={projects}
+			/>
 		</QueryClientProvider>,
 	);
 }
@@ -551,6 +558,46 @@ describe("PrivateProjectDraftsCard", () => {
 				"新讨论草稿",
 			);
 			expect(screen.getByText("新讨论草稿")).toBeInTheDocument();
+		});
+	});
+
+	it("lets a private chat target an existing project", async () => {
+		const { createProjectDraft } = await import("@/lib/project-draft-api");
+		vi.mocked(createProjectDraft).mockResolvedValue({
+			...materialDraft,
+			id: "draft-existing-project",
+			name: "追加批次",
+		});
+		renderCard(
+			[],
+			"session-current",
+			[],
+			[
+				{
+					id: "project-existing",
+					name: "已有项目",
+					description: "",
+					is_public: false,
+					task_id_prefix: "EXIST",
+					settings: {},
+					created_at: "2026-01-01T00:00:00Z",
+				},
+			],
+		);
+		fireEvent.change(
+			screen.getByRole("combobox", { name: "发布到已有项目（可选）" }),
+			{ target: { value: "project-existing" } },
+		);
+		fireEvent.change(screen.getByRole("textbox", { name: "项目草稿名称" }), {
+			target: { value: "追加批次" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "创建私人草稿" }));
+		await waitFor(() => {
+			expect(createProjectDraft).toHaveBeenCalledWith(
+				"session-current",
+				"追加批次",
+				"project-existing",
+			);
 		});
 	});
 

@@ -17,6 +17,7 @@ export interface ProjectDraft {
 	id: string;
 	name: string;
 	goal: string;
+	target_project_id?: string;
 	manager_user_id?: string;
 	items: Array<{
 		id: string;
@@ -55,7 +56,13 @@ export interface ProjectDraft {
 
 export type ProjectDraftContent = Pick<
 	ProjectDraft,
-	"name" | "goal" | "manager_user_id" | "items" | "participants" | "materials"
+	| "name"
+	| "goal"
+	| "target_project_id"
+	| "manager_user_id"
+	| "items"
+	| "participants"
+	| "materials"
 >;
 
 export interface ProjectDraftMaterialCandidate {
@@ -108,6 +115,7 @@ export interface ProjectDraftPreview {
 	version: number;
 	name: string;
 	goal: string;
+	target_project_id?: string;
 	manager_user_id?: string;
 	items: ProjectDraft["items"];
 	participants: ProjectDraft["participants"];
@@ -138,6 +146,7 @@ const emptyDraftContent = {
 export async function createProjectDraft(
 	chatSessionId: string,
 	name: string,
+	targetProjectID?: string,
 ): Promise<ProjectDraft> {
 	return (
 		await apiClient.instance.post<SuccessEnvelope<ProjectDraft>>(
@@ -145,6 +154,7 @@ export async function createProjectDraft(
 			{
 				...emptyDraftContent,
 				name,
+				target_project_id: targetProjectID || undefined,
 				chat_session_id: chatSessionId,
 			},
 		)

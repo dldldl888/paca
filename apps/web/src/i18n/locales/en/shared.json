@@ -64,6 +64,8 @@
 			"title": "Private project drafts",
 			"openChat": "Continue in 小派",
 			"createFromChat": "Create a draft from this discussion",
+			"targetProject": "Add tasks to an existing project (optional)",
+			"newProject": "Create a new project",
 			"draftNamePlaceholder": "Project draft name",
 			"createDraft": "Create private draft",
 			"editDraft": "Edit draft",

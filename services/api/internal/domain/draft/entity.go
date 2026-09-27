@@ -48,16 +48,18 @@ type Content struct {
 	Assumptions []string `json:"assumptions"`
 }
 
-// ProjectDraftContent is the private, pre-project portion of a new project
-// plan. It intentionally stores stable user/document identifiers only; no
-// project or member row is created until a later publish transaction.
+// ProjectDraftContent is the private plan staged before confirmation. When
+// TargetProjectID is set, confirmation appends tasks to that existing project;
+// otherwise it creates a new private project. The target is only a stable ID;
+// membership and task-write permission are rechecked at preview and publish.
 type ProjectDraftContent struct {
-	Name          string                    `json:"name"`
-	Goal          string                    `json:"goal"`
-	ManagerUserID string                    `json:"manager_user_id,omitempty"`
-	Items         []ProjectDraftItem        `json:"items"`
-	Participants  []ProjectDraftParticipant `json:"participants"`
-	Materials     []ProjectDraftMaterial    `json:"materials"`
+	Name            string                    `json:"name"`
+	Goal            string                    `json:"goal"`
+	TargetProjectID string                    `json:"target_project_id,omitempty"`
+	ManagerUserID   string                    `json:"manager_user_id,omitempty"`
+	Items           []ProjectDraftItem        `json:"items"`
+	Participants    []ProjectDraftParticipant `json:"participants"`
+	Materials       []ProjectDraftMaterial    `json:"materials"`
 }
 
 type ProjectDraftItem struct {
@@ -132,17 +134,18 @@ type ProjectDraftEmployeeView struct {
 }
 
 type ProjectDraftPreview struct {
-	ID            uuid.UUID                  `json:"id"`
-	Version       int                        `json:"version"`
-	Name          string                     `json:"name"`
-	Goal          string                     `json:"goal"`
-	ManagerUserID string                     `json:"manager_user_id,omitempty"`
-	Items         []ProjectDraftItem         `json:"items"`
-	Participants  []ProjectDraftParticipant  `json:"participants"`
-	Materials     []ProjectDraftMaterial     `json:"materials"`
-	EmployeeViews []ProjectDraftEmployeeView `json:"employee_views"`
-	Issues        []ProjectDraftPreviewIssue `json:"issues"`
-	CanPublish    bool                       `json:"can_publish"`
+	ID              uuid.UUID                  `json:"id"`
+	Version         int                        `json:"version"`
+	Name            string                     `json:"name"`
+	Goal            string                     `json:"goal"`
+	TargetProjectID string                     `json:"target_project_id,omitempty"`
+	ManagerUserID   string                     `json:"manager_user_id,omitempty"`
+	Items           []ProjectDraftItem         `json:"items"`
+	Participants    []ProjectDraftParticipant  `json:"participants"`
+	Materials       []ProjectDraftMaterial     `json:"materials"`
+	EmployeeViews   []ProjectDraftEmployeeView `json:"employee_views"`
+	Issues          []ProjectDraftPreviewIssue `json:"issues"`
+	CanPublish      bool                       `json:"can_publish"`
 }
 
 type ProjectDraftFile struct {
@@ -222,6 +225,12 @@ func (c ProjectDraftContent) ValidateStructure() error {
 		id, err := uuid.Parse(c.ManagerUserID)
 		if err != nil || id == uuid.Nil || id.String() != c.ManagerUserID {
 			return invalid("manager_user_id must be a canonical UUID")
+		}
+	}
+	if c.TargetProjectID != "" {
+		id, err := uuid.Parse(c.TargetProjectID)
+		if err != nil || id == uuid.Nil || id.String() != c.TargetProjectID {
+			return invalid("target_project_id must be a canonical UUID")
 		}
 	}
 	if len(c.Items) > 30 || len(c.Participants) > 100 || len(c.Materials) > 100 {
@@ -349,7 +358,7 @@ func (c ProjectDraftContent) ValidateStructure() error {
 
 func (d *ProjectDraft) Preview() *ProjectDraftPreview {
 	p := &ProjectDraftPreview{
-		ID: d.ID, Version: d.Version, Name: d.Name, Goal: d.Goal, ManagerUserID: d.ManagerUserID,
+		ID: d.ID, Version: d.Version, Name: d.Name, Goal: d.Goal, TargetProjectID: d.TargetProjectID, ManagerUserID: d.ManagerUserID,
 		Items: append([]ProjectDraftItem{}, d.Items...), Participants: append([]ProjectDraftParticipant{}, d.Participants...), Materials: append([]ProjectDraftMaterial{}, d.Materials...),
 		EmployeeViews: []ProjectDraftEmployeeView{},
 		Issues:        []ProjectDraftPreviewIssue{}, CanPublish: true,

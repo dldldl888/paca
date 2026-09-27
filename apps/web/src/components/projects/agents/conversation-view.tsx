@@ -45,6 +45,7 @@ import {
 	stopGlobalConversation,
 } from "@/lib/agent-api";
 import { useContextInjectionStore } from "@/lib/context-injection-store";
+import { projectsQueryOptions } from "@/lib/project-api";
 import { cn } from "@/lib/utils";
 import { useAgentBusyPrompt } from "./agent-busy-dialog";
 import { ConversationErrorBox } from "./conversation-error-box";
@@ -184,6 +185,10 @@ export function ConversationView({
 			? conversationQueryOptions(projectId, conversationId)
 			: globalConversationQueryOptions(conversationId),
 	);
+	const { data: accessibleProjects } = useQuery({
+		...projectsQueryOptions(),
+		enabled: !projectId,
+	});
 	const {
 		events,
 		isLoading: eventsLoading,
@@ -601,6 +606,7 @@ export function ConversationView({
 					<PrivateProjectDraftsCard
 						chatSessionId={conversation.chat_session_id}
 						agentId={conversation.agent_id}
+						projects={accessibleProjects?.items}
 					/>
 				</div>
 			)}
