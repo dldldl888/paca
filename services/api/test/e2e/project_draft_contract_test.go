@@ -651,6 +651,14 @@ func TestPrivateProjectDraftPublishEmitsRealtimeAssignmentNotification(t *testin
 	if event.Type != events.TopicNotificationCreated || event.Payload["recipient_user_id"] != peer.ID.String() || event.Payload["task_id"] != taskID {
 		t.Fatalf("unexpected realtime assignment event: %#v", event)
 	}
+	f.request(t, http.MethodPost, f.base+"/"+d["id"].(string)+"/publish", map[string]any{
+		"expected_version": 1, "publication_id": publication,
+	}, http.StatusOK)
+	noDuplicateCtx, noDuplicateCancel := context.WithTimeout(f.env.ctx, 300*time.Millisecond)
+	defer noDuplicateCancel()
+	if _, err := sub.ReceiveMessage(noDuplicateCtx); err == nil {
+		t.Fatal("idempotent publish replay emitted a duplicate realtime assignment notification")
+	}
 }
 
 func TestPrivateProjectDraftFileUploadTracksParsingAndOwnerIsolation(t *testing.T) {

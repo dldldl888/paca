@@ -436,6 +436,7 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 				return err
 			}
 			d.Publication.Recipients = recipients
+			d.Publication.Created = false
 			result = d.Publication
 			return nil
 		}
@@ -615,7 +616,7 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 		if err := r.createProjectDraftMaterialReferences(ctx, tx, d, projectID, taskIDs, members, user, now); err != nil {
 			return err
 		}
-		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs, Recipients: recipients}
+		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs, Created: true, Recipients: recipients}
 		receipt, err := json.Marshal(result)
 		if err != nil {
 			return err

@@ -628,7 +628,7 @@ func (s *Service) PublishProjectDraft(ctx context.Context, id uuid.UUID, expecte
 	}
 	defer leave()
 	result, err := s.Repo.PublishProjectDraft(ctx, id, expected, publication)
-	if err != nil || s.publisher == nil || result == nil {
+	if err != nil || s.publisher == nil || result == nil || !result.Created {
 		return result, err
 	}
 	for _, recipient := range result.Recipients {

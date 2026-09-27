@@ -124,13 +124,20 @@ func TestPrivateProjectDraftPublicationConcurrentReplay(t *testing.T) {
 		go func(i int) { defer wg.Done(); results[i], errs[i] = repo.PublishProjectDraft(ctx, id, 1, pub) }(i)
 	}
 	wg.Wait()
+	created := 0
 	for i := range results {
 		if errs[i] != nil {
 			t.Fatal(errs[i])
 		}
-		if !reflect.DeepEqual(results[0], results[i]) {
-			t.Fatalf("concurrent replay diverged: %v", results)
+		if results[i].Created {
+			created++
 		}
+		if results[0].PublicationID != results[i].PublicationID || results[0].ProjectID != results[i].ProjectID || !reflect.DeepEqual(results[0].TaskIDs, results[i].TaskIDs) {
+			t.Fatalf("concurrent replay public result diverged: %v", results)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("expected exactly one creating publish result, got %d", created)
 	}
 	after := projectBusinessCounts(t, f.env)
 	if after[0] != before[0]+1 || after[2] != before[2]+2 || after[5] != before[5]+2 {

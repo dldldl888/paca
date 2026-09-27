@@ -181,6 +181,7 @@ type ProjectDraftPublication struct {
 	PublicationID uuid.UUID            `json:"publication_id"`
 	ProjectID     uuid.UUID            `json:"project_id"`
 	TaskIDs       map[string]uuid.UUID `json:"task_ids"`
+	Created       bool                 `json:"-"`
 	// Recipients is an internal delivery hint. It is deliberately omitted from
 	// the API response and durable receipt; durable notifications remain the
 	// source of truth when realtime delivery is unavailable.
