@@ -252,12 +252,14 @@ func newAttachmentAccessTestRouter(t *testing.T, store authz.PermissionStore) ht
 			RefreshTTL:        24 * time.Hour,
 			RefreshSessionTTL: 12 * time.Hour,
 		}),
-		User:       handler.NewUserHandler(&mockUserSvc{}),
-		GlobalRole: handler.NewGlobalRoleHandler(&mockGlobalRoleSvc{}),
-		Project:    handler.NewProjectHandler(&stubProjectSvc{}, authorizer),
-		Settings:   handler.NewSettingsHandler(&fakeSettingsSvc{}),
-		Attachment: handler.NewAttachmentHandler(nil).WithFileDelivery(handler.NewFileDelivery(gate, nil, "", authorizer)),
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		User:        handler.NewUserHandler(&mockUserSvc{}),
+		GlobalRole:  handler.NewGlobalRoleHandler(&mockGlobalRoleSvc{}),
+		Project:     handler.NewProjectHandler(&stubProjectSvc{}, authorizer),
+		Settings:    handler.NewSettingsHandler(&fakeSettingsSvc{}),
+		Environment: handler.NewEnvironmentHandler(nil, ""),
+		Attachment:  handler.NewAttachmentHandler(nil).WithFileDelivery(handler.NewFileDelivery(gate, nil, "", authorizer)),
+		Annotation:  handler.NewAnnotationHandler(nil).WithFileDelivery(handler.NewFileDelivery(gate, nil, "", authorizer)),
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	return New(deps)
 }
@@ -321,6 +323,24 @@ func TestDocumentFileDeliveryRoutesRequireDocsReadPermission(t *testing.T) {
 			r.ServeHTTP(w, req)
 			if w.Code != http.StatusForbidden {
 				t.Fatalf("expected 403 before file delivery, got %d (%s)", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAnnotationScreenshotDeliveryRoutesRequireAnnotationReadPermission(t *testing.T) {
+	r := newAttachmentAccessTestRouter(t, &staticPermissionStore{})
+	tok := issueAccessTokenForRouterTests(t)
+	path := "/api/v1/projects/" + uuid.NewString() + "/environments/" + uuid.NewString() + "/port-forwards/" + uuid.NewString() + "/annotations/" + uuid.NewString() + "/screenshot"
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("expected 403 before screenshot delivery, got %d (%s)", w.Code, w.Body.String())
 			}
 		})
 	}

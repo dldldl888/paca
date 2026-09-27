@@ -1002,8 +1002,10 @@ func New(deps Deps) http.Handler {
 									Post("/{annotationId}/complete-upload", deps.Annotation.CompleteScreenshotUpload)
 								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsRead)).
 									Get("/{annotationId}/screenshot-url", deps.Annotation.GetScreenshotURL)
-								r.Get("/{annotationId}/screenshot", deps.Annotation.GetScreenshotContent)
-								r.Head("/{annotationId}/screenshot", deps.Annotation.GetScreenshotContent)
+								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsRead)).
+									Get("/{annotationId}/screenshot", deps.Annotation.GetScreenshotContent)
+								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsRead)).
+									Head("/{annotationId}/screenshot", deps.Annotation.GetScreenshotContent)
 								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsResolve)).
 									Patch("/{annotationId}/resolve", deps.Annotation.Resolve)
 								r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionAnnotationsResolve)).
