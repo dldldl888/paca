@@ -109,6 +109,7 @@
 			"webSearchPlaceholder": "Enter a public query…",
 			"webSearchLoading": "Searching public web",
 			"webSearchError": "Public web search is temporarily unavailable",
+			"retryWebSearch": "Retry public search",
 			"webSearchEmpty": "No public results found",
 			"preview": "Preview",
 			"previewReady": "Ready to confirm",

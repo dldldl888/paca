@@ -130,6 +130,7 @@ export function PrivateProjectDraftsCard({
 		...projectDraftWebSearchQueryOptions(submittedWebSearch),
 		enabled: allowed && webSearchOpen && submittedWebSearch.length > 0,
 	});
+	const { refetch: refetchWebResults } = webResults;
 	const visibleDrafts = chatSessionId
 		? (drafts.data ?? []).filter(
 				(draft) => draft.chat_session_id === chatSessionId,
@@ -1020,9 +1021,16 @@ export function PrivateProjectDraftsCard({
 									{t("home.privateDrafts.webSearchLoading")}
 								</p>
 							) : webResults.isError ? (
-								<p className="text-sm text-muted-foreground">
-									{t("home.privateDrafts.webSearchError")}
-								</p>
+								<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+									<span>{t("home.privateDrafts.webSearchError")}</span>
+									<button
+										type="button"
+										onClick={() => void refetchWebResults()}
+										className="text-primary underline underline-offset-4 hover:text-primary/80"
+									>
+										{t("home.privateDrafts.retryWebSearch")}
+									</button>
+								</div>
 							) : webResults.data?.length ? (
 								<ul className="space-y-2 text-sm">
 									{webResults.data.map((result) => (

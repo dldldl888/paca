@@ -8,6 +8,7 @@ import type { ProjectDraft, ProjectDraftFile } from "@/lib/project-draft-api";
 const mocks = vi.hoisted(() => ({
 	canCreate: true,
 	materialsQueryFn: vi.fn(),
+	webQueryFn: vi.fn(),
 }));
 
 vi.mock("@/hooks/use-permissions", () => ({
@@ -38,6 +39,10 @@ vi.mock("@/lib/project-draft-api", async () => {
 		projectDraftMaterialsQueryOptions: (search: string) => ({
 			queryKey: ["private-project-draft-materials", search],
 			queryFn: mocks.materialsQueryFn,
+		}),
+		projectDraftWebSearchQueryOptions: (search: string) => ({
+			queryKey: ["private-project-draft-web-search", search],
+			queryFn: mocks.webQueryFn,
 		}),
 		publishProjectDraft: vi.fn(),
 		updateProjectDraft: vi.fn(),
@@ -96,6 +101,7 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.webSearchPlaceholder": "输入公开查询…",
 				"home.privateDrafts.webSearchLoading": "公开检索中",
 				"home.privateDrafts.webSearchError": "公开检索暂时不可用",
+				"home.privateDrafts.retryWebSearch": "重试公开检索",
 				"home.privateDrafts.webSearchEmpty": "没有找到公开结果",
 				"home.privateDrafts.preview": "预览",
 				"home.privateDrafts.previewReady": "可以确认",
@@ -287,6 +293,34 @@ describe("PrivateProjectDraftsCard material association", () => {
 		expect(await screen.findByText("资料暂时无法加载")).toBeInTheDocument();
 		await fireEvent.click(screen.getByRole("button", { name: "重试资料" }));
 		expect(await screen.findByText("Recovered material")).toBeInTheDocument();
+	});
+
+	it("offers a retry action when public web search is offline", async () => {
+		mocks.webQueryFn
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce([
+				{
+					title: "Recovered public source",
+					url: "https://example.com/recovered",
+					snippet: "Recovered result",
+					source_type: "web",
+					accessed_at: "2026-09-24T08:00:00Z",
+					read_status: "unverified",
+					processed_status: "unverified",
+				},
+			]);
+		renderMaterialDraft();
+
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		fireEvent.change(screen.getByRole("textbox", { name: "搜索公开网页" }), {
+			target: { value: "public" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "搜索公开网页" }));
+		expect(await screen.findByText("公开检索暂时不可用")).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole("button", { name: "重试公开检索" }));
+		expect(
+			await screen.findByText("Recovered public source"),
+		).toBeInTheDocument();
 	});
 
 	it("preserves existing material purpose, required flag, and source when changing task association", async () => {

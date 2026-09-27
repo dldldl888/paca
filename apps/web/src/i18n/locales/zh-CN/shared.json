@@ -109,6 +109,7 @@
 			"webSearchPlaceholder": "输入公开查询…",
 			"webSearchLoading": "公开检索中",
 			"webSearchError": "公开检索暂时不可用",
+			"retryWebSearch": "重试公开检索",
 			"webSearchEmpty": "没有找到公开结果",
 			"preview": "预览",
 			"previewReady": "可以确认",
