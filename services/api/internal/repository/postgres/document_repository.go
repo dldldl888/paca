@@ -14,6 +14,8 @@ import (
 
 	"github.com/Paca-AI/api/internal/apierr"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
+	taskdom "github.com/Paca-AI/api/internal/domain/task"
+	"github.com/Paca-AI/api/internal/platform/authz"
 )
 
 // =============================================================================
@@ -315,7 +317,7 @@ const documentCols = `COALESCE((SELECT jsonb_agg(dt.task_id ORDER BY dt.task_id)
 // optionally keyset-paginated — see docdom.Repository.ListDocuments's doc
 // comment for the limit/cursor/hasMore contract and why pagination mode
 // sorts title ASC, id ASC instead of the tree's position ASC, title ASC.
-func (r *DocumentRepository) ListDocuments(ctx context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int) ([]*docdom.Document, bool, error) {
+func (r *DocumentRepository) ListDocuments(ctx context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int, taskID *uuid.UUID) ([]*docdom.Document, bool, error) {
 	query := `SELECT ` + documentCols + ` FROM documents WHERE project_id = $1 AND deleted_at IS NULL`
 	args := []any{projectID.String()}
 	predicate, err := DocumentVisibilityPredicate(ctx, r.db, "documents", &args, docdom.AccessRead)
@@ -323,6 +325,21 @@ func (r *DocumentRepository) ListDocuments(ctx context.Context, projectID uuid.U
 		return nil, false, err
 	}
 	query += " AND " + predicate
+	if taskID != nil {
+		scope, scopeErr := authz.NewTaskAccessPolicy(NewAuthzPermissionStore(r.db)).ResolveTaskAccess(ctx, projectID)
+		if scopeErr != nil {
+			if errors.Is(scopeErr, taskdom.ErrTaskNotFound) {
+				query += " AND documents.visibility <> 'task'"
+			} else {
+				return nil, false, scopeErr
+			}
+		} else {
+			args = append(args, taskID.String())
+			taskArg := len(args)
+			taskPredicate := taskVisibilitySQL(scope, "scoped_task", &args)
+			query += fmt.Sprintf(" AND (documents.visibility <> 'task' OR EXISTS (SELECT 1 FROM document_tasks scoped_link JOIN tasks scoped_task ON scoped_task.id=scoped_link.task_id AND scoped_task.project_id=$1 AND scoped_task.deleted_at IS NULL WHERE scoped_link.document_id=documents.id AND scoped_link.task_id=$%d AND %s))", taskArg, taskPredicate)
+		}
+	}
 	if folderID != nil {
 		args = append(args, folderID.String())
 		query += fmt.Sprintf(" AND folder_id = $%d", len(args))

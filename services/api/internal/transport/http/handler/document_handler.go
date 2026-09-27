@@ -176,8 +176,9 @@ func (h *DocumentHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 // =============================================================================
 
 // ListDocuments handles GET /projects/:projectId/docs.
-// Optional query params: folder_id — filter by folder; search — case-
-// insensitive title match; page_size (1-200), cursor — opt into keyset
+// Optional query params: folder_id — filter by folder; task_id — when set,
+// restrict task-scoped documents to that task while retaining project-scoped
+// documents; search — case-insensitive title match; page_size (1-200), cursor — opt into keyset
 // pagination (see docdom.Repository.ListDocuments's doc comment). Omitting
 // page_size returns every matching document in one response, as before.
 func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +208,15 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 	if raw := strings.TrimSpace(r.URL.Query().Get("search")); raw != "" {
 		search = &raw
 	}
+	var taskID *uuid.UUID
+	if raw := r.URL.Query().Get("task_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			presenter.Error(w, r, apierr.New(apierr.CodeBadRequest, "invalid task_id"))
+			return
+		}
+		taskID = &id
+	}
 
 	var limit *int
 	if raw := r.URL.Query().Get("page_size"); raw != "" {
@@ -222,7 +232,7 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		cursor = &raw
 	}
 
-	docs, hasMore, err := h.svc.ListDocuments(r.Context(), projectID, folderID, search, cursor, limit)
+	docs, hasMore, err := h.svc.ListDocuments(r.Context(), projectID, folderID, search, cursor, limit, taskID)
 	if err != nil {
 		presenter.Error(w, r, err)
 		return

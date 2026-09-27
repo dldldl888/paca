@@ -55,7 +55,7 @@ type UpdateFolderInput struct {
 type DocumentService interface {
 	// ListDocuments — see Repository.ListDocuments's doc comment for the
 	// limit/cursor/hasMore pagination contract.
-	ListDocuments(ctx context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int) (docs []*Document, hasMore bool, err error)
+	ListDocuments(ctx context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int, taskID *uuid.UUID) (docs []*Document, hasMore bool, err error)
 	// GetDocument returns a single document by ID.
 	GetDocument(ctx context.Context, id uuid.UUID) (*Document, error)
 	// CreateDocument creates a new document in the project.

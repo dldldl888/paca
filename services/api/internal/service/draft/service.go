@@ -668,7 +668,7 @@ func (s *Service) SearchProjectDraftMaterials(ctx context.Context, query string,
 			return nil, err
 		}
 		for _, project := range projects {
-			docs, _, err := s.documents.ListDocuments(ctx, project.ID, nil, search, nil, &limit)
+			docs, _, err := s.documents.ListDocuments(ctx, project.ID, nil, search, nil, &limit, nil)
 			if err != nil {
 				return nil, err
 			}

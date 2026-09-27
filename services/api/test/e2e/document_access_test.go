@@ -648,6 +648,101 @@ func TestDocumentMultipleTasksAndConcurrentAccessVersion(t *testing.T) {
 	}
 }
 
+func TestDocumentTaskScopedListDoesNotExposeOtherAssignedTask(t *testing.T) {
+	env := newE2EEnv(t)
+	seedTaskMemberUser(t, env, "task-list-manager", "password1")
+	managerClient, managerToken := taskMemberLogin(t, env, "task-list-manager", "password1")
+	pid := createProjectForTasksViaAPI(t, env, managerClient, managerToken)
+
+	seedUser(t, env, "task-list-employee", "password1", "Task list employee")
+	employee, err := env.userRepo.FindByUsername(env.ctx, "task-list-employee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := uuid.New()
+	if _, err = env.db.Exec(`INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type) SELECT $1,$2,$3,id,'human' FROM project_roles WHERE project_id=$2 AND role_name='Editor'`, member, pid, employee.ID); err != nil {
+		t.Fatal(err)
+	}
+	employeeClient, employeeToken := taskMemberLogin(t, env, "task-list-employee", "password1")
+
+	manager, err := env.userRepo.FindByUsername(env.ctx, "task-list-manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := authz.WithActorID(env.ctx, manager.ID)
+	taskA, err := env.taskSvc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: uuid.MustParse(pid), Title: "employee task A", AssigneeIDs: []uuid.UUID{member}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := env.taskSvc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: uuid.MustParse(pid), Title: "employee task B", AssigneeIDs: []uuid.UUID{member}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskC, err := env.taskSvc.CreateTask(ctx, taskdom.CreateTaskInput{ProjectID: uuid.MustParse(pid), Title: "manager-only task C"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	createDocument := func(title string, taskIDs ...uuid.UUID) {
+		t.Helper()
+		links := make([]string, 0, len(taskIDs))
+		for _, taskID := range taskIDs {
+			links = append(links, taskID.String())
+		}
+		req := mustRequest(env.ctx, t, http.MethodPost, env.base+"/api/v1/projects/"+pid+"/docs", jsonBody(t, map[string]any{
+			"title":      title,
+			"visibility": "task",
+			"task_ids":   links,
+		}))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+managerToken)
+		resp := mustDo(t, managerClient, req)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			raw, _ := io.ReadAll(resp.Body)
+			t.Fatalf("create task document status=%d body=%s", resp.StatusCode, raw)
+		}
+	}
+	createDocument("only task A", taskA.ID)
+	createDocument("only task B", taskB.ID)
+	createDocument("mixed A and C", taskA.ID, taskC.ID)
+
+	list := func(taskID uuid.UUID) []any {
+		t.Helper()
+		req := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/projects/"+pid+"/docs?task_id="+taskID.String(), nil)
+		req.Header.Set("Authorization", "Bearer "+employeeToken)
+		resp := mustDo(t, employeeClient, req)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			raw, _ := io.ReadAll(resp.Body)
+			t.Fatalf("task-scoped document list status=%d body=%s", resp.StatusCode, raw)
+		}
+		var result envelope
+		decodeJSON(t, resp, &result)
+		return assertDataMap(t, result)["items"].([]any)
+	}
+
+	items := list(taskA.ID)
+	if len(items) != 2 {
+		t.Fatalf("task A list leaked another task's material: %#v", items)
+	}
+	titles := map[string]bool{}
+	for _, item := range items {
+		titles[item.(map[string]any)["title"].(string)] = true
+	}
+	if !titles["only task A"] || !titles["mixed A and C"] {
+		t.Fatalf("task A list omitted its authorized materials: %#v", items)
+	}
+	items = list(taskB.ID)
+	if len(items) != 1 || items[0].(map[string]any)["title"] != "only task B" {
+		t.Fatalf("task B list leaked another task's material: %#v", items)
+	}
+	items = list(taskC.ID)
+	if len(items) != 0 {
+		t.Fatalf("unauthorized task list leaked shared material: %#v", items)
+	}
+}
+
 func TestDocumentAgentCredentialCannotBorrowBotAudience(t *testing.T) {
 	env := newE2EEnv(t)
 	seedTaskMemberUser(t, env, "doc-agent-owner", "password1")

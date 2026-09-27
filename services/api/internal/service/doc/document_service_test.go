@@ -92,7 +92,7 @@ func (r *fakeDocRepo) DeleteFolder(_ context.Context, id uuid.UUID) error {
 
 // -- DocumentRepository --
 
-func (r *fakeDocRepo) ListDocuments(_ context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int) ([]*docdom.Document, bool, error) {
+func (r *fakeDocRepo) ListDocuments(_ context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int, _ *uuid.UUID) ([]*docdom.Document, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []*docdom.Document
@@ -800,7 +800,7 @@ func TestListDocuments_Search(t *testing.T) {
 	}
 
 	search := "onboard"
-	docs, _, err := svc.ListDocuments(ctx, projectID, nil, &search, nil, nil)
+	docs, _, err := svc.ListDocuments(ctx, projectID, nil, &search, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -811,7 +811,7 @@ func TestListDocuments_Search(t *testing.T) {
 		t.Errorf("expected Title=Onboarding Flow, got %q", docs[0].Title)
 	}
 
-	all, _, err := svc.ListDocuments(ctx, projectID, nil, nil, nil, nil)
+	all, _, err := svc.ListDocuments(ctx, projectID, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -838,7 +838,7 @@ func TestListDocuments_CursorPagination(t *testing.T) {
 	var seen []string
 	var cursor *string
 	for {
-		page, hasMore, err := svc.ListDocuments(ctx, projectID, nil, nil, cursor, &pageSize)
+		page, hasMore, err := svc.ListDocuments(ctx, projectID, nil, nil, cursor, &pageSize, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

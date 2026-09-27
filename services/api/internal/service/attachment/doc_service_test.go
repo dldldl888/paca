@@ -20,7 +20,7 @@ type fakeDocRepoForChecker struct {
 	docs map[uuid.UUID]*docdom.Document
 }
 
-func (r *fakeDocRepoForChecker) ListDocuments(context.Context, uuid.UUID, *uuid.UUID, *string, *string, *int) ([]*docdom.Document, bool, error) {
+func (r *fakeDocRepoForChecker) ListDocuments(context.Context, uuid.UUID, *uuid.UUID, *string, *string, *int, *uuid.UUID) ([]*docdom.Document, bool, error) {
 	return nil, false, nil
 }
 func (r *fakeDocRepoForChecker) FindDocumentByID(_ context.Context, id uuid.UUID) (*docdom.Document, error) {

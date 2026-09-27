@@ -28,7 +28,7 @@ export function TaskMaterialsSection({
 		refetch,
 	} = useQuery({
 		queryKey: ["projects", projectId, "docs", "task", taskId],
-		queryFn: () => listDocuments(projectId),
+		queryFn: () => listDocuments(projectId, undefined, undefined, taskId),
 		enabled: Boolean(projectId && taskId),
 	});
 	const materials = useMemo(

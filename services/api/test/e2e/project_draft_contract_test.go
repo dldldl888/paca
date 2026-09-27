@@ -915,7 +915,7 @@ type transientDraftDocumentService struct{ err error }
 func (f transientDraftDocumentService) CheckDocumentAccess(context.Context, uuid.UUID, uuid.UUID, docdom.AccessAction) (*docdom.Document, error) {
 	return nil, f.err
 }
-func (transientDraftDocumentService) ListDocuments(context.Context, uuid.UUID, *uuid.UUID, *string, *string, *int) ([]*docdom.Document, bool, error) {
+func (transientDraftDocumentService) ListDocuments(context.Context, uuid.UUID, *uuid.UUID, *string, *string, *int, *uuid.UUID) ([]*docdom.Document, bool, error) {
 	return nil, false, nil
 }
 func (f transientDraftDocumentService) GetDocument(context.Context, uuid.UUID) (*docdom.Document, error) {

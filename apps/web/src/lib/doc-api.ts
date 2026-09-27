@@ -261,10 +261,13 @@ export async function listDocuments(
 	 *  by hooks/use-context-item-search.ts's Doc tab. Omitted/blank means
 	 *  "don't filter", same as omitting folderId. */
 	search?: string,
+	/** When set, task-scoped documents are limited to this task server-side. */
+	taskId?: string,
 ): Promise<Document[]> {
 	const params: Record<string, string> = {};
 	if (folderId) params.folder_id = folderId;
 	if (search?.trim()) params.search = search.trim();
+	if (taskId) params.task_id = taskId;
 	const { data } = await apiClient.instance.get<
 		SuccessEnvelope<DocumentListResult>
 	>(`/projects/${projectId}/docs`, {

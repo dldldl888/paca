@@ -47,8 +47,10 @@ type DocumentRepository interface {
 	// tree's manual position ordering — fetching one extra row to compute
 	// hasMore and returning at most *limit. cursor, if non-nil, resumes after
 	// the document EncodeDocumentCursor produced for the last row of the
-	// previous page.
-	ListDocuments(ctx context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int) (docs []*Document, hasMore bool, err error)
+	// previous page. taskID, when non-nil, keeps project-scoped documents but
+	// restricts task-scoped documents to that task after current actor
+	// authorization.
+	ListDocuments(ctx context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, cursor *string, limit *int, taskID *uuid.UUID) (docs []*Document, hasMore bool, err error)
 	// FindDocumentByID returns a single non-deleted document.
 	FindDocumentByID(ctx context.Context, id uuid.UUID) (*Document, error)
 	// CreateDocument persists a new document.

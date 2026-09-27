@@ -105,7 +105,7 @@ func (r *fakeDocRepoIT) DeleteFolder(_ context.Context, id uuid.UUID) error {
 // pagination, so it always returns the full matching set (equivalent to
 // always passing limit=nil), matching the real repository's own
 // no-pagination-requested behavior.
-func (r *fakeDocRepoIT) ListDocuments(_ context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, _ *string, _ *int) ([]*docdom.Document, bool, error) {
+func (r *fakeDocRepoIT) ListDocuments(_ context.Context, projectID uuid.UUID, folderID *uuid.UUID, search *string, _ *string, _ *int, _ *uuid.UUID) ([]*docdom.Document, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []*docdom.Document

@@ -92,6 +92,12 @@ describe("TaskMaterialsSection", () => {
 		render(<TaskMaterialsSection projectId="project-1" taskId="task-1" />, {
 			wrapper,
 		});
+		expect(mockListDocuments).toHaveBeenCalledWith(
+			"project-1",
+			undefined,
+			undefined,
+			"task-1",
+		);
 
 		expect(
 			await screen.findByRole("link", { name: "项目手册" }),
