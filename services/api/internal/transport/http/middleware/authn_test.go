@@ -14,6 +14,7 @@ import (
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
 	apikeydom "github.com/Paca-AI/api/internal/domain/apikey"
+	userdom "github.com/Paca-AI/api/internal/domain/user"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 )
 
@@ -58,6 +59,15 @@ func (s *stubAPIKeyAuth) HasActiveGlobalChatSession(ctx context.Context, agentID
 
 func newTestTokenManager() *jwttoken.Manager {
 	return jwttoken.New("test-secret", 15*time.Minute, 24*time.Hour)
+}
+
+type stubActiveUserChecker struct {
+	user *userdom.User
+	err  error
+}
+
+func (s *stubActiveUserChecker) GetByID(context.Context, uuid.UUID) (*userdom.User, error) {
+	return s.user, s.err
 }
 
 func okHandler(w http.ResponseWriter, _ *http.Request) {
@@ -128,6 +138,28 @@ func TestAuthn_ValidAccessTokenInHeader(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthnWithActiveUser_RejectsDeletedUser(t *testing.T) {
+	tm := newTestTokenManager()
+	userID := uuid.New()
+	at, err := tm.IssueAccess(userID.String(), "deleted", "USER", "fam", false)
+	if err != nil {
+		t.Fatalf("issue access token: %v", err)
+	}
+	deletedAt := time.Now()
+	checker := &stubActiveUserChecker{user: &userdom.User{ID: userID, DeletedAt: &deletedAt}}
+
+	r := chi.NewRouter()
+	r.With(AuthnWithActiveUser(tm, checker, nil)).Get("/protected", okHandler)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+at)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for deleted user, got %d (%s)", w.Code, w.Body.String())
 	}
 }
 

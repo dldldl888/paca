@@ -30,6 +30,7 @@ type PluginHandler struct {
 	memberRepo      projectdom.MemberRepository
 	tokenManager    *jwttoken.Manager
 	apiKeyAuth      middleware.APIKeyAuthenticator
+	activeUsers     middleware.ActiveUserChecker
 	authorizer      *authz.Authorizer
 	marketplace     *pluginrt.MarketplaceClient
 	installer       *pluginrt.Installer
@@ -51,6 +52,13 @@ func (h *PluginHandler) WithRouteAuth(
 	h.tokenManager = tm
 	h.apiKeyAuth = apiKeyAuth
 	h.authorizer = authorizer
+	return h
+}
+
+// WithActiveUserChecker revokes dynamic plugin-route access after a user is
+// soft-deleted, matching the router's normal authentication policy.
+func (h *PluginHandler) WithActiveUserChecker(users middleware.ActiveUserChecker) *PluginHandler {
+	h.activeUsers = users
 	return h
 }
 
@@ -803,7 +811,7 @@ func (h *PluginHandler) applyPluginRouteMiddlewares(w http.ResponseWriter, r *ht
 				return r, false
 			}
 			var ok bool
-			r, ok = middleware.EnforceAuthn(w, r, h.tokenManager, h.apiKeyAuth)
+			r, ok = middleware.EnforceAuthnWithActiveUser(w, r, h.tokenManager, h.activeUsers, h.apiKeyAuth)
 			if !ok {
 				return r, false
 			}
@@ -813,7 +821,7 @@ func (h *PluginHandler) applyPluginRouteMiddlewares(w http.ResponseWriter, r *ht
 				return r, false
 			}
 			var ok bool
-			r, ok = middleware.EnforceOptionalAuthn(w, r, h.tokenManager, h.apiKeyAuth)
+			r, ok = middleware.EnforceOptionalAuthnWithActiveUser(w, r, h.tokenManager, h.activeUsers, h.apiKeyAuth)
 			if !ok {
 				return r, false
 			}

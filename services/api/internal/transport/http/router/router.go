@@ -25,6 +25,7 @@ type Deps struct {
 	AgentRun             *handler.AgentRunHandler
 	TokenManager         *jwttoken.Manager
 	APIKeyAuth           httpmw.APIKeyAuthenticator
+	ActiveUserChecker    httpmw.ActiveUserChecker
 	Authorizer           *authz.Authorizer
 	ProjectVisibilitySvc httpmw.ProjectVisibilityChecker
 	Health               *handler.HealthHandler
@@ -66,6 +67,18 @@ func New(deps Deps) http.Handler {
 	r.Use(loggerMiddleware(deps.Log))
 	r.Use(chimw.Recoverer)
 	r.Use(corsMiddleware(deps.CORSAllowedOrigins))
+	authnMiddleware := func() func(http.Handler) http.Handler {
+		if deps.ActiveUserChecker != nil {
+			return httpmw.AuthnWithActiveUser(deps.TokenManager, deps.ActiveUserChecker, deps.APIKeyAuth)
+		}
+		return httpmw.Authn(deps.TokenManager, deps.APIKeyAuth)
+	}
+	optionalAuthnMiddleware := func() func(http.Handler) http.Handler {
+		if deps.ActiveUserChecker != nil {
+			return httpmw.OptionalAuthnWithActiveUser(deps.TokenManager, deps.ActiveUserChecker, deps.APIKeyAuth)
+		}
+		return httpmw.OptionalAuthn(deps.TokenManager, deps.APIKeyAuth)
+	}
 
 	r.Route("/api", func(r chi.Router) {
 		if deps.AgentRun != nil {
@@ -108,7 +121,12 @@ func New(deps Deps) http.Handler {
 				r.Post("/login", deps.Auth.Login)
 				r.Post("/refresh", deps.Auth.Refresh)
 				r.Post("/annotation-refresh", deps.Auth.AnnotationRefresh)
-				r.With(httpmw.Authn(deps.TokenManager)).Post("/logout", deps.Auth.Logout)
+				r.With(func() func(http.Handler) http.Handler {
+					if deps.ActiveUserChecker != nil {
+						return httpmw.AuthnWithActiveUser(deps.TokenManager, deps.ActiveUserChecker, nil)
+					}
+					return httpmw.Authn(deps.TokenManager)
+				}()).Post("/logout", deps.Auth.Logout)
 				// Public — the link a password-set-token email points to;
 				// the token itself (not a session) proves the caller's right
 				// to act on the account.
@@ -117,7 +135,7 @@ func New(deps Deps) http.Handler {
 
 			// Users
 			r.Route("/users", func(r chi.Router) {
-				r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+				r.Use(authnMiddleware())
 				// Password change allowed even with MustChangePassword=true.
 				r.With(httpmw.RequireJWTAuth()).Patch("/me/password", deps.User.ChangeMyPassword)
 
@@ -157,7 +175,7 @@ func New(deps Deps) http.Handler {
 
 			// Admin
 			r.Route("/admin", func(r chi.Router) {
-				r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+				r.Use(authnMiddleware())
 				r.Use(httpmw.RequireFreshPassword())
 
 				// User management
@@ -276,7 +294,7 @@ func New(deps Deps) http.Handler {
 			// prefix as competing mounts, and the {projectId} one wins even for
 			// paths like /projects/workspace-stats, shadowing the static route.
 			r.Group(func(r chi.Router) {
-				r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+				r.Use(authnMiddleware())
 				r.Use(httpmw.RequireFreshPassword())
 				r.Get("/projects", deps.Project.ListProjects)
 				r.Get("/projects/workspace-stats", deps.Project.GetWorkspaceStats)
@@ -290,7 +308,7 @@ func New(deps Deps) http.Handler {
 			// separate flow once the draft is complete.
 			if deps.Draft != nil {
 				r.Route("/project-drafts", func(r chi.Router) {
-					r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(authnMiddleware())
 					r.Use(httpmw.RequireJWTAuth())
 					r.Use(httpmw.RequireFreshPassword())
 					r.Use(httpmw.RequirePermissions(deps.Authorizer, httpmw.GlobalScope(), authz.PermissionProjectsCreate))
@@ -320,7 +338,7 @@ func New(deps Deps) http.Handler {
 			// AnnotationRepository.ResolvePortForward).
 			if deps.Annotation != nil {
 				r.Group(func(r chi.Router) {
-					r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(authnMiddleware())
 					r.Get("/port-forwards/resolve", deps.Annotation.ResolvePortForward)
 				})
 			}
@@ -335,7 +353,7 @@ func New(deps Deps) http.Handler {
 			// "/projects/{projectId}" elsewhere in this file.
 			if deps.Agent != nil {
 				r.Route("/agents", func(r chi.Router) {
-					r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(authnMiddleware())
 					r.Use(httpmw.RequireFreshPassword())
 					r.Get("/llm-models", deps.Agent.GetLLMModels)
 					r.Get("/skill-templates", deps.Agent.ListSkillTemplates)
@@ -394,11 +412,11 @@ func New(deps Deps) http.Handler {
 
 			// Single-project routes — optional auth for public project support
 			r.Route("/projects/{projectId}", func(r chi.Router) {
-				r.Use(httpmw.OptionalAuthn(deps.TokenManager, deps.APIKeyAuth))
+				r.Use(optionalAuthnMiddleware())
 				r.Use(httpmw.RequireFreshPassword())
 				if deps.Draft != nil {
 					r.Route("/drafts", func(r chi.Router) {
-						r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+						r.Use(authnMiddleware())
 						r.Use(httpmw.RequireJWTAuth())
 						r.Get("/", deps.Draft.List)
 						r.Post("/", deps.Draft.Create)
@@ -1057,7 +1075,7 @@ func New(deps Deps) http.Handler {
 			// Bundled skills — public listing, same policy as /plugins below.
 			if deps.Skills != nil {
 				r.Group(func(r chi.Router) {
-					r.Use(httpmw.OptionalAuthn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(optionalAuthnMiddleware())
 					r.Use(httpmw.RequireFreshPassword())
 					r.Get("/skills", deps.Skills.ListSkills)
 				})
@@ -1067,7 +1085,7 @@ func New(deps Deps) http.Handler {
 			if deps.Plugin != nil {
 				// Public listing — optional auth
 				r.Group(func(r chi.Router) {
-					r.Use(httpmw.OptionalAuthn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(optionalAuthnMiddleware())
 					r.Use(httpmw.RequireFreshPassword())
 					r.Get("/plugins", deps.Plugin.ListPlugins)
 				})
@@ -1078,7 +1096,7 @@ func New(deps Deps) http.Handler {
 
 				// Admin plugin management
 				r.Route("/admin/plugins", func(r chi.Router) {
-					r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(authnMiddleware())
 					r.Use(httpmw.RequireFreshPassword())
 					r.Use(httpmw.RequirePermissions(deps.Authorizer, httpmw.GlobalScope(), authz.PermissionUsersWrite))
 					r.Get("/marketplace", deps.Plugin.ListMarketplacePlugins)
@@ -1091,7 +1109,7 @@ func New(deps Deps) http.Handler {
 
 				// Admin extension settings
 				r.Route("/admin/plugin-extension-settings", func(r chi.Router) {
-					r.Use(httpmw.Authn(deps.TokenManager, deps.APIKeyAuth))
+					r.Use(authnMiddleware())
 					r.Use(httpmw.RequireFreshPassword())
 					r.Use(httpmw.RequirePermissions(deps.Authorizer, httpmw.GlobalScope(), authz.PermissionUsersWrite))
 					r.Patch("/", deps.Plugin.UpdateExtensionSetting)

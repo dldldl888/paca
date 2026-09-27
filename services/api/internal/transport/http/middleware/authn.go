@@ -15,6 +15,7 @@ import (
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
 	apikeydom "github.com/Paca-AI/api/internal/domain/apikey"
 	domainauth "github.com/Paca-AI/api/internal/domain/auth"
+	userdom "github.com/Paca-AI/api/internal/domain/user"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 	"github.com/Paca-AI/api/internal/transport/http/presenter"
@@ -38,6 +39,14 @@ type agentActorUserContextKey struct{}
 // It is satisfied by apikeysvc.Service.
 type APIKeyAuthenticator interface {
 	Authenticate(ctx context.Context, rawKey string) (*apikeydom.APIKey, error)
+}
+
+// ActiveUserChecker is the narrow user lookup needed to revoke all
+// authenticated access as soon as an account is soft-deleted. Keeping this
+// contract in middleware avoids coupling authentication to the concrete user
+// service or repository.
+type ActiveUserChecker interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*userdom.User, error)
 }
 
 // AgentAPIKeyAuthenticator extends APIKeyAuthenticator with the ability to check
@@ -123,7 +132,22 @@ func Authn(tm *jwttoken.Manager, apiKeyAuth ...APIKeyAuthenticator) func(http.Ha
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r, ok := EnforceAuthn(w, r, tm, apiKeyAuthenticator)
+			r, ok := applyAuthn(w, r, tm, apiKeyAuthenticator, nil, false)
+			if !ok {
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// AuthnWithActiveUser is Authn with an active-account check for JWT and
+// user-owned API-key credentials. It is used by the production router so a
+// previously issued credential stops working immediately after offboarding.
+func AuthnWithActiveUser(tm *jwttoken.Manager, users ActiveUserChecker, apiKeyAuth APIKeyAuthenticator) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r, ok := applyAuthn(w, r, tm, apiKeyAuth, users, false)
 			if !ok {
 				return
 			}
@@ -143,7 +167,21 @@ func OptionalAuthn(tm *jwttoken.Manager, apiKeyAuth ...APIKeyAuthenticator) func
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r, ok := EnforceOptionalAuthn(w, r, tm, apiKeyAuthenticator)
+			r, ok := applyAuthn(w, r, tm, apiKeyAuthenticator, nil, true)
+			if !ok {
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// OptionalAuthnWithActiveUser is OptionalAuthn with an active-account check
+// when credentials are supplied.
+func OptionalAuthnWithActiveUser(tm *jwttoken.Manager, users ActiveUserChecker, apiKeyAuth APIKeyAuthenticator) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r, ok := applyAuthn(w, r, tm, apiKeyAuth, users, true)
 			if !ok {
 				return
 			}
@@ -159,7 +197,13 @@ func EnforceAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, 
 	if len(apiKeyAuth) > 0 {
 		apiKeyAuthenticator = apiKeyAuth[0]
 	}
-	return applyAuthn(w, r, tm, apiKeyAuthenticator, false)
+	return applyAuthn(w, r, tm, apiKeyAuthenticator, nil, false)
+}
+
+// EnforceAuthnWithActiveUser is the request-level form of
+// AuthnWithActiveUser, for handlers that apply route middleware dynamically.
+func EnforceAuthnWithActiveUser(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, users ActiveUserChecker, apiKeyAuth APIKeyAuthenticator) (*http.Request, bool) {
+	return applyAuthn(w, r, tm, apiKeyAuth, users, false)
 }
 
 // EnforceOptionalAuthn validates optional credentials and sets auth context.
@@ -168,10 +212,16 @@ func EnforceOptionalAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.M
 	if len(apiKeyAuth) > 0 {
 		apiKeyAuthenticator = apiKeyAuth[0]
 	}
-	return applyAuthn(w, r, tm, apiKeyAuthenticator, true)
+	return applyAuthn(w, r, tm, apiKeyAuthenticator, nil, true)
 }
 
-func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, apiKeyAuthenticator APIKeyAuthenticator, optional bool) (*http.Request, bool) {
+// EnforceOptionalAuthnWithActiveUser is the request-level form of
+// OptionalAuthnWithActiveUser.
+func EnforceOptionalAuthnWithActiveUser(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, users ActiveUserChecker, apiKeyAuth APIKeyAuthenticator) (*http.Request, bool) {
+	return applyAuthn(w, r, tm, apiKeyAuth, users, true)
+}
+
+func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, apiKeyAuthenticator APIKeyAuthenticator, users ActiveUserChecker, optional bool) (*http.Request, bool) {
 	tokenStr := ""
 	isAPIKey := false
 
@@ -227,6 +277,9 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 			if apiKeyAuthenticator != nil {
 				key, err := apiKeyAuthenticator.Authenticate(r.Context(), tokenStr)
 				if err == nil {
+					if !requireActiveUser(w, r, users, key.UserID) {
+						return r, false
+					}
 					// Unverifiable agent/actor claims are dropped (zero
 					// value), not hard-failed — OptionalAuthn's contract is
 					// "never abort on bad credentials," so a spoofed claim
@@ -253,6 +306,9 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 			default:
 				presenter.Error(w, r, apierr.New(apierr.CodeTokenInvalid, "invalid or expired API key"))
 			}
+			return r, false
+		}
+		if !requireActiveUser(w, r, users, key.UserID) {
 			return r, false
 		}
 
@@ -289,11 +345,26 @@ func applyAuthn(w http.ResponseWriter, r *http.Request, tm *jwttoken.Manager, ap
 
 	ctx := context.WithValue(r.Context(), claimsContextKey{}, claims)
 	if actorID, parseErr := uuid.Parse(claims.Subject); parseErr == nil {
+		if !requireActiveUser(w, r, users, actorID) {
+			return r, false
+		}
 		ctx = authz.WithActorID(ctx, actorID)
 		ctx = authz.WithHumanSession(ctx)
 	}
 	r = r.WithContext(ctx)
 	return r, true
+}
+
+func requireActiveUser(w http.ResponseWriter, r *http.Request, users ActiveUserChecker, id uuid.UUID) bool {
+	if users == nil || id == uuid.Nil {
+		return true
+	}
+	u, err := users.GetByID(r.Context(), id)
+	if err != nil || u == nil || u.DeletedAt != nil {
+		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "account is inactive"))
+		return false
+	}
+	return true
 }
 
 // parseActorUserIDHeader parses X-Actor-User-ID, the human actor a global

@@ -430,6 +430,7 @@ func New(cfg *config.Config) (*App, error) {
 
 	pluginHandler := handler.NewPluginHandler(pluginService, pluginRuntime, projectRepo).
 		WithRouteAuth(tokenManager, apiKeyService, authorizer).
+		WithActiveUserChecker(userService).
 		WithMarketplace(marketplaceClient, pluginInstaller, pluginMigrationRunner)
 
 	agentHandler := handler.NewAgentHandler(agentService, cfg.AIAgentURL, cfg.AIAgentInternalKey, cfg.Server.PublicURL).WithDeliveryGate(fileGate).
@@ -458,6 +459,7 @@ func New(cfg *config.Config) (*App, error) {
 		Draft:                handler.NewDraftHandler(draftService).WithDeliveryGate(fileGate),
 		TokenManager:         tokenManager,
 		APIKeyAuth:           apiKeyService,
+		ActiveUserChecker:    userService,
 		Authorizer:           authorizer,
 		Health:               handler.NewHealthHandler(),
 		Version:              handler.NewVersionHandler(cfg.Release, cacheStore, log),
