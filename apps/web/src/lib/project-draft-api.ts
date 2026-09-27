@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import { apiClient } from "./api-client";
-import type { SuccessEnvelope } from "./api-error";
+import { getApiErrorMessage, type SuccessEnvelope } from "./api-error";
 
 export interface ProjectDraftGeneration {
 	id: string;
@@ -279,23 +279,32 @@ export async function uploadProjectDraftFile(
 	file: File,
 	retryFileId?: string,
 ) {
-	const session = retryFileId
-		? (
-				await apiClient.instance.post<
-					SuccessEnvelope<{ file_id: string; upload_url: string }>
-				>(`/project-drafts/${draftId}/files/retry-upload`, {
-					file_id: retryFileId,
-				})
-			).data.data
-		: (
-				await apiClient.instance.post<
-					SuccessEnvelope<{ file_id: string; upload_url: string }>
-				>(`/project-drafts/${draftId}/files/initiate-upload`, {
-					file_name: file.name,
-					content_type: file.type || "application/octet-stream",
-					file_size: file.size,
-				})
-			).data.data;
+	let session: { file_id: string; upload_url: string };
+	try {
+		session = retryFileId
+			? (
+					await apiClient.instance.post<
+						SuccessEnvelope<{ file_id: string; upload_url: string }>
+					>(`/project-drafts/${draftId}/files/retry-upload`, {
+						file_id: retryFileId,
+					})
+				).data.data
+			: (
+					await apiClient.instance.post<
+						SuccessEnvelope<{ file_id: string; upload_url: string }>
+					>(`/project-drafts/${draftId}/files/initiate-upload`, {
+						file_name: file.name,
+						content_type: file.type || "application/octet-stream",
+						file_size: file.size,
+					})
+				).data.data;
+	} catch (error) {
+		if (!retryFileId) throw error;
+		throw new ProjectDraftUploadError(
+			retryFileId,
+			getApiErrorMessage(error) ?? "upload failed",
+		);
+	}
 	try {
 		const uploaded = await fetch(session.upload_url, {
 			method: "PUT",
