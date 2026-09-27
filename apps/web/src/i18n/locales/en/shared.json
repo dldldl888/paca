@@ -93,6 +93,7 @@
 			"search": "Search",
 			"materialLoading": "Loading materials",
 			"materialError": "Materials are temporarily unavailable",
+			"retryMaterials": "Retry materials",
 			"materialEmpty": "No readable internal materials found",
 			"materialAttach": "Attach to current draft",
 			"materialTask": "Material task scope",

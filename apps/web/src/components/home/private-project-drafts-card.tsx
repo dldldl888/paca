@@ -125,6 +125,7 @@ export function PrivateProjectDraftsCard({
 		...projectDraftMaterialsQueryOptions(submittedSearch),
 		enabled: allowed && materialsOpen,
 	});
+	const { refetch: refetchMaterials } = materials;
 	const webResults = useQuery({
 		...projectDraftWebSearchQueryOptions(submittedWebSearch),
 		enabled: allowed && webSearchOpen && submittedWebSearch.length > 0,
@@ -885,9 +886,16 @@ export function PrivateProjectDraftsCard({
 									{t("home.privateDrafts.materialLoading")}
 								</p>
 							) : materials.isError ? (
-								<p className="text-sm text-muted-foreground">
-									{t("home.privateDrafts.materialError")}
-								</p>
+								<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+									<span>{t("home.privateDrafts.materialError")}</span>
+									<button
+										type="button"
+										onClick={() => void refetchMaterials()}
+										className="text-primary underline underline-offset-4 hover:text-primary/80"
+									>
+										{t("home.privateDrafts.retryMaterials")}
+									</button>
+								</div>
 							) : materialCandidates.length ? (
 								<ul className="space-y-1 text-sm">
 									{materialCandidates.map((material) => {

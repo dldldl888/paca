@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "@/lib/project-api";
 import type { ProjectDraft, ProjectDraftFile } from "@/lib/project-draft-api";
 
-const mocks = vi.hoisted(() => ({ canCreate: true }));
+const mocks = vi.hoisted(() => ({
+	canCreate: true,
+	materialsQueryFn: vi.fn(),
+}));
 
 vi.mock("@/hooks/use-permissions", () => ({
 	usePermissions: () => ({
@@ -32,6 +35,10 @@ vi.mock("@/lib/project-draft-api", async () => {
 	>("@/lib/project-draft-api");
 	return {
 		...actual,
+		projectDraftMaterialsQueryOptions: (search: string) => ({
+			queryKey: ["private-project-draft-materials", search],
+			queryFn: mocks.materialsQueryFn,
+		}),
 		publishProjectDraft: vi.fn(),
 		updateProjectDraft: vi.fn(),
 		uploadProjectDraftFile: vi.fn(),
@@ -71,6 +78,7 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.search": "搜索",
 				"home.privateDrafts.materialLoading": "资料加载中",
 				"home.privateDrafts.materialError": "资料暂时无法加载",
+				"home.privateDrafts.retryMaterials": "重试资料",
 				"home.privateDrafts.materialEmpty": "没有找到当前可读取的内部资料",
 				"home.privateDrafts.materialAttach": "关联到当前草稿",
 				"home.privateDrafts.materialTask": "资料任务关联",
@@ -182,6 +190,7 @@ function renderMaterialDraft(
 	draft = materialDraft,
 	files: ProjectDraftFile[] = [],
 	otherDrafts: ProjectDraft[] = [],
+	seedMaterials = true,
 ) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -194,21 +203,23 @@ function renderMaterialDraft(
 		);
 		queryClient.setQueryData(["private-project-draft-files", entry.id], files);
 	}
-	queryClient.setQueryData(
-		["private-project-draft-materials", ""],
-		[
-			{
-				id: "doc-1",
-				title: "可读路线图",
-				source_type: "internal",
-				project_id: "source-project",
-				source_location: "/projects/source-project/docs/doc-1",
-				source_version: "2026-09-24T00:00:00Z",
-				processed_status: "ready",
-				visibility: "project",
-			},
-		],
-	);
+	if (seedMaterials) {
+		queryClient.setQueryData(
+			["private-project-draft-materials", ""],
+			[
+				{
+					id: "doc-1",
+					title: "可读路线图",
+					source_type: "internal",
+					project_id: "source-project",
+					source_location: "/projects/source-project/docs/doc-1",
+					source_version: "2026-09-24T00:00:00Z",
+					processed_status: "ready",
+					visibility: "project",
+				},
+			],
+		);
+	}
 	render(
 		<QueryClientProvider client={queryClient}>
 			<PrivateProjectDraftsCard />
@@ -254,6 +265,28 @@ describe("PrivateProjectDraftsCard material association", () => {
 				}),
 			),
 		);
+	});
+
+	it("offers a retry action when internal material search is offline", async () => {
+		mocks.materialsQueryFn
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce([
+				{
+					id: "doc-recovered",
+					title: "Recovered material",
+					source_type: "internal",
+					project_id: "source-project",
+					source_location: "/projects/source-project/docs/doc-recovered",
+					source_version: "2026-09-24T00:00:00Z",
+					processed_status: "ready",
+					visibility: "project",
+				},
+			]);
+		renderMaterialDraft(materialDraft, [], [], false);
+
+		expect(await screen.findByText("资料暂时无法加载")).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole("button", { name: "重试资料" }));
+		expect(await screen.findByText("Recovered material")).toBeInTheDocument();
 	});
 
 	it("preserves existing material purpose, required flag, and source when changing task association", async () => {

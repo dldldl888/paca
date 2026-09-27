@@ -93,6 +93,7 @@
 			"search": "搜索",
 			"materialLoading": "资料加载中",
 			"materialError": "资料暂时无法加载",
+			"retryMaterials": "重试资料",
 			"materialEmpty": "没有找到当前可读取的内部资料",
 			"materialAttach": "关联到当前草稿",
 			"materialTask": "资料任务关联",
