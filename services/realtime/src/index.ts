@@ -63,6 +63,13 @@ const syncState=async()=>{
 subscriber.on("close",()=>{connectionGeneration++;gate.disconnect();});
 subscriber.on("error",()=>{connectionGeneration++;gate.disconnect();});
 subscriber.on("ready",()=>{void syncState().catch(()=>logger.error("delivery enrollment unavailable"));});
+// ioredis may already be ready by the time the listener above is attached
+// (especially after a fast container restart).  Ensure that a healthy
+// subscriber cannot leave the delivery gate blocked simply because the first
+// ready edge was missed.
+setImmediate(()=>{
+ if(subscriber.status==="ready")void syncState().catch(()=>logger.error("delivery enrollment unavailable"));
+});
 subscriber.on("message",(channel:string,raw:string)=>{
  if(channel!==controlChannel)return;
  void (async()=>{
