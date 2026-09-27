@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
+	createProjectDraft,
+	generateProjectDraft,
+	importProjectDraft,
 	type ProjectDraft,
 	ProjectDraftUploadError,
 	projectDraftFilesQueryOptions,
@@ -56,8 +59,10 @@ function webMaterialID(url: string) {
 
 export function PrivateProjectDraftsCard({
 	chatSessionId,
+	agentId,
 }: {
 	chatSessionId?: string;
+	agentId?: string;
 } = {}) {
 	const { t } = useTranslation("shared");
 	const { hasPermission } = usePermissions();
@@ -90,6 +95,8 @@ export function PrivateProjectDraftsCard({
 	const [publicationPendingDraftId, setPublicationPendingDraftId] =
 		useState<string>();
 	const [publishError, setPublishError] = useState("");
+	const [draftName, setDraftName] = useState("");
+	const [draftActionError, setDraftActionError] = useState("");
 	const materials = useQuery({
 		...projectDraftMaterialsQueryOptions(submittedSearch),
 		enabled: allowed && materialsOpen,
@@ -172,6 +179,57 @@ export function PrivateProjectDraftsCard({
 			}));
 		} finally {
 			setUploadingDraftId(undefined);
+		}
+	}
+	async function createDraftFromChat() {
+		if (!chatSessionId || !draftName.trim()) return;
+		setDraftActionError("");
+		try {
+			const next = await createProjectDraft(chatSessionId, draftName.trim());
+			qc.setQueryData<ProjectDraft[]>(
+				projectDraftsQueryOptions.queryKey,
+				(current) => [...(current ?? []), next],
+			);
+			setDraftName("");
+		} catch {
+			setDraftActionError(t("home.privateDrafts.draftActionError"));
+		}
+	}
+	async function generateFromChat(draft: ProjectDraft) {
+		if (
+			!agentId ||
+			draft.generation?.status === "starting" ||
+			draft.generation?.status === "running"
+		)
+			return;
+		setDraftActionError("");
+		try {
+			const next = await generateProjectDraft(
+				draft,
+				agentId,
+				"请根据当前私人讨论整理并更新项目草稿；保留已有有效决定，未知信息留空并列出待补充项。",
+			);
+			qc.setQueryData<ProjectDraft[]>(
+				projectDraftsQueryOptions.queryKey,
+				(current) =>
+					(current ?? []).map((item) => (item.id === next.id ? next : item)),
+			);
+		} catch {
+			setDraftActionError(t("home.privateDrafts.draftActionError"));
+		}
+	}
+	async function importGeneratedDraft(draft: ProjectDraft) {
+		if (!draft.generation) return;
+		setDraftActionError("");
+		try {
+			const next = await importProjectDraft(draft);
+			qc.setQueryData<ProjectDraft[]>(
+				projectDraftsQueryOptions.queryKey,
+				(current) =>
+					(current ?? []).map((item) => (item.id === next.id ? next : item)),
+			);
+		} catch {
+			setDraftActionError(t("home.privateDrafts.draftActionError"));
 		}
 	}
 	async function associateMaterial(
@@ -310,15 +368,6 @@ export function PrivateProjectDraftsCard({
 	});
 
 	if (!allowed) return null;
-	if (
-		!drafts.isPending &&
-		!drafts.isError &&
-		chatSessionId &&
-		visibleDrafts.length === 0
-	) {
-		return null;
-	}
-
 	return (
 		<Card
 			aria-label={t("home.privateDrafts.title")}
@@ -338,6 +387,35 @@ export function PrivateProjectDraftsCard({
 				</Link>
 			</CardHeader>
 			<CardContent className="pt-0">
+				{chatSessionId && visibleDrafts.length === 0 && !drafts.isPending && (
+					<div className="space-y-2 rounded-md border border-border/50 p-3">
+						<p className="text-sm font-medium">
+							{t("home.privateDrafts.createFromChat")}
+						</p>
+						<div className="flex gap-2">
+							<input
+								className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+								aria-label={t("home.privateDrafts.draftNamePlaceholder")}
+								placeholder={t("home.privateDrafts.draftNamePlaceholder")}
+								value={draftName}
+								onChange={(event) => setDraftName(event.target.value)}
+							/>
+							<button
+								type="button"
+								className="rounded-md border px-3 text-sm disabled:opacity-50"
+								disabled={!draftName.trim()}
+								onClick={() => void createDraftFromChat()}
+							>
+								{t("home.privateDrafts.createDraft")}
+							</button>
+						</div>
+					</div>
+				)}
+				{draftActionError && (
+					<p className="mt-2 text-xs text-destructive" role="alert">
+						{draftActionError}
+					</p>
+				)}
 				{drafts.isPending ? (
 					<p className="text-sm text-muted-foreground">
 						{t("home.privateDrafts.loading")}
@@ -346,7 +424,7 @@ export function PrivateProjectDraftsCard({
 					<p className="text-sm text-muted-foreground">
 						{t("home.privateDrafts.error")}
 					</p>
-				) : visibleDrafts.length === 0 ? (
+				) : visibleDrafts.length === 0 && !chatSessionId ? (
 					<p className="text-sm text-muted-foreground">
 						{t("home.privateDrafts.empty")}
 					</p>
@@ -378,6 +456,30 @@ export function PrivateProjectDraftsCard({
 										>
 											{t("home.privateDrafts.viewProject")}
 										</Link>
+									)}
+									{chatSessionId && draft.state === "editable" && (
+										<div className="mt-2 flex flex-wrap gap-2">
+											{draft.generation?.status !== "running" &&
+												draft.generation?.status !== "starting" && (
+													<button
+														type="button"
+														className="text-xs text-primary underline-offset-4 hover:underline disabled:opacity-50"
+														disabled={!agentId}
+														onClick={() => void generateFromChat(draft)}
+													>
+														{t("home.privateDrafts.organizeConversation")}
+													</button>
+												)}
+											{draft.generation?.status === "running" && (
+												<button
+													type="button"
+													className="text-xs text-primary underline-offset-4 hover:underline"
+													onClick={() => void importGeneratedDraft(draft)}
+												>
+													{t("home.privateDrafts.importGeneration")}
+												</button>
+											)}
+										</div>
 									)}
 									<label className="mt-2 inline-flex cursor-pointer text-xs text-primary underline-offset-4 hover:underline">
 										{uploadingDraftId === draft.id

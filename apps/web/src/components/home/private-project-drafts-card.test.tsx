@@ -34,6 +34,9 @@ vi.mock("@/lib/project-draft-api", async () => {
 		publishProjectDraft: vi.fn(),
 		updateProjectDraft: vi.fn(),
 		uploadProjectDraftFile: vi.fn(),
+		createProjectDraft: vi.fn(),
+		generateProjectDraft: vi.fn(),
+		importProjectDraft: vi.fn(),
 	};
 });
 vi.mock("react-i18next", () => ({
@@ -42,6 +45,9 @@ vi.mock("react-i18next", () => ({
 			({
 				"home.privateDrafts.title": "私人项目草稿",
 				"home.privateDrafts.openChat": "继续在小派中讨论",
+				"home.privateDrafts.createFromChat": "从当前讨论创建草稿",
+				"home.privateDrafts.draftNamePlaceholder": "项目草稿名称",
+				"home.privateDrafts.createDraft": "创建私人草稿",
 				"home.privateDrafts.empty": "还没有私人项目草稿",
 				"home.privateDrafts.loading": "草稿加载中",
 				"home.privateDrafts.error": "草稿暂时无法加载",
@@ -90,6 +96,9 @@ vi.mock("react-i18next", () => ({
 				"home.privateDrafts.publishConflict":
 					"草稿已发生变化，请刷新后重新预览。",
 				"home.privateDrafts.publicationPending": "结果待核实，刷新后可恢复",
+				"home.privateDrafts.organizeConversation": "整理当前讨论",
+				"home.privateDrafts.importGeneration": "导入整理结果",
+				"home.privateDrafts.draftActionError": "草稿操作失败，请刷新后重试。",
 			})[key] ?? key,
 	}),
 }));
@@ -514,6 +523,30 @@ describe("PrivateProjectDraftsCard", () => {
 		]);
 		expect(screen.queryByText("不可见")).not.toBeInTheDocument();
 		mocks.canCreate = true;
+	});
+
+	it("offers a create entry when the active private chat has no draft yet", async () => {
+		const { createProjectDraft } = await import("@/lib/project-draft-api");
+		const createdDraft = {
+			...materialDraft,
+			id: "draft-created",
+			name: "新讨论草稿",
+			chat_session_id: "session-current",
+		};
+		vi.mocked(createProjectDraft).mockResolvedValue(createdDraft);
+		renderCard([], "session-current");
+
+		expect(await screen.findByText("从当前讨论创建草稿")).toBeInTheDocument();
+		const nameInput = screen.getByRole("textbox", { name: "项目草稿名称" });
+		fireEvent.change(nameInput, { target: { value: "新讨论草稿" } });
+		fireEvent.click(screen.getByRole("button", { name: "创建私人草稿" }));
+		await waitFor(() => {
+			expect(createProjectDraft).toHaveBeenCalledWith(
+				"session-current",
+				"新讨论草稿",
+			);
+			expect(screen.getByText("新讨论草稿")).toBeInTheDocument();
+		});
 	});
 
 	it("filters the card to the active private chat session", async () => {

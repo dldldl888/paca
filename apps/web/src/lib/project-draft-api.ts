@@ -127,6 +127,62 @@ export interface ProjectDraftPublication {
 	task_ids: Record<string, string>;
 }
 
+const emptyDraftContent = {
+	goal: "",
+	manager_user_id: "",
+	items: [],
+	participants: [],
+	materials: [],
+} as const;
+
+export async function createProjectDraft(
+	chatSessionId: string,
+	name: string,
+): Promise<ProjectDraft> {
+	return (
+		await apiClient.instance.post<SuccessEnvelope<ProjectDraft>>(
+			"/project-drafts",
+			{
+				...emptyDraftContent,
+				name,
+				chat_session_id: chatSessionId,
+			},
+		)
+	).data.data;
+}
+
+export async function generateProjectDraft(
+	draft: ProjectDraft,
+	agentId: string,
+	message: string,
+): Promise<ProjectDraft> {
+	return (
+		await apiClient.instance.post<SuccessEnvelope<ProjectDraft>>(
+			`/project-drafts/${draft.id}/generate`,
+			{
+				expected_version: draft.version,
+				agent_id: agentId,
+				message,
+			},
+		)
+	).data.data;
+}
+
+export async function importProjectDraft(
+	draft: ProjectDraft,
+): Promise<ProjectDraft> {
+	if (!draft.generation?.id) throw new Error("draft generation is missing");
+	return (
+		await apiClient.instance.post<SuccessEnvelope<ProjectDraft>>(
+			`/project-drafts/${draft.id}/import`,
+			{
+				expected_version: draft.version,
+				generation_id: draft.generation.id,
+			},
+		)
+	).data.data;
+}
+
 export const projectDraftsQueryOptions = queryOptions({
 	queryKey: ["private-project-drafts"],
 	queryFn: async () =>

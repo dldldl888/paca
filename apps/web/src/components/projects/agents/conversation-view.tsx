@@ -600,6 +600,7 @@ export function ConversationView({
 				<div className="shrink-0 px-4 pt-3">
 					<PrivateProjectDraftsCard
 						chatSessionId={conversation.chat_session_id}
+						agentId={conversation.agent_id}
 					/>
 				</div>
 			)}

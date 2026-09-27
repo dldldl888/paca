@@ -63,6 +63,9 @@
 		"privateDrafts": {
 			"title": "Private project drafts",
 			"openChat": "Continue in 小派",
+			"createFromChat": "Create a draft from this discussion",
+			"draftNamePlaceholder": "Project draft name",
+			"createDraft": "Create private draft",
 			"empty": "No private project drafts yet",
 			"loading": "Loading drafts",
 			"error": "Drafts are temporarily unavailable",
@@ -109,7 +112,10 @@
 			"viewProject": "Open project",
 			"publishError": "Assignment failed. Retry or refresh to recover the result.",
 			"publishConflict": "This draft changed. Refresh and preview it again.",
-			"publicationPending": "Assignment outcome is unconfirmed. Refresh to recover the result."
+			"publicationPending": "Assignment outcome is unconfirmed. Refresh to recover the result.",
+			"organizeConversation": "Organize this discussion",
+			"importGeneration": "Import generated result",
+			"draftActionError": "Draft action failed. Refresh and try again."
 		},
 		"updateBanner": {
 			"title": "Update available",

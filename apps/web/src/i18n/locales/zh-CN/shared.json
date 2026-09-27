@@ -63,6 +63,9 @@
 		"privateDrafts": {
 			"title": "私人项目草稿",
 			"openChat": "继续在小派中讨论",
+			"createFromChat": "从当前讨论创建草稿",
+			"draftNamePlaceholder": "项目草稿名称",
+			"createDraft": "创建私人草稿",
 			"empty": "还没有私人项目草稿",
 			"loading": "草稿加载中",
 			"error": "草稿暂时无法加载",
@@ -109,7 +112,10 @@
 			"viewProject": "打开项目",
 			"publishError": "发布失败，可重试或刷新恢复结果。",
 			"publishConflict": "草稿已发生变化，请刷新后重新预览。",
-			"publicationPending": "结果待核实，请刷新恢复原发布结果。"
+			"publicationPending": "结果待核实，请刷新恢复原发布结果。",
+			"organizeConversation": "整理当前讨论",
+			"importGeneration": "导入整理结果",
+			"draftActionError": "草稿操作失败，请刷新后重试。"
 		},
 		"updateBanner": {
 			"title": "有可用更新",
