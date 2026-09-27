@@ -627,7 +627,21 @@ func (s *Service) PublishProjectDraft(ctx context.Context, id uuid.UUID, expecte
 		return nil, err
 	}
 	defer leave()
-	return s.Repo.PublishProjectDraft(ctx, id, expected, publication)
+	result, err := s.Repo.PublishProjectDraft(ctx, id, expected, publication)
+	if err != nil || s.publisher == nil || result == nil {
+		return result, err
+	}
+	for _, recipient := range result.Recipients {
+		_ = s.publisher.Publish(ctx, events.ChannelRealtime, map[string]any{
+			"type": events.TopicNotificationCreated,
+			"payload": map[string]any{
+				"recipient_user_id": recipient.UserID,
+				"project_id":        result.ProjectID,
+				"task_id":           recipient.TaskID,
+			},
+		})
+	}
+	return result, nil
 }
 
 // SearchProjectDraftMaterials returns metadata for documents the current

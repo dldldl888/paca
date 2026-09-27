@@ -2,17 +2,20 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	agentdom "github.com/Paca-AI/api/internal/domain/agent"
 	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	projectdom "github.com/Paca-AI/api/internal/domain/project"
+	"github.com/Paca-AI/api/internal/events"
 	"github.com/Paca-AI/api/internal/platform/authz"
 	pg "github.com/Paca-AI/api/internal/repository/postgres"
 	docsvc "github.com/Paca-AI/api/internal/service/doc"
@@ -597,6 +600,57 @@ func TestPrivateProjectDraftPublishIsAtomicAndIdempotent(t *testing.T) {
 	f.request(t, http.MethodPost, path, map[string]any{
 		"expected_version": 1, "publication_id": uuid.NewString(),
 	}, http.StatusConflict)
+}
+
+func TestPrivateProjectDraftPublishEmitsRealtimeAssignmentNotification(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	seedTaskMemberUser(t, f.env, "draft-realtime-peer", "password1")
+	peer, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-realtime-peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemID := uuid.NewString()
+	d := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "实时通知项目", "goal": "验证在线员工即时收到分派", "chat_session_id": session,
+		"items": []any{map[string]any{
+			"id": itemID, "title": "实时任务", "requirements": "完成", "criteria": "通过",
+			"assignee_user_id": peer.ID.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{
+			map[string]any{"user_id": owner.String(), "role": "负责人"},
+			map[string]any{"user_id": peer.ID.String(), "role": "执行人"},
+		},
+		"materials": []any{},
+	}, http.StatusCreated)
+
+	sub := f.env.redisClient.Subscribe(f.env.ctx, events.ChannelRealtime)
+	defer sub.Close()
+	if _, err := sub.Receive(f.env.ctx); err != nil {
+		t.Fatalf("subscribe realtime channel: %v", err)
+	}
+
+	publication := uuid.NewString()
+	result := f.request(t, http.MethodPost, f.base+"/"+d["id"].(string)+"/publish", map[string]any{
+		"expected_version": 1, "publication_id": publication,
+	}, http.StatusOK)
+	taskID := result["task_ids"].(map[string]any)[itemID].(string)
+	ctx, cancel := context.WithTimeout(f.env.ctx, 2*time.Second)
+	defer cancel()
+	message, err := sub.ReceiveMessage(ctx)
+	if err != nil {
+		t.Fatalf("publish did not emit realtime assignment notification: %v", err)
+	}
+	var event struct {
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(message.Payload), &event); err != nil {
+		t.Fatalf("decode realtime event: %v", err)
+	}
+	if event.Type != events.TopicNotificationCreated || event.Payload["recipient_user_id"] != peer.ID.String() || event.Payload["task_id"] != taskID {
+		t.Fatalf("unexpected realtime assignment event: %#v", event)
+	}
 }
 
 func TestPrivateProjectDraftFileUploadTracksParsingAndOwnerIsolation(t *testing.T) {

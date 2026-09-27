@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -430,6 +431,11 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			if d.Publication == nil {
 				return draftdom.ErrConflict
 			}
+			recipients, err := publicationRecipients(ctx, tx, *row.PublicationID)
+			if err != nil {
+				return err
+			}
+			d.Publication.Recipients = recipients
 			result = d.Publication
 			return nil
 		}
@@ -555,6 +561,7 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			return err
 		}
 		taskIDs := make(map[string]uuid.UUID, len(d.Items))
+		recipients := make([]draftdom.ProjectDraftPublicationRecipient, 0, len(d.Items))
 		for _, item := range d.Items {
 			assignee, err := uuid.Parse(item.AssigneeUserID)
 			if err != nil || members[assignee] == uuid.Nil {
@@ -592,7 +599,9 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 			if _, err := tx.ExecContext(ctx, `INSERT INTO notifications(id,recipient_user_id,actor_member_id,type,task_id,project_id,created_at,source_event_id) VALUES($1,$2,$3,'assigned',$4,$5,$6,$7)`, uuid.New(), assignee, members[user], taskID, projectID, now, publication.String()+":"+taskID.String()); err != nil {
 				return err
 			}
+			recipients = append(recipients, draftdom.ProjectDraftPublicationRecipient{UserID: assignee, TaskID: taskID})
 		}
+		sort.Slice(recipients, func(i, j int) bool { return recipients[i].TaskID.String() < recipients[j].TaskID.String() })
 		for _, item := range d.Items {
 			target := taskIDs[item.ID]
 			for _, dependency := range item.Dependencies {
@@ -606,7 +615,7 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 		if err := r.createProjectDraftMaterialReferences(ctx, tx, d, projectID, taskIDs, members, user, now); err != nil {
 			return err
 		}
-		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs}
+		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs, Recipients: recipients}
 		receipt, err := json.Marshal(result)
 		if err != nil {
 			return err
@@ -617,6 +626,21 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 		return nil
 	})
 	return result, err
+}
+
+func publicationRecipients(ctx context.Context, tx *sqlx.Tx, publication uuid.UUID) ([]draftdom.ProjectDraftPublicationRecipient, error) {
+	var rows []struct {
+		UserID uuid.UUID `db:"recipient_user_id"`
+		TaskID uuid.UUID `db:"task_id"`
+	}
+	if err := tx.SelectContext(ctx, &rows, `SELECT recipient_user_id,task_id FROM notifications WHERE source_event_id LIKE $1 || ':%' ORDER BY task_id`, publication.String()); err != nil {
+		return nil, err
+	}
+	recipients := make([]draftdom.ProjectDraftPublicationRecipient, 0, len(rows))
+	for _, row := range rows {
+		recipients = append(recipients, draftdom.ProjectDraftPublicationRecipient{UserID: row.UserID, TaskID: row.TaskID})
+	}
+	return recipients, nil
 }
 
 func (r *DraftRepository) createProjectDraftMaterialReferences(ctx context.Context, tx *sqlx.Tx, d *draftdom.ProjectDraft, projectID uuid.UUID, taskIDs map[string]uuid.UUID, members map[uuid.UUID]uuid.UUID, owner uuid.UUID, now time.Time) error {
