@@ -18,8 +18,10 @@
 		"delete": "Delete",
 		"viewDiff": "View diff",
 		"revert": "Revert",
+		"retry": "Retry",
 		"errors": {
-			"revertFailed": "Revert failed. Please try again."
+			"revertFailed": "Revert failed. Please try again.",
+			"sendFailed": "Could not send feedback. Your draft is kept."
 		}
 	},
 	"contentDiff": {

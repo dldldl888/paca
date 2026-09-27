@@ -18,8 +18,10 @@
 		"delete": "删除",
 		"viewDiff": "查看差异",
 		"revert": "还原",
+		"retry": "重试",
 		"errors": {
-			"revertFailed": "还原失败，请重试。"
+			"revertFailed": "还原失败，请重试。",
+			"sendFailed": "反馈发送失败，草稿已保留。"
 		}
 	},
 	"contentDiff": {

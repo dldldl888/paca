@@ -102,6 +102,11 @@ export function ActivityPane<T extends ActivityEntry>({
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const [editorFocused, setEditorFocused] = useState(false);
 	const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+	const [deliveryError, setDeliveryError] = useState(false);
+	const lastSubmission = useRef<{
+		blocks: unknown[];
+		commentId?: string;
+	} | null>(null);
 	const [filter, setFilter] = useState<ActivityFilter>(
 		readStoredActivityFilter,
 	);
@@ -160,8 +165,11 @@ export function ActivityPane<T extends ActivityEntry>({
 			editorRef.current?.clear();
 			setEditingCommentId(null);
 			setEditorFocused(false);
+			setDeliveryError(false);
+			lastSubmission.current = null;
 			qc.invalidateQueries({ queryKey });
 		},
+		onError: () => setDeliveryError(true),
 	});
 
 	const updateMutation = useMutation({
@@ -179,8 +187,11 @@ export function ActivityPane<T extends ActivityEntry>({
 			editorRef.current?.clear();
 			setEditingCommentId(null);
 			setEditorFocused(false);
+			setDeliveryError(false);
+			lastSubmission.current = null;
 			qc.invalidateQueries({ queryKey });
 		},
+		onError: () => setDeliveryError(true),
 	});
 
 	const handleSend = () => {
@@ -188,17 +199,35 @@ export function ActivityPane<T extends ActivityEntry>({
 		if (!blocks || blocks.length === 0) return;
 		const text = blocksToText(blocks).trim();
 		if (!text) return;
+		setDeliveryError(false);
 		if (editingCommentId && updateComment) {
+			lastSubmission.current = { blocks, commentId: editingCommentId };
 			updateMutation.mutate({ commentId: editingCommentId, blocks });
 		} else {
+			lastSubmission.current = { blocks };
 			addMutation.mutate(blocks);
 		}
+	};
+
+	const retryDelivery = () => {
+		const submission = lastSubmission.current;
+		if (!submission) return;
+		if (submission.commentId && updateComment) {
+			updateMutation.mutate({
+				commentId: submission.commentId,
+				blocks: submission.blocks,
+			});
+			return;
+		}
+		addMutation.mutate(submission.blocks);
 	};
 
 	const handleCancelEdit = () => {
 		editorRef.current?.clear();
 		setEditingCommentId(null);
 		setEditorFocused(false);
+		setDeliveryError(false);
+		lastSubmission.current = null;
 	};
 
 	const editingComment = editingCommentId
@@ -309,6 +338,22 @@ export function ActivityPane<T extends ActivityEntry>({
 
 			{addComment && (
 				<div className="shrink-0 border-t border-border/25 p-3 space-y-1 bg-background/50">
+					{deliveryError && (
+						<div
+							role="alert"
+							className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs text-destructive"
+						>
+							<span>{t("activityPane.errors.sendFailed")}</span>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={addMutation.isPending || updateMutation.isPending}
+								onClick={retryDelivery}
+							>
+								{t("activityPane.retry")}
+							</Button>
+						</div>
+					)}
 					{editingCommentId && (
 						<div className="flex items-center gap-2 px-1 pb-1">
 							<span className="text-xs font-medium text-foreground/70">
