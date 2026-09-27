@@ -175,7 +175,11 @@ export function PrivateProjectDraftsCard({
 				queryKey: projectDraftFilesQueryOptions(draftId).queryKey,
 			});
 		} catch (error) {
-			setUploadError(t("home.privateDrafts.uploadError"));
+			setUploadError(
+				error instanceof ProjectDraftUploadError && error.message
+					? error.message
+					: t("home.privateDrafts.uploadError"),
+			);
 			setFailedUploads((current) => ({
 				...current,
 				[draftId]: {

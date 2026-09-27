@@ -850,6 +850,40 @@ describe("PrivateProjectDraftsCard", () => {
 		);
 	});
 
+	it("surfaces the persisted parsing error while keeping the file retryable", async () => {
+		const { ProjectDraftUploadError, uploadProjectDraftFile } = await import(
+			"@/lib/project-draft-api"
+		);
+		vi.mocked(uploadProjectDraftFile).mockRejectedValueOnce(
+			new ProjectDraftUploadError(
+				"file-pdf",
+				"文件解析失败，请检查文件内容后重试",
+			),
+		);
+		renderCard([
+			{
+				id: "draft-parse-error",
+				name: "解析错误",
+				version: 1,
+				state: "editable",
+			},
+		]);
+		fireEvent.change(screen.getByLabelText("上传文件"), {
+			target: {
+				files: [
+					new File(["broken"], "broken.pdf", { type: "application/pdf" }),
+				],
+			},
+		});
+
+		expect(
+			await screen.findByText("文件解析失败，请检查文件内容后重试"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "重试上传" }),
+		).toBeInTheDocument();
+	});
+
 	it("offers persisted failed files for retry after refresh", async () => {
 		const { uploadProjectDraftFile } = await import("@/lib/project-draft-api");
 		vi.mocked(uploadProjectDraftFile).mockResolvedValue({} as never);
