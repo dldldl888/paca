@@ -54,6 +54,19 @@ function statusKey(draft: ProjectDraft) {
 	}
 }
 
+function uploadErrorDetails(error: unknown) {
+	if (error instanceof ProjectDraftUploadError) {
+		return { fileId: error.fileId, message: error.message };
+	}
+	if (typeof error !== "object" || error === null) return {};
+	const details = error as { fileId?: unknown; message?: unknown };
+	if (typeof details.fileId !== "string") return {};
+	return {
+		fileId: details.fileId,
+		message: typeof details.message === "string" ? details.message : undefined,
+	};
+}
+
 function webMaterialID(url: string) {
 	let hash = 2166136261;
 	for (const char of url) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
@@ -175,17 +188,15 @@ export function PrivateProjectDraftsCard({
 				queryKey: projectDraftFilesQueryOptions(draftId).queryKey,
 			});
 		} catch (error) {
+			const details = uploadErrorDetails(error);
 			setUploadError(
-				error instanceof ProjectDraftUploadError && error.message
-					? error.message
-					: t("home.privateDrafts.uploadError"),
+				details.message ? details.message : t("home.privateDrafts.uploadError"),
 			);
 			setFailedUploads((current) => ({
 				...current,
 				[draftId]: {
 					file,
-					fileId:
-						error instanceof ProjectDraftUploadError ? error.fileId : undefined,
+					fileId: details.fileId,
 				},
 			}));
 		} finally {

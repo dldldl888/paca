@@ -850,6 +850,84 @@ describe("PrivateProjectDraftsCard", () => {
 		);
 	});
 
+	it("keeps the persisted file id when retry initiation fails", async () => {
+		const { ProjectDraftUploadError, uploadProjectDraftFile } = await import(
+			"@/lib/project-draft-api"
+		);
+		const file = new File(["hello"], "retry.txt", { type: "text/plain" });
+		vi.mocked(uploadProjectDraftFile)
+			.mockRejectedValueOnce(
+				new ProjectDraftUploadError("file-retry", "upload failed"),
+			)
+			.mockRejectedValueOnce(
+				new ProjectDraftUploadError("file-retry", "retry initiation failed"),
+			)
+			.mockResolvedValueOnce({} as never);
+		renderCard([
+			{
+				id: "draft-retry-initiation",
+				name: "重试初始化",
+				version: 1,
+				state: "editable",
+			},
+		]);
+
+		fireEvent.change(screen.getByLabelText("上传文件"), {
+			target: { files: [file] },
+		});
+		await screen.findByText("upload failed");
+		fireEvent.click(screen.getByRole("button", { name: "重试上传" }));
+		await waitFor(() =>
+			expect(uploadProjectDraftFile).toHaveBeenCalledWith(
+				"draft-retry-initiation",
+				file,
+				"file-retry",
+			),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "重试上传" }));
+		await waitFor(() =>
+			expect(uploadProjectDraftFile).toHaveBeenLastCalledWith(
+				"draft-retry-initiation",
+				file,
+				"file-retry",
+			),
+		);
+	});
+
+	it("preserves a file id on upload errors crossing a module boundary", async () => {
+		const { uploadProjectDraftFile } = await import("@/lib/project-draft-api");
+		const file = new File(["hello"], "module-boundary.txt", {
+			type: "text/plain",
+		});
+		const uploadError = Object.assign(new Error("upload failed"), {
+			fileId: "file-module-boundary",
+		});
+		vi.mocked(uploadProjectDraftFile)
+			.mockRejectedValueOnce(uploadError)
+			.mockResolvedValueOnce({} as never);
+		renderCard([
+			{
+				id: "draft-module-boundary",
+				name: "模块边界",
+				version: 1,
+				state: "editable",
+			},
+		]);
+		fireEvent.change(screen.getByLabelText("上传文件"), {
+			target: { files: [file] },
+		});
+		await screen.findByRole("button", { name: "重试上传" });
+		fireEvent.click(screen.getByRole("button", { name: "重试上传" }));
+		await waitFor(() =>
+			expect(uploadProjectDraftFile).toHaveBeenLastCalledWith(
+				"draft-module-boundary",
+				file,
+				"file-module-boundary",
+			),
+		);
+	});
+
 	it("surfaces the persisted parsing error while keeping the file retryable", async () => {
 		const { ProjectDraftUploadError, uploadProjectDraftFile } = await import(
 			"@/lib/project-draft-api"
