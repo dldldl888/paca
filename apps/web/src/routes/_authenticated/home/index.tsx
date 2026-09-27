@@ -56,7 +56,7 @@ export const Route = createFileRoute("/_authenticated/home/")({
 		await Promise.all([
 			queryClient.ensureQueryData(projectsQueryOptions()),
 			queryClient.ensureQueryData(workspaceStatsQueryOptions()),
-			queryClient.ensureInfiniteQueryData(assignedTasksQueryOptions()),
+			queryClient.prefetchInfiniteQuery(assignedTasksQueryOptions()),
 		]);
 	},
 	component: HomePage,
