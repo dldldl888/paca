@@ -1220,6 +1220,13 @@
 			"unitKilobytes": "{{value}} KB",
 			"unitMegabytes": "{{value}} MB"
 		},
+		"materials": {
+			"title": "Authorized materials",
+			"loading": "Loading materials…",
+			"empty": "No authorized materials",
+			"error": "Materials could not be loaded.",
+			"retry": "Retry"
+		},
 		"addFieldDialog": {
 			"title": "Create custom field",
 			"displayNameLabel": "Display name",

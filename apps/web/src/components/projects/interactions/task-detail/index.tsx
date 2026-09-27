@@ -37,6 +37,7 @@ import { PropertiesPanel } from "./properties-panel";
 import { SubtasksSection } from "./subtasks-section";
 import { TaskHeader } from "./task-header";
 import { TaskLinksSection } from "./task-links-section";
+import { TaskMaterialsSection } from "./task-materials-section";
 import type { TaskDetailModalProps } from "./types";
 
 // Re-exports for consumers
@@ -490,6 +491,10 @@ export function TaskDetailModal({
 							taskId={task.id}
 							canEdit={canEdit}
 						/>
+
+						{projectId && (
+							<TaskMaterialsSection projectId={projectId} taskId={task.id} />
+						)}
 
 						{/* Bottom breathing room */}
 						<div className="h-8" />

@@ -1220,6 +1220,13 @@
 			"unitKilobytes": "{{value}} KB",
 			"unitMegabytes": "{{value}} MB"
 		},
+		"materials": {
+			"title": "获授权资料",
+			"loading": "正在加载资料…",
+			"empty": "暂无获授权资料",
+			"error": "资料暂时无法加载。",
+			"retry": "重试"
+		},
 		"addFieldDialog": {
 			"title": "创建自定义字段",
 			"displayNameLabel": "显示名称",
