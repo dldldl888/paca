@@ -300,6 +300,32 @@ func TestTaskAttachmentDeliveryRoutesRequireTaskReadPermission(t *testing.T) {
 	})
 }
 
+func TestDocumentFileDeliveryRoutesRequireDocsReadPermission(t *testing.T) {
+	r := newAttachmentAccessTestRouter(t, &staticPermissionStore{})
+	tok := issueAccessTokenForRouterTests(t)
+	path := "/api/v1/projects/" + uuid.NewString() + "/docs/" + uuid.NewString() + "/files/" + uuid.NewString()
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		suffix string
+	}{
+		{name: "download-url", method: http.MethodGet, suffix: "/download-url"},
+		{name: "content", method: http.MethodGet, suffix: "/content"},
+		{name: "head content", method: http.MethodHead, suffix: "/content"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), tc.method, path+tc.suffix, nil)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("expected 403 before file delivery, got %d (%s)", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestNew_HealthRoute(t *testing.T) {
 	r := newTestRouter(t)
 

@@ -759,9 +759,18 @@ func New(deps Deps) http.Handler {
 							Post("/files/initiate-upload", deps.DocFile.InitiateDocUpload)
 						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionDocsWrite)).
 							Post("/files/complete-upload", deps.DocFile.CompleteDocUpload)
-						r.Get("/files/{fileId}/download-url", deps.DocFile.GetDocFileDownloadURL)
-						r.Get("/files/{fileId}/content", deps.DocFile.GetDocFileContent)
-						r.Head("/files/{fileId}/content", deps.DocFile.GetDocFileContent)
+						r.With(httpmw.RequirePublicProjectOrPermissions(deps.ProjectVisibilitySvc, deps.Authorizer,
+							httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
+							httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionDocsRead}},
+						)).Get("/files/{fileId}/download-url", deps.DocFile.GetDocFileDownloadURL)
+						r.With(httpmw.RequirePublicProjectOrPermissions(deps.ProjectVisibilitySvc, deps.Authorizer,
+							httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
+							httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionDocsRead}},
+						)).Get("/files/{fileId}/content", deps.DocFile.GetDocFileContent)
+						r.With(httpmw.RequirePublicProjectOrPermissions(deps.ProjectVisibilitySvc, deps.Authorizer,
+							httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
+							httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionDocsRead}},
+						)).Head("/files/{fileId}/content", deps.DocFile.GetDocFileContent)
 						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionDocsWrite)).
 							Delete("/files/{fileId}", deps.DocFile.DeleteDocFile)
 					})
