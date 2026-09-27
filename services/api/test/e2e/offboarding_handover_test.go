@@ -2,7 +2,9 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
@@ -64,6 +66,13 @@ func TestOffboardingTaskReassignment(t *testing.T) {
 	}
 	read(leaverClient, leaverToken, http.StatusOK)
 
+	commentReq := mustRequest(env.ctx, t, http.MethodPost, env.base+"/api/v1/projects/"+projectID.String()+"/tasks/"+task.ID.String()+"/activities/comments", jsonBody(t, map[string]any{"content": []map[string]any{{"type": "paragraph", "content": []map[string]any{{"type": "text", "text": "离职前反馈历史"}}}}}))
+	commentReq.Header.Set("Authorization", "Bearer "+leaverToken)
+	commentReq.Header.Set("Content-Type", "application/json")
+	commentResp := mustDo(t, leaverClient, commentReq)
+	commentResp.Body.Close()
+	assertStatus(t, commentResp, http.StatusCreated)
+
 	if _, err := env.db.Exec(`UPDATE users SET deleted_at=NOW() WHERE id=$1`, leaver.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -78,4 +87,15 @@ func TestOffboardingTaskReassignment(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 
 	read(replacementClient, replacementToken, http.StatusOK)
+	activitiesReq := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/projects/"+projectID.String()+"/tasks/"+task.ID.String()+"/activities/", nil)
+	activitiesReq.Header.Set("Authorization", "Bearer "+replacementToken)
+	activitiesResp := mustDo(t, replacementClient, activitiesReq)
+	defer activitiesResp.Body.Close()
+	assertStatus(t, activitiesResp, http.StatusOK)
+	var activities envelope
+	decodeJSON(t, activitiesResp, &activities)
+	encoded, err := json.Marshal(activities.Data)
+	if err != nil || !strings.Contains(string(encoded), "离职前反馈历史") {
+		t.Fatal("replacement could not read the leaver's preserved activity history")
+	}
 }
