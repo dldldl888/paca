@@ -10,6 +10,7 @@ import (
 	"github.com/Paca-AI/api/internal/apierr"
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
 	notificationdom "github.com/Paca-AI/api/internal/domain/notification"
+	userdom "github.com/Paca-AI/api/internal/domain/user"
 	"github.com/Paca-AI/api/internal/platform/delivery"
 	"github.com/Paca-AI/api/internal/transport/http/dto"
 	"github.com/Paca-AI/api/internal/transport/http/middleware"
@@ -26,6 +27,11 @@ type NotificationHandler struct {
 	svc       notificationdom.Service
 	avatarSvc attachmentdom.AvatarService
 	gate      *delivery.Gate
+	users     notificationUserChecker
+}
+
+type notificationUserChecker interface {
+	GetByID(context.Context, uuid.UUID) (*userdom.User, error)
 }
 
 // NewNotificationHandler returns a NotificationHandler wired to svc.
@@ -46,6 +52,25 @@ func WithNotificationAvatarService(svc attachmentdom.AvatarService) Notification
 	return func(h *NotificationHandler) {
 		h.avatarSvc = svc
 	}
+}
+
+// WithNotificationUserChecker makes notification delivery recheck the current
+// account state. This closes the window where a soft-deleted user could use an
+// already-issued access token to read notifications after offboarding.
+func WithNotificationUserChecker(svc notificationUserChecker) NotificationHandlerOption {
+	return func(h *NotificationHandler) { h.users = svc }
+}
+
+func (h *NotificationHandler) requireActiveUser(w http.ResponseWriter, r *http.Request, userID uuid.UUID) bool {
+	if h.users == nil {
+		return true
+	}
+	u, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || u == nil || u.DeletedAt != nil {
+		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "account is inactive"))
+		return false
+	}
+	return true
 }
 
 // WithDeliveryGate shares the authority coordinator's short-response gate.
@@ -84,6 +109,9 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.ActorIDFromContext(r.Context())
 	if !ok {
 		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "unauthenticated"))
+		return
+	}
+	if !h.requireActiveUser(w, r, userID) {
 		return
 	}
 
@@ -135,6 +163,9 @@ func (h *NotificationHandler) MarkAsRead(w http.ResponseWriter, r *http.Request)
 		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "unauthenticated"))
 		return
 	}
+	if !h.requireActiveUser(w, r, userID) {
+		return
+	}
 
 	notificationID, err := uuid.Parse(chi.URLParam(r, "notificationId"))
 	if err != nil {
@@ -155,6 +186,9 @@ func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Reque
 	userID, ok := middleware.ActorIDFromContext(r.Context())
 	if !ok {
 		presenter.Error(w, r, apierr.New(apierr.CodeUnauthenticated, "unauthenticated"))
+		return
+	}
+	if !h.requireActiveUser(w, r, userID) {
 		return
 	}
 

@@ -196,6 +196,35 @@ func TestUserManagement_AdminCRUD(t *testing.T) {
 	})
 }
 
+func TestUserManagement_DeletedUserCannotReadNotificationsWithExistingAccessToken(t *testing.T) {
+	t.Parallel()
+	env := newE2EEnv(t)
+	seedUser(t, env, "offboard-target", "targetpass1", "Offboard Target")
+	targetToken := adminBearerToken(t, env, "offboard-target", "targetpass1")
+	target, err := env.userRepo.FindByUsername(env.ctx, "offboard-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/users/me/notifications", nil)
+	before.Header.Set("Authorization", "Bearer "+targetToken)
+	beforeResp := mustDo(t, env.client, before)
+	beforeResp.Body.Close()
+	assertStatus(t, beforeResp, http.StatusOK)
+
+	if _, err := env.db.Exec(`UPDATE users SET deleted_at=NOW() WHERE id=$1`, target.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	after := mustRequest(env.ctx, t, http.MethodGet, env.base+"/api/v1/users/me/notifications", nil)
+	after.Header.Set("Authorization", "Bearer "+targetToken)
+	afterResp := mustDo(t, env.client, after)
+	defer afterResp.Body.Close()
+	if afterResp.StatusCode != http.StatusUnauthorized && afterResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("deleted user retained notification access with an existing token: status=%d", afterResp.StatusCode)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Self-service: GetMe / UpdateMe
 // ---------------------------------------------------------------------------
