@@ -10,8 +10,10 @@ import (
 	"time"
 
 	attachmentdom "github.com/Paca-AI/api/internal/domain/attachment"
+	docdom "github.com/Paca-AI/api/internal/domain/doc"
 	draftdom "github.com/Paca-AI/api/internal/domain/draft"
 	"github.com/Paca-AI/api/internal/platform/authz"
+	"github.com/Paca-AI/api/internal/platform/database"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -436,9 +438,6 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 		if !preview.CanPublish {
 			return &draftdom.ProjectDraftValidationError{Message: "draft preview contains unresolved issues"}
 		}
-		if len(d.Materials) > 0 {
-			return &draftdom.ProjectDraftValidationError{Message: "materials must be verified before publication"}
-		}
 		now := time.Now()
 		projectID := uuid.New()
 		settings, _ := json.Marshal(map[string]any{})
@@ -576,6 +575,9 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 				}
 			}
 		}
+		if err := r.createProjectDraftMaterialReferences(ctx, tx, d, projectID, taskIDs, members, user, now); err != nil {
+			return err
+		}
 		result = &draftdom.ProjectDraftPublication{PublicationID: publication, ProjectID: projectID, TaskIDs: taskIDs}
 		receipt, err := json.Marshal(result)
 		if err != nil {
@@ -587,6 +589,79 @@ func (r *DraftRepository) PublishProjectDraft(ctx context.Context, id uuid.UUID,
 		return nil
 	})
 	return result, err
+}
+
+func (r *DraftRepository) createProjectDraftMaterialReferences(ctx context.Context, tx *sqlx.Tx, d *draftdom.ProjectDraft, projectID uuid.UUID, taskIDs map[string]uuid.UUID, members map[uuid.UUID]uuid.UUID, owner uuid.UUID, now time.Time) error {
+	txctx := database.WithTransaction(ctx, tx)
+	for _, material := range d.Materials {
+		if material.Kind != "document" || material.SourceType != "internal" {
+			return &draftdom.ProjectDraftValidationError{Message: "only internal documents can be published as references"}
+		}
+		sourceID, err := uuid.Parse(material.ID)
+		if err != nil {
+			return &draftdom.ProjectDraftValidationError{Message: "material source is invalid"}
+		}
+		users := map[uuid.UUID]struct{}{}
+		if len(material.TaskIDs) == 0 {
+			for _, participant := range d.Participants {
+				participantID, parseErr := uuid.Parse(participant.UserID)
+				if parseErr == nil {
+					users[participantID] = struct{}{}
+				}
+			}
+		} else {
+			for _, item := range d.Items {
+				for _, taskID := range material.TaskIDs {
+					if taskID == item.ID {
+						participantID, parseErr := uuid.Parse(item.AssigneeUserID)
+						if parseErr == nil {
+							users[participantID] = struct{}{}
+						}
+					}
+				}
+			}
+		}
+		users[owner] = struct{}{}
+		var title string
+		for user := range users {
+			actorCtx := authz.WithActorID(txctx, user)
+			args := []any{sourceID}
+			predicate, predicateErr := DocumentVisibilityPredicate(actorCtx, r.db, "documents", &args, docdom.AccessRead)
+			if predicateErr != nil {
+				return predicateErr
+			}
+			var source struct {
+				ID    uuid.UUID `db:"id"`
+				Title string    `db:"title"`
+			}
+			if err := tx.GetContext(actorCtx, &source, `SELECT id,title FROM documents WHERE id=$1 AND source_document_id IS NULL AND deleted_at IS NULL AND `+predicate, args...); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return &draftdom.ProjectDraftValidationError{Message: "material source is no longer readable"}
+				}
+				return err
+			}
+			title = source.Title
+		}
+		visibility := "project"
+		if len(material.TaskIDs) > 0 {
+			visibility = "task"
+		}
+		referenceID := uuid.New()
+		memberID := members[owner]
+		if _, err := tx.ExecContext(txctx, `INSERT INTO documents(id,project_id,title,content,visibility,owner_user_id,source_document_id,access_version,created_by,updated_by,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,$6,1,$7,$7,$8,$8)`, referenceID, projectID, title, visibility, owner, sourceID, memberID, now); err != nil {
+			return err
+		}
+		for _, itemID := range material.TaskIDs {
+			taskID := taskIDs[itemID]
+			if taskID == uuid.Nil {
+				return &draftdom.ProjectDraftValidationError{Message: "material task association is invalid"}
+			}
+			if _, err := tx.ExecContext(txctx, `INSERT INTO document_tasks(document_id,task_id) VALUES($1,$2)`, referenceID, taskID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (r *DraftRepository) UpdateProjectDraftFile(ctx context.Context, draftID, fileID uuid.UUID, uploadStatus, processingStatus, processingError string, extractedText *string) (*draftdom.ProjectDraftFile, error) {

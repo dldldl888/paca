@@ -534,7 +534,7 @@ func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expecte
 		return nil, err
 	}
 	preview.Issues = append(preview.Issues, userIssues...)
-	materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, d.Materials, false)
+	materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, d.ProjectDraftContent, false)
 	if materialErr != nil {
 		return nil, materialErr
 	}
@@ -543,7 +543,8 @@ func (s *Service) PreviewProjectDraft(ctx context.Context, id uuid.UUID, expecte
 	return preview, nil
 }
 
-func (s *Service) projectDraftMaterialAccessIssues(ctx context.Context, materials []draftdom.ProjectDraftMaterial, returnAccessErrors bool) ([]draftdom.ProjectDraftPreviewIssue, error) {
+func (s *Service) projectDraftMaterialAccessIssues(ctx context.Context, content draftdom.ProjectDraftContent, returnAccessErrors bool) ([]draftdom.ProjectDraftPreviewIssue, error) {
+	materials := content.Materials
 	if len(materials) == 0 {
 		return nil, nil
 	}
@@ -570,6 +571,40 @@ func (s *Service) projectDraftMaterialAccessIssues(ctx context.Context, material
 				Field:   fmt.Sprintf("materials[%d]", i),
 				Message: "资料已不可读，请移除或重新选择当前可读资料",
 			})
+		}
+		allowedUsers := map[uuid.UUID]struct{}{}
+		if len(material.TaskIDs) == 0 {
+			for _, participant := range content.Participants {
+				if userID, parseErr := uuid.Parse(participant.UserID); parseErr == nil {
+					allowedUsers[userID] = struct{}{}
+				}
+			}
+		} else {
+			taskIDs := make(map[string]struct{}, len(material.TaskIDs))
+			for _, taskID := range material.TaskIDs {
+				taskIDs[taskID] = struct{}{}
+			}
+			for _, item := range content.Items {
+				if _, ok := taskIDs[item.ID]; !ok || item.AssigneeUserID == "" {
+					continue
+				}
+				if userID, parseErr := uuid.Parse(item.AssigneeUserID); parseErr == nil {
+					allowedUsers[userID] = struct{}{}
+				}
+			}
+		}
+		for userID := range allowedUsers {
+			actorCtx := authz.WithActorID(ctx, userID)
+			if _, accessErr := s.documents.CheckDocumentAccess(actorCtx, uuid.Nil, documentID, docdom.AccessRead); accessErr != nil {
+				if returnAccessErrors && !errors.Is(accessErr, docdom.ErrDocNotFound) {
+					return nil, accessErr
+				}
+				issues = append(issues, draftdom.ProjectDraftPreviewIssue{
+					Field:   fmt.Sprintf("materials[%d]", i),
+					Message: "资料对指定员工不可读，请调整资料范围或参与人",
+				})
+				break
+			}
 		}
 	}
 	return issues, nil
@@ -796,7 +831,7 @@ func (s *Service) UpdateProjectDraft(ctx context.Context, id uuid.UUID, expected
 		return nil, err
 	}
 	defer leave()
-	materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, content.Materials, true)
+	materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, content, true)
 	if materialErr != nil {
 		return nil, materialErr
 	}
@@ -925,7 +960,7 @@ func (s *Service) ImportProjectDraft(ctx context.Context, id uuid.UUID, expected
 		var content draftdom.ProjectDraftContent
 		content, err = ParseProjectDraftGeneration(events, g.BaseEventIndex)
 		if err == nil {
-			materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, content.Materials, true)
+			materialIssues, materialErr := s.projectDraftMaterialAccessIssues(ctx, content, true)
 			if materialErr != nil {
 				return nil, materialErr
 			}

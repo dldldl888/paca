@@ -232,31 +232,10 @@ func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) 
 	}, http.StatusCreated)
 	previewPath := f.base + "/" + draft["id"].(string) + "/preview"
 	allowed := f.request(t, http.MethodPost, previewPath, map[string]any{"expected_version": 1}, http.StatusOK)
-	if allowed["can_publish"] != false {
-		t.Fatalf("material without a confirmed sharing policy must block publication: %#v", allowed)
-	}
-	previewIssues, previewIssuesOK := allowed["issues"].([]any)
-	if !previewIssuesOK || len(previewIssues) == 0 {
-		t.Fatalf("blocked material preview did not explain the publication boundary: %#v", allowed)
-	}
-	policyIssue := false
-	for _, raw := range previewIssues {
-		issue, ok := raw.(map[string]any)
-		if ok && issue["field"] == "materials" && strings.Contains(issue["message"].(string), "共享") {
-			policyIssue = true
-		}
-	}
-	if !policyIssue {
-		t.Fatalf("preview did not report the unconfirmed material policy: %#v", previewIssues)
+	if allowed["can_publish"] != true {
+		t.Fatalf("readable internal material should be publishable as a reference: %#v", allowed)
 	}
 	beforePublish := projectBusinessCounts(t, f.env)
-	f.request(t, http.MethodPost, f.base+"/"+draft["id"].(string)+"/publish", map[string]any{
-		"expected_version": 1,
-		"publication_id":   uuid.New(),
-	}, http.StatusBadRequest)
-	if afterPublish := projectBusinessCounts(t, f.env); !reflect.DeepEqual(beforePublish, afterPublish) {
-		t.Fatalf("blocked material publish left formal objects: %v -> %v", beforePublish, afterPublish)
-	}
 
 	accessReq := mustRequest(f.env.ctx, t, http.MethodPatch, docPath+"/"+docID.String()+"/access", jsonBody(t, map[string]any{
 		"expected_access_version": 1,
@@ -284,6 +263,147 @@ func TestPrivateProjectDraftPreviewRechecksInternalMaterialAccess(t *testing.T) 
 	}
 	if !revokedIssue {
 		t.Fatalf("preview did not report the revoked source material: %#v", issues)
+	}
+	f.request(t, http.MethodPost, f.base+"/"+draft["id"].(string)+"/publish", map[string]any{
+		"expected_version": 1,
+		"publication_id":   uuid.New(),
+	}, http.StatusBadRequest)
+	if afterPublish := projectBusinessCounts(t, f.env); !reflect.DeepEqual(beforePublish, afterPublish) {
+		t.Fatalf("revoked material publish left formal objects: %v -> %v", beforePublish, afterPublish)
+	}
+}
+
+func TestPrivateProjectDraftPublishesAuthorizedInternalMaterialReference(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	seedTaskMemberUser(t, f.env, "draft-material-authorized-recipient", "password1")
+	recipient, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-material-authorized-recipient")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceProjectID := createProjectForTasksViaAPI(t, f.env, f.client, f.token)
+	sourceProject := uuid.MustParse(sourceProjectID)
+	if _, err := f.env.db.Exec(`INSERT INTO project_members(id,project_id,user_id,project_role_id,member_type) SELECT $1,$2,$3,id,'human' FROM project_roles WHERE project_id=$2 AND role_name='Editor'`, uuid.New(), sourceProject, recipient.ID); err != nil {
+		t.Fatal(err)
+	}
+	sourceDocumentID := uuid.New()
+	if _, err := f.env.db.Exec(`INSERT INTO documents(id,project_id,title,content,visibility,owner_user_id) VALUES($1,$2,'可发布原资料','[]','project',$3)`, sourceDocumentID, sourceProject, owner); err != nil {
+		t.Fatal(err)
+	}
+	itemID := uuid.NewString()
+	draft := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "资料引用发布", "goal": "只创建原资料引用", "chat_session_id": session,
+		"items": []any{map[string]any{
+			"id": itemID, "title": "引用资料任务", "requirements": "核验原资料", "criteria": "通过",
+			"assignee_user_id": recipient.ID.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{
+			map[string]any{"user_id": owner.String(), "role": "负责人"},
+			map[string]any{"user_id": recipient.ID.String(), "role": "执行人"},
+		},
+		"materials": []any{map[string]any{
+			"id": sourceDocumentID, "kind": "document", "source_type": "internal", "processed_status": "ready",
+			"task_ids": []any{itemID}, "required": true,
+		}},
+	}, http.StatusCreated)
+	path := f.base + "/" + draft["id"].(string)
+	preview := f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusOK)
+	if preview["can_publish"] != true {
+		t.Fatalf("authorized internal material should be publishable as a reference: %#v", preview)
+	}
+	publication := uuid.New()
+	published := f.request(t, http.MethodPost, path+"/publish", map[string]any{
+		"expected_version": 1,
+		"publication_id":   publication,
+	}, http.StatusOK)
+	projectID, ok := published["project_id"].(string)
+	if !ok || projectID == "" {
+		t.Fatalf("publication did not return project id: %#v", published)
+	}
+	var reference struct {
+		ID             uuid.UUID  `db:"id"`
+		SourceDocument *uuid.UUID `db:"source_document_id"`
+		Content        *string    `db:"content"`
+	}
+	if err := f.env.db.Get(&reference, `SELECT id,source_document_id,content FROM documents WHERE project_id=$1`, projectID); err != nil {
+		t.Fatalf("published project did not receive a material reference: %v", err)
+	}
+	if reference.SourceDocument == nil || *reference.SourceDocument != sourceDocumentID || reference.Content != nil {
+		t.Fatalf("publication copied material content instead of creating an original-source reference: %#v", reference)
+	}
+	var taskLinks int
+	if err := f.env.db.Get(&taskLinks, `SELECT count(*) FROM document_tasks dt JOIN tasks t ON t.id=dt.task_id WHERE dt.document_id=$1 AND t.project_id=$2`, reference.ID, projectID); err != nil {
+		t.Fatal(err)
+	}
+	if taskLinks != 1 {
+		t.Fatalf("published material reference was not linked to its task: %d", taskLinks)
+	}
+	documentPath := "/api/v1/projects/" + projectID + "/docs/" + reference.ID.String()
+	f.request(t, http.MethodGet, documentPath, nil, http.StatusOK)
+	recipientClient, recipientToken := taskMemberLogin(t, f.env, "draft-material-authorized-recipient", "password1")
+	recipientReq := mustRequest(f.env.ctx, t, http.MethodGet, f.env.base+documentPath, nil)
+	recipientReq.Header.Set("Authorization", "Bearer "+recipientToken)
+	recipientResp := mustDo(t, recipientClient, recipientReq)
+	defer recipientResp.Body.Close()
+	assertStatus(t, recipientResp, http.StatusOK)
+	if _, err := f.env.db.Exec(`UPDATE documents SET deleted_at=now() WHERE id=$1`, sourceDocumentID); err != nil {
+		t.Fatal(err)
+	}
+	f.request(t, http.MethodGet, documentPath, nil, http.StatusNotFound)
+}
+
+func TestPrivateProjectDraftBlocksInternalMaterialUnreadableByAssignee(t *testing.T) {
+	f, owner, session, _ := newProjectDraftFixture(t)
+	seedTaskMemberUser(t, f.env, "draft-material-recipient", "password1")
+	recipient, err := f.env.userRepo.FindByUsername(f.env.ctx, "draft-material-recipient")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceProjectID := createProjectForTasksViaAPI(t, f.env, f.client, f.token)
+	sourceDocumentID := uuid.New()
+	if _, err := f.env.db.Exec(`INSERT INTO documents(id,project_id,title,content,visibility,owner_user_id) VALUES($1,$2,'受限原资料','[]','project',$3)`, sourceDocumentID, sourceProjectID, owner); err != nil {
+		t.Fatal(err)
+	}
+	itemID := uuid.NewString()
+	draft := f.request(t, http.MethodPost, f.base, map[string]any{
+		"name": "资料接收人核验", "goal": "未授权接收人不能发布", "chat_session_id": session,
+		"items": []any{map[string]any{
+			"id": itemID, "title": "受限资料任务", "requirements": "核验", "criteria": "通过",
+			"assignee_user_id": recipient.ID.String(), "due_date": "2026-12-01T18:00:00+08:00", "importance": 2,
+			"dependencies": []any{},
+		}},
+		"participants": []any{
+			map[string]any{"user_id": owner.String(), "role": "负责人"},
+			map[string]any{"user_id": recipient.ID.String(), "role": "执行人"},
+		},
+		"materials": []any{map[string]any{
+			"id": sourceDocumentID, "kind": "document", "source_type": "internal", "processed_status": "ready",
+			"task_ids": []any{itemID}, "required": true,
+		}},
+	}, http.StatusCreated)
+	path := f.base + "/" + draft["id"].(string)
+	preview := f.request(t, http.MethodPost, path+"/preview", map[string]any{"expected_version": 1}, http.StatusOK)
+	if preview["can_publish"] != false {
+		t.Fatalf("preview allowed a material that the assignee cannot read: %#v", preview)
+	}
+	issues := preview["issues"].([]any)
+	found := false
+	for _, raw := range issues {
+		issue := raw.(map[string]any)
+		if issue["field"] == "materials[0]" && strings.Contains(issue["message"].(string), "指定员工") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("preview did not explain recipient material access: %#v", issues)
+	}
+	beforePublish := projectBusinessCounts(t, f.env)
+	f.request(t, http.MethodPost, path+"/publish", map[string]any{
+		"expected_version": 1,
+		"publication_id":   uuid.New(),
+	}, http.StatusBadRequest)
+	if afterPublish := projectBusinessCounts(t, f.env); !reflect.DeepEqual(beforePublish, afterPublish) {
+		t.Fatalf("unreadable recipient publish left formal objects: %v -> %v", beforePublish, afterPublish)
 	}
 }
 
