@@ -21,6 +21,7 @@ import (
 	settingsdom "github.com/Paca-AI/api/internal/domain/settings"
 	userdom "github.com/Paca-AI/api/internal/domain/user"
 	"github.com/Paca-AI/api/internal/platform/authz"
+	"github.com/Paca-AI/api/internal/platform/delivery"
 	jwttoken "github.com/Paca-AI/api/internal/platform/token"
 	"github.com/Paca-AI/api/internal/transport/http/handler"
 )
@@ -234,6 +235,33 @@ func newTestRouterWithStore(t *testing.T, store authz.PermissionStore) http.Hand
 	return New(deps)
 }
 
+func newAttachmentAccessTestRouter(t *testing.T, store authz.PermissionStore) http.Handler {
+	t.Helper()
+	authorizer := authz.NewAuthorizer(store)
+	gate := delivery.NewGate()
+	if err := gate.Update("1", false); err != nil {
+		t.Fatal(err)
+	}
+	deps := Deps{
+		TokenManager: jwttoken.New("test-secret", 15*time.Minute, 24*time.Hour),
+		Authorizer:   authorizer,
+		Health:       handler.NewHealthHandler(),
+		Auth: handler.NewAuthHandler(&mockAuthSvc{}, handler.CookieConfig{
+			Secure:            false,
+			AccessTTL:         15 * time.Minute,
+			RefreshTTL:        24 * time.Hour,
+			RefreshSessionTTL: 12 * time.Hour,
+		}),
+		User:       handler.NewUserHandler(&mockUserSvc{}),
+		GlobalRole: handler.NewGlobalRoleHandler(&mockGlobalRoleSvc{}),
+		Project:    handler.NewProjectHandler(&stubProjectSvc{}, authorizer),
+		Settings:   handler.NewSettingsHandler(&fakeSettingsSvc{}),
+		Attachment: handler.NewAttachmentHandler(nil).WithFileDelivery(handler.NewFileDelivery(gate, nil, "", authorizer)),
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	return New(deps)
+}
+
 func issueAccessTokenForRouterTests(t *testing.T) string {
 	t.Helper()
 	tm := jwttoken.New("test-secret", 15*time.Minute, 24*time.Hour)
@@ -242,6 +270,34 @@ func issueAccessTokenForRouterTests(t *testing.T) string {
 		t.Fatalf("issue access token: %v", err)
 	}
 	return tok
+}
+
+func TestTaskAttachmentDeliveryRoutesRequireTaskReadPermission(t *testing.T) {
+	r := newAttachmentAccessTestRouter(t, &staticPermissionStore{})
+	tok := issueAccessTokenForRouterTests(t)
+	path := "/api/v1/projects/" + uuid.NewString() + "/tasks/" + uuid.NewString() + "/attachments/" + uuid.NewString()
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method+" download", func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), method, path+"/download", nil)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("expected 403 before file delivery, got %d (%s)", w.Code, w.Body.String())
+			}
+		})
+	}
+
+	t.Run("HEAD content", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodHead, path+"/content", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 before file delivery, got %d (%s)", w.Code, w.Body.String())
+		}
+	})
 }
 
 func TestNew_HealthRoute(t *testing.T) {
