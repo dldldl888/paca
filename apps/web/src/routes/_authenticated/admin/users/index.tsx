@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,6 +22,7 @@ import {
 	globalRolesQueryOptions,
 	myPermissionsQueryOptions,
 	type User,
+	usersInfiniteQueryOptions,
 	usersQueryOptions,
 } from "@/lib/admin-api";
 import { currentUserQueryOptions } from "@/lib/auth-api";
@@ -61,6 +62,21 @@ function UsersManagementPage() {
 		isError,
 		isFetching,
 	} = useQuery({ ...usersQueryOptions(page, pageSize), enabled: canRead });
+	const {
+		data: allUsersData,
+		hasNextPage,
+		isError: allUsersError,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useInfiniteQuery({
+		...usersInfiniteQueryOptions(),
+		enabled: canRead,
+	});
+	useEffect(() => {
+		if (canRead && hasNextPage && !isFetchingNextPage) {
+			void fetchNextPage();
+		}
+	}, [canRead, fetchNextPage, hasNextPage, isFetchingNextPage]);
 
 	const { data: currentUser } = useQuery(currentUserQueryOptions);
 	const { data: globalRoles = [] } = useQuery({
@@ -74,6 +90,7 @@ function UsersManagementPage() {
 	const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null);
 
 	const users = pagedUsers?.items ?? [];
+	const scopeUsers = allUsersData?.pages.flatMap((page) => page.items) ?? [];
 	const total = pagedUsers?.total ?? 0;
 	const totalPages = Math.max(1, Math.ceil(total / pageSize));
 	useEffect(() => {
@@ -98,12 +115,21 @@ function UsersManagementPage() {
 				/>
 			)}
 
-			{canRead && !isLoading && !isError ? (
+			{canRead &&
+			!isLoading &&
+			!isError &&
+			allUsersData &&
+			!hasNextPage &&
+			!isFetchingNextPage ? (
 				<OrganizationScopeSummary
-					users={users}
+					users={scopeUsers}
 					totalUsers={total}
 					roles={globalRoles}
 				/>
+			) : allUsersError ? (
+				<p className="text-sm text-muted-foreground" role="status">
+					{t("users.organizationScope.fullListUnavailable")}
+				</p>
 			) : null}
 
 			{!canRead ? (

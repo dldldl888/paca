@@ -36,6 +36,7 @@
 			"assigned_one": "{{count}} user in current list",
 			"assigned_other": "{{count}} users in current list",
 			"noPermissions": "No permissions granted",
+			"fullListUnavailable": "Role coverage is unavailable until the full user list loads.",
 			"departmentsPending": "Formal department bindings are not configured",
 			"departmentsPendingDescription": "Department scope is never inferred from names or role labels. Configure an authoritative roster before applying organization changes.",
 			"projectRolesNote": "Project roles remain managed within each project team."

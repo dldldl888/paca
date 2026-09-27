@@ -24,6 +24,7 @@
 			"assigned_one": "当前名单 {{count}} 人",
 			"assigned_other": "当前名单 {{count}} 人",
 			"noPermissions": "未授予权限",
+			"fullListUnavailable": "完整用户名单加载前，暂时无法计算角色覆盖范围。",
 			"departmentsPending": "尚未配置正式部门关系",
 			"departmentsPendingDescription": "不会根据姓名或角色名称推断部门范围。应用组织变更前需要权威名单。",
 			"projectRolesNote": "项目角色仍在具体项目团队中单独管理。"

@@ -27,11 +27,26 @@ beforeEach(() => {
 		async (url, config) => {
 			let data: unknown;
 			if (url === "/users/me/global-permissions") {
-				data = { permissions: ["users.read", "users.write", "users.delete"] };
+				data = {
+					permissions: [
+						"users.read",
+						"users.write",
+						"users.delete",
+						"global_roles.read",
+					],
+				};
 			} else if (url === "/users/me") {
 				data = { ...users[0], id: "admin", username: "admin" };
 			} else if (url === "/admin/global-roles") {
-				data = [];
+				data = [
+					{
+						id: "role-user",
+						name: "USER",
+						permissions: { "projects.read": true },
+						created_at: "2026-09-20T00:00:00Z",
+						updated_at: "2026-09-20T00:00:00Z",
+					},
+				];
 			} else if (url === "/admin/users") {
 				const { page = 1, page_size: pageSize = 20 } = (config?.params ??
 					{}) as {
@@ -70,6 +85,7 @@ it("lets an administrator reach users beyond the first 20 and return", async () 
 	const user = await renderPage();
 	await screen.findByText("employee_20");
 	expect(screen.queryByText("employee_21")).not.toBeInTheDocument();
+	await screen.findByText("40 users in current list");
 	expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
 	expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
 	await user.click(screen.getByRole("button", { name: "Next page" }));
@@ -91,6 +107,18 @@ it("keeps a way back when loading the second page fails", async () => {
 	expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
 	await user.click(screen.getByRole("button", { name: "Previous page" }));
 	await screen.findByText("employee_1");
+});
+
+it("does not show partial role coverage when the full list fails", async () => {
+	failSecondPage = true;
+	await renderPage();
+	await screen.findByText("employee_20");
+	await screen.findByText(
+		"Role coverage is unavailable until the full user list loads.",
+	);
+	expect(
+		screen.queryByLabelText("Organization scope (read-only)"),
+	).not.toBeInTheDocument();
 });
 
 it("returns to the remaining page after deleting the last user on page two", async () => {
