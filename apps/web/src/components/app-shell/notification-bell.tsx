@@ -64,8 +64,14 @@ export function NotificationBell() {
 	const { t: tCommon } = useTranslation("common");
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
-		useInfiniteQuery(notificationsQueryOptions);
+	const {
+		data,
+		fetchNextPage,
+		hasNextPage,
+		isFetchingNextPage,
+		isError: notificationsError,
+		refetch: refetchNotifications,
+	} = useInfiniteQuery(notificationsQueryOptions);
 
 	const unreadCount = data?.pages[0]?.unread_count ?? 0;
 	const notifications = useMemo(
@@ -180,7 +186,21 @@ export function NotificationBell() {
 						)}
 					</div>
 				</div>
-				{notifications.length === 0 ? (
+				{notificationsError && notifications.length === 0 ? (
+					<div
+						role="alert"
+						className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground"
+					>
+						<p className="text-sm">{t("notifications.error")}</p>
+						<button
+							type="button"
+							onClick={() => void refetchNotifications()}
+							className="text-sm text-primary underline underline-offset-4 hover:text-primary/80"
+						>
+							{t("notifications.retry")}
+						</button>
+					</div>
+				) : notifications.length === 0 ? (
 					<div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
 						<Bell className="h-8 w-8 mb-2 opacity-30" />
 						<p className="text-sm">{t("notifications.empty")}</p>

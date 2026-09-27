@@ -199,6 +199,30 @@ describe("NotificationBell", () => {
 		expect(screen.getByText("GH")).toBeInTheDocument();
 	});
 
+	it("shows a retry action when notifications fail while the bell is open", async () => {
+		mocks.listNotificationsMock
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce({
+				items: [makeNotification({ task_title: "Recovered notification" })],
+				page_size: 20,
+				next_cursor: null,
+				unread_count: 1,
+			});
+
+		await renderAndOpen();
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Notifications are temporarily unavailable",
+		);
+		await userEvent.click(
+			screen.getByRole("button", { name: "Retry notifications" }),
+		);
+		expect(
+			await screen.findByText(/Recovered notification/),
+		).toBeInTheDocument();
+	});
+
 	it("fetches the next page once the list is scrolled near its bottom", async () => {
 		mocks.listNotificationsMock.mockImplementation(
 			async ({ pageParam }: { pageParam?: string }) => {

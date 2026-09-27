@@ -61,6 +61,8 @@
 	"notifications": {
 		"title": "通知",
 		"empty": "暂无通知",
+		"error": "通知暂时无法加载",
+		"retry": "重试通知",
 		"loadingMore": "加载中…",
 		"markAllAsRead": "全部标记为已读",
 		"muteSound": "静音通知提示音",
