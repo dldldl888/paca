@@ -24,6 +24,8 @@ docker run --rm -v "$repo_root/apps/acp-bridge:/workspace:ro" \
 
 cd "$repo_root/apps/e2e"
 "$bun_bin" install --frozen-lockfile
+cd "$repo_root/services/realtime"
+"$bun_bin" install --frozen-lockfile
 cd "$repo_root"
 python3 scripts/ralph/test_validate_spec.py
 python3 scripts/ralph/validate_spec.py --spec "$spec_path" --all | tee "$report_dir/scenarios.json"
