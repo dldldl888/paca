@@ -256,9 +256,16 @@ func userRepoErr(op string, err error) error {
 func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return authorityMutation(ctx, r.db, func(ctx context.Context) error {
 		now := time.Now().UTC()
-		_, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, id.String())
+		result, err := DeliveryQuery(ctx, r.db).ExecContext(ctx, `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, id.String())
 		if err != nil {
 			return fmt.Errorf("user repo: delete: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("user repo: delete rows affected: %w", err)
+		}
+		if rows == 0 {
+			return userdom.ErrNotFound
 		}
 		return nil
 	})

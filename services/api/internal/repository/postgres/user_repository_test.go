@@ -175,6 +175,15 @@ func TestUserRepository_DeleteSoftDelete(t *testing.T) {
 	}
 }
 
+func TestUserRepository_DeleteMissingUserReturnsNotFound(t *testing.T) {
+	db, _ := openUserRepoTestDB(t)
+	repo := NewUserRepository(db)
+
+	if err := repo.Delete(context.Background(), uuid.New()); !errors.Is(err, userdom.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for missing user, got %v", err)
+	}
+}
+
 func TestUserRepository_FindByUsernameIncludingDeleted_FindsSoftDeleted(t *testing.T) {
 	db, roleID := openUserRepoTestDB(t)
 	repo := NewUserRepository(db)

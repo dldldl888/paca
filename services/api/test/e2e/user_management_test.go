@@ -225,6 +225,21 @@ func TestUserManagement_DeletedUserCannotReadNotificationsWithExistingAccessToke
 	}
 }
 
+func TestUserManagement_DeleteMissingUserReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	env := newE2EEnv(t)
+	seedUser(t, env, "delete-missing-admin", "adminpass1", "Delete Missing Admin")
+	assignGlobalRolesByName(t, env, "delete-missing-admin", "ADMIN")
+	token := adminBearerToken(t, env, "delete-missing-admin", "adminpass1")
+
+	req := mustRequest(env.ctx, t, http.MethodDelete, env.base+"/api/v1/admin/users/00000000-0000-0000-0000-000000000099", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp := mustDo(t, env.client, req)
+	defer resp.Body.Close()
+	assertStatus(t, resp, http.StatusNotFound)
+	assertErrorCode(t, resp, "USER_NOT_FOUND")
+}
+
 func TestUserManagement_DeletedUserCannotReadProfileWithExistingAccessToken(t *testing.T) {
 	t.Parallel()
 	env := newE2EEnv(t)
