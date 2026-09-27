@@ -163,6 +163,24 @@ func TestAuthnWithActiveUser_RejectsDeletedUser(t *testing.T) {
 	}
 }
 
+func TestAuthnWithActiveUser_RejectsDeletedAPIKeyUser(t *testing.T) {
+	userID := uuid.New()
+	deletedAt := time.Now()
+	checker := &stubActiveUserChecker{user: &userdom.User{ID: userID, DeletedAt: &deletedAt}}
+	stub := &stubAPIKeyAuth{key: &apikeydom.APIKey{ID: uuid.New(), UserID: userID}}
+
+	r := chi.NewRouter()
+	r.With(AuthnWithActiveUser(newTestTokenManager(), checker, stub)).Get("/protected", okHandler)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
+	req.Header.Set("X-API-Key", "deleted-user-key")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for deleted API key user, got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
 func TestAuthn_RefreshTokenRejected(t *testing.T) {
 	tm := newTestTokenManager()
 	rt, err := tm.IssueRefresh("user-id", "alice", "USER", "fam")
