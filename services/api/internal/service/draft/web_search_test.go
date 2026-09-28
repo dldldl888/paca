@@ -24,6 +24,25 @@ func TestPublicWebSearchClientRejectsLoopbackProvider(t *testing.T) {
 	}
 }
 
+func TestPublicWebSearchClientTrustsOnlyConfiguredSearXNGServiceName(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		trusted  bool
+	}{
+		{endpoint: "http://searxng:8080/search", trusted: true},
+		{endpoint: "http://searxng/search", trusted: true},
+		{endpoint: "http://127.0.0.1:8888/search", trusted: false},
+		{endpoint: "http://searxng.evil.example/search", trusted: false},
+		{endpoint: "https://searxng:8080/search", trusted: false},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			if got := isConfiguredSearXNGEndpoint(tc.endpoint); got != tc.trusted {
+				t.Fatalf("isConfiguredSearXNGEndpoint(%q) = %v, want %v", tc.endpoint, got, tc.trusted)
+			}
+		})
+	}
+}
+
 func TestPublicWebSearchClientParsesSearXNGResultsWithMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("q") != "public query" || r.URL.Query().Get("format") != "json" {

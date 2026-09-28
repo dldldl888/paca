@@ -34,7 +34,28 @@ type PublicWebSearchClient struct {
 }
 
 func NewPublicWebSearchClient(endpoint string) *PublicWebSearchClient {
-	return &PublicWebSearchClient{Endpoint: strings.TrimRight(strings.TrimSpace(endpoint), "/"), Client: netguard.NewSafeHTTPClient(10 * time.Second)}
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	return &PublicWebSearchClient{Endpoint: endpoint, Client: publicWebSearchHTTPClient(endpoint)}
+}
+
+// isConfiguredSearXNGEndpoint recognises only the operator-configured Docker
+// service name. It does not trust arbitrary private or loopback destinations.
+func isConfiguredSearXNGEndpoint(raw string) bool {
+	endpoint, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || endpoint.Scheme != "http" || endpoint.Hostname() != "searxng" {
+		return false
+	}
+	port := endpoint.Port()
+	return port == "" || port == "8080"
+}
+
+func publicWebSearchHTTPClient(endpoint string) *http.Client {
+	if isConfiguredSearXNGEndpoint(endpoint) {
+		// This exact service name is supplied by the operator's compose file;
+		// callers cannot select it through the request URL.
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	return netguard.NewSafeHTTPClient(10 * time.Second)
 }
 
 type searxngResponse struct {
@@ -69,7 +90,7 @@ func (c *PublicWebSearchClient) Search(ctx context.Context, query string, limit 
 	endpoint.RawQuery = params.Encode()
 	client := c.Client
 	if client == nil {
-		client = netguard.NewSafeHTTPClient(10 * time.Second)
+		client = publicWebSearchHTTPClient(c.Endpoint)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
