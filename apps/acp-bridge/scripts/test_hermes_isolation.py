@@ -17,6 +17,11 @@ HERMES_PYTHON = Path(os.environ.get('PACA_HERMES_PYTHON', str(HERMES_SOURCE / 'v
 
 
 class TestHermesIsolation(unittest.TestCase):
+    def test_private_runtime_disables_lazy_dependency_sync(self):
+        _, _, launches = self.launch_pair()
+        _, env, _ = launches[0]
+        self.assertEqual(env.get('HERMES_DISABLE_LAZY_INSTALLS'), '1')
+
     def launch_pair(self):
         temporary = tempfile.TemporaryDirectory(prefix='paca-native-isolation-')
         self.addCleanup(temporary.cleanup)

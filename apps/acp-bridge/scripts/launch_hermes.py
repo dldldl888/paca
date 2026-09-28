@@ -108,6 +108,7 @@ def build_launch(root, key, template, python, source):
     profiles = checked_directory(root / 'profiles')
     write_private(profiles, key + '.sb', ('\n'.join(profile) + '\n').encode())
     env = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'HERMES_HOME': str(directories['home']),
+           'HERMES_DISABLE_LAZY_INSTALLS': '1',
            'TMPDIR': str(directories['tmp']), 'PYTHONPYCACHEPREFIX': str(directories['pycache']),
            'PYTHONPATH': str(source), 'PYTHONUNBUFFERED': '1', 'LANG': 'en_US.UTF-8'}
     command = ['/usr/bin/sandbox-exec', '-f', str(profiles / (key + '.sb')), str(python), '-m', 'acp_adapter']
